@@ -1,0 +1,16 @@
+{
+	"id": "AIparser",
+	"name": "AIparser",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Отправляем видео для распознавания в parser. на выходе получаем текст или файл в зависимости от настроек",
+	"main": "AIparser.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "fromSite"
+}

@@ -1,0 +1,103 @@
+{
+	"type": "joinVA",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 620,
+	"data": {
+		"label": "Join Video/Audio",
+		"colorType": "ffmpeg",
+		"comment": "Задаем таймкод для дальнейших действий. Можно вытаскивать таймкод из аудио или видео файла, а так же из нескольких файлов вытаскивать максимальный или минимальный таймкод. Тaк же можно задавать таймкод в ручную",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "joinType",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Join Type",
+					"tooltip": "Выбираем как мы будем соединять файлы.\nПоследовательно\nРандомно",
+					"options": [
+						"Sequentially",
+						"Random"
+					],
+					"freeInput": false,
+					"value": "Sequentially"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "finalTimecode",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Set min Duration",
+					"tooltip": "Если таймкод не указан - собираем все файлы с учетом последовательности.\nЕсли тайм код указан или приходит из другого места, то собираем файлы с учетом этой длительности.\nТ.е. они могут повторятся, если файлов нехватает до указанной длительности",
+					"value": 0
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "autoFade",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Set Fade Transition Time",
+					"tooltip": "Определяет fade между файлами\nДля аудио файлов - это плавное наложение друг на друга,\nдля видео - плавный микс между файлами на указанное количество секунд",
+					"value": 0,
+					"minValue": 0,
+					"maxValue": 10,
+					"step": 0.5,
+					"useValuesAsLabels": true,
+					"minMaxValueVisible": true
+				},
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

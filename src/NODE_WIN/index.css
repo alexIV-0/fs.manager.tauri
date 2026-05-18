@@ -1,0 +1,106 @@
+.ca-box {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	padding: 6px 8px;
+	cursor: text;
+}
+
+.ca-input {
+	flex: 1 1 auto !important;
+	min-width: 120px !important;
+}
+
+.ca-input.read-only input {
+	cursor: default;
+}
+
+.MuiChip-root.ca-chip {
+	/* margin: 2px; */
+	min-height: 34px;
+	height: auto;
+	font-size: 1rem;
+	color: white;
+	background-color: rgb(38, 38, 38);
+	border-radius: 4px;
+	/* max-width: 250px; */
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.MuiChip-root.ca-chip:hover {
+	background-color: rgb(48, 48, 48);
+}
+
+.node-shell {
+	position: relative;
+	border: 1px solid #ffffff40;
+	border-radius: 5px;
+	background-color: rgb(25, 25, 25);
+	box-sizing: border-box;
+	min-width: 200px;
+	min-height: 80px;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: visible;
+}
+
+.react-flow-container {
+	position: fixed;
+	top: 30px;
+	left: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.MuiButtonBase-root.save-flow-button {
+	position: absolute;
+	bottom: 10px;
+	left: 10px;
+	z-index: 10;
+}
+
+/* Стили для handles при валидации соединений */
+.react-flow__handle {
+	transition: all 0.2s ease;
+}
+
+/* Handle при наведении курсора во время создания соединения */
+.react-flow__handle.connecting {
+	opacity: 0.5;
+}
+
+.react-flow__handle.connectingto {
+	background-color: #f44336 !important;
+	box-shadow: 0 0 8px #f44336;
+}
+
+.react-flow__handle.valid {
+	background-color: #4caf50 !important;
+	box-shadow:
+		0 0 8px #4caf50,
+		0 0 12px #4caf50;
+	transform: scale(1.2);
+	opacity: 1 !important;
+}
+
+/* Handle при hover в обычном состоянии */
+.react-flow__handle:hover {
+	transform: scale(1.15);
+	box-shadow: 0 0 6px currentColor;
+}
+
+.react-flow {
+	--xy-background-color: hsl(203, 10%, 16%); /* твой цвет фона */
+}
+
+/* selectionOnDrag + panOnDrag=[1] делают пэйн постоянно "selection" → курсор-палец везде */
+.react-flow__pane.selection {
+	cursor: default;
+}

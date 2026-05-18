@@ -1,0 +1,51 @@
+{
+	"type": "createPath",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 400,
+	"data": {
+		"label": "Create Path",
+		"colorType": "helpers",
+		"comment": "Cоздаем путь для копирования файла",
+		"properties": [
+			{
+				"id": "path",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Path",
+					"tooltip": "Path",
+					"options": ["#pathPattern", "#folders", "#historyValue(paths)", "CustomFolder..."],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": ["$localFolder", "$mainFolderName", "$projectName", "$findTime"]
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": ["path"],
+				"required": true
+			},
+			{
+				"id": "dinamicPath",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Dinamic Path Append",
+					"tooltip": "Дополнительное поле, которое может принимать текстовое значение идобавлять его в конец представленного пути.&nbsp;<br>Например в другой ноде мы определим формат кадра оригинального видео, vertical. И добавим это значение к уже имеющемуся пути.&nbsp;<br>тогда в следующей ноде мы будем искать файлы уже в этой папке (естественно если она есть на диске)",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": ["string", "path", "timecode"],
+				"outputType": "accepted",
+				"outputMarker": "$$DINAMIC",
+				"required": false
+			}
+		],
+		"output": {
+			"functionName": "createPathFunc",
+			"sourceProperty": "path"
+		},
+		"isValid": true
+	}
+}

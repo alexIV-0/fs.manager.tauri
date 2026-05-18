@@ -1,0 +1,47 @@
+{
+	"$schema": "https://raw.githubusercontent.com/nicknisi/dotfiles/master/tmux/conf/tmux.conf",
+	"productName": "fsManager",
+	"version": "0.1.0",
+	"identifier": "com.fsmanager.tauri.alexiv",
+	"build": {
+		"beforeDevCommand": "yarn dev",
+		"devUrl": "http://localhost:1420",
+		"beforeBuildCommand": "yarn build",
+		"frontendDist": "../dist"
+	},
+	"app": {
+		"withGlobalTauri": true,
+		"windows": [
+			{
+				"label": "main",
+				"title": "fsManager",
+				"width": 1200,
+				"height": 800,
+				"resizable": true,
+				"url": "index.html",
+				"dragDropEnabled": false
+			}
+		],
+		"security": {
+			"csp": null,
+			"assetProtocol": {
+				"enable": true,
+				"scope": {
+					"allow": ["**"],
+					"deny": [],
+					"requireLiteralLeadingDot": false
+				}
+			}
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"icon": ["icons/fsManager.icns", "icons/fsManager.ico", "icons/icon.png"],
+		"resources": {
+			"icons/nodeS.icns": "icons/nodeS.icns",
+			"icons/nodeS.ico": "icons/nodeS.ico",
+			"../distr-plugins/**/*": "plugins"
+		}
+	}
+}

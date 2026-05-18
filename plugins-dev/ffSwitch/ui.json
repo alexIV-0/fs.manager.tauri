@@ -1,0 +1,105 @@
+{
+	"type": "ffSwitch",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 620,
+	"data": {
+		"label": "Frame Format Switch",
+		"colorType": "ffmpeg",
+		"comment": "Меняем формат кадра. Из 16:9 в 9:16 и наоборот. FG-видео вписывается в новый кадр, BG заполняет фон.<br>Можно объединить несколько роликов в один, тогда оба ролика будут проигрываться одновременно.<br>По аудио в случае с несколькими роликами, звук будет браться либо у того ролика, в котором есть звук, либо у того что выбрано в свойстве \"Duration\"? т.е. либо с минимального ролика, либо с максмиального.<br>В случае когда длительность указана из другой ноды, будет выбрана та дорожка, длительность которой больше подходит под указанную длительность.",
+		"properties": [
+			{
+				"id": "inputFG",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Foreground Video",
+					"tooltip": "Основное видео, которое будет отображаться в новом формате кадра.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"image"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "inputBG",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Background Video",
+					"tooltip": "Фоновое видео. Если не подключён — используется FG-файл (при включённой галочке в настройках).",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"image"
+				],
+				"required": false,
+				"outputType": "video"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла.",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "videoAdjustSettings",
+				"controlType": "videoAdjustment",
+				"controlProps": {
+					"label": "Video Adjust Settings",
+					"tooltip": "Настройки формата, кол-ва копий FG/BG и эффектов для бэкграунда. Открывает окно с живым превью.",
+					"value": ""
+				},
+				"isInput": false,
+				"outputType": "string",
+				"required": false
+			},
+			{
+				"id": "ddm",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Duration",
+					"tooltip": "Если нужно объединить несколько роликов вместе, то тут нужно задать хронометраж финального ролика. Т.е. по какому из роликов будет определяться финальная длительность.<br>Тут можно выбрать либо по минимальному, тогда тот, что больше просто обрежется<br>Либо по максимальному. Тогда у того что короче последний кадр просто застынет.<br>",
+					"options": [
+						"Min",
+						"Max"
+					],
+					"freeInput": false,
+					"value": "Min"
+				},
+				"outputType": "typeByExtension",
+				"required": false,
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				]
+			}
+		],
+		"output": {
+			"sourceProperty": "inputBG"
+		},
+		"isValid": true
+	}
+}

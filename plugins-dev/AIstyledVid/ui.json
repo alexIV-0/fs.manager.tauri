@@ -1,0 +1,90 @@
+{
+	"type": "AIStyledVid",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 520,
+	"data": {
+		"label": "AI styled Vid",
+		"colorType": "ai",
+		"comment": "Отправляем видео на стилизацию в мультяшный вид",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Text",
+					"tooltip": "На вход подается видео файл",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video"
+				],
+				"required": true,
+				"outputType": "video"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
+					"options": [
+						"#pathPattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false,
+				"outputType": "path"
+			},
+			{
+				"id": "modelName",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Model for Parsing",
+					"tooltip": "Нужно выбрать одну из моделей для парсинга",
+					"options": [
+						"default_video_generation_config",
+						"Video_3d render_config+lora",
+						"Video _style_config+lora",
+						"Default_light_test",
+						"Cartoon_style_config+lora"
+					],
+					"freeInput": false,
+					"value": "default_video_generation_config"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "finalDuration",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Duration",
+					"tooltip": "Таймкод для финального файла.\nМожно не указывать ничего, тогда длительность автоматически все подставится из входящего файла. Это лучший вариант\nMожно указать больше, тогда оставшуюся часть ИИ додумает сама.\nМожно указать меньше, тогда будет взята только та часть которая будет указана.",
+					"value": 0
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

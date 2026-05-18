@@ -1,0 +1,71 @@
+{
+	"type": "AEprocess",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 550,
+	"data": {
+		"label": "AE process",
+		"colorType": "afterEffect",
+		"comment": "Союираем необходимые данные и отправляем все в After Effects для обработки. Сама нода ничего не делает, только вставляет входные данные в аргумент для скрипта в АЕ",
+		"properties": [
+			{
+				"id": "aeScript",
+				"controlType": "link",
+				"controlProps": {
+					"label": "AE script",
+					"tooltip": "Путь до скрипта который будет исполняться в After Effects.<br>Для его написания нужны знания extendScripts",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"scripts"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "operation",
+				"controlType": "addLink",
+				"controlProps": {
+					"label": "Input files",
+					"tooltip": "Параметр для добавление новых input, которые передадутся в After Effect.<div>Все inputs нужно переименовать так, что бы при написании скрипта для обработки можно было использовать эти имена входов для получения информации с их коенктеров.<br>Так же тут нужно выставить тип файла, который мы получим в результате обработки в After Effect.&nbsp;</div>",
+					"value": [
+						"video"
+					]
+				},
+				"isInput": false,
+				"isOutput": true,
+				"outputType": "array",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "operation"
+		},
+		"isValid": true
+	}
+}

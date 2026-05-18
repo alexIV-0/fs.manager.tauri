@@ -1,0 +1,17 @@
+{
+	"id": "addTitle",
+	"name": "add Title",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Накладываем титры на видео.",
+	"main": "addTitle.js",
+	"ui": "ui.json",
+	"copyAssets": [],
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

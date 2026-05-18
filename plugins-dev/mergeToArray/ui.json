@@ -1,0 +1,62 @@
+{
+	"type": "mergeToArray",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 400,
+	"data": {
+		"label": "Merge 2 Array",
+		"colorType": "helpers",
+		"comment": "Все ноды работают с массивами. Но на вход всегда подаётся только один коннектор.&nbsp;<br>Эта нода объединяет несколько массивов в один. Тип массива выставляется в \"add Inputs\". <br>Эта нода может так же служить фильтром для смешанных массивов (хотя таких быть не должно).<br><br>Последовательность задаётся по порядковому номеру в названии input. (т.е. переименовывать ничего не надо, либо оставлять цифру в конце)<br><br>По умолчанию добавил 2 входа, если нужно ещё - можно добавить самостоятельно.",
+		"properties": [
+			{
+				"id": "dynLink_-6O25",
+				"controlType": "link",
+				"controlProps": {
+					"label": "New Link 1",
+					"tooltip": "",
+					"value": "",
+					"editLabel": true
+				},
+				"isInput": true,
+				"isOutput": false,
+				"acceptedTypes": ["all"],
+				"outputType": "accepted",
+				"required": true
+			},
+			{
+				"id": "dynLink_fRFkm",
+				"controlType": "link",
+				"controlProps": {
+					"label": "New Link 2",
+					"tooltip": "",
+					"value": "",
+					"editLabel": true
+				},
+				"isInput": true,
+				"isOutput": false,
+				"acceptedTypes": ["all"],
+				"outputType": "accepted",
+				"required": true
+			},
+			{
+				"id": "addLink",
+				"controlType": "addLink",
+				"controlProps": {
+					"label": "Add Inputs",
+					"tooltip": "",
+					"value": ["video"],
+					"allowedTypes": ["Link"]
+				},
+				"outputType": "string",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "addLink"
+		},
+		"isValid": true
+	}
+}

@@ -1,0 +1,116 @@
+{
+	"type": "getPicFromFileByTime",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 650,
+	"data": {
+		"label": "Get Pic From Video",
+		"colorType": "ffmpeg",
+		"comment": "Сохраняем скриншоты из видеофайла, либо по заданному таймкоду, либо с учетом сцен (стыков)",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Input File",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - файл будет сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern"
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false,
+				"outputType": "path"
+			},
+			{
+				"id": "splitBy",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Duration",
+					"tooltip": "Таймкод для нарезки файла. Можно указывать таймкод через . или , и он трансформируется в нормальный таймкод. Т.е. 90 = 00:01:30, или же 1.30 = 00:01:30. Это не обязательное свойство, если значение равно 0, то разделение файла будет по сценам.<br><br>Можно так же указать просто файл с тайкодами или же сами таймкоды. Если файл указан, то берутся только таймкоды из него. Все остальные параметры будут игнорироваться. Тип файла text или же string из него",
+					"value": 0
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode",
+					"string",
+					"text"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "sceneDetection",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Split by scenes",
+					"tooltip": "Нужно ли учитывать стыки сцен при нарезании?",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "outputFormat",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "output Format",
+					"tooltip": "Расширение файла в которое будет сохранен скриншот",
+					"options": [
+						"png",
+						"jpeg",
+						"jpg"
+					],
+					"freeInput": true,
+					"value": "jpeg"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "qualityPic",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Quality Pic",
+					"tooltip": "Качество сжатия картинки",
+					"value": 2,
+					"minValue": 0,
+					"maxValue": 12,
+					"step": 1,
+					"useValuesAsLabels": false,
+					"minMaxValueVisible": false
+				},
+				"outputType": "number",
+				"isInput": false,
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "outputFormat"
+		},
+		"isValid": true
+	}
+}

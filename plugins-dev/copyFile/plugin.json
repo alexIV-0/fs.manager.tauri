@@ -1,0 +1,16 @@
+{
+	"id": "copyFile",
+	"name": "Copy File",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Копируем элемент в выбранное место",
+	"main": "copyFile.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

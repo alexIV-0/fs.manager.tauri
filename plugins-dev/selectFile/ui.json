@@ -1,0 +1,31 @@
+{
+	"type": "selectFile",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 400,
+	"data": {
+		"label": "Select File",
+		"colorType": "helpers",
+		"comment": "Формирует полный путь к указанному файлу в заданной директории.<br>Обычно это требуется что бы не плодить много папок в которых мы динанамически будем искать 1 файл.заданного типа.<br>Например это бывает нужно если мы используем несколько промптов и json настроек для обработки. тогда все их можно положить в папку options и они не будут мешать друг другу.<br>Тип файла берётся из расширения",
+		"properties": [
+			{
+				"id": "pathNavigator",
+				"controlType": "pathNavigator",
+				"controlProps": {
+					"label": "Select File",
+					"tooltip": "Указываем на конкретный файл. в папке с проектом или же вне её.",
+					"value": ""
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			}
+		],
+		"output": {
+			"sourceProperty": "pathNavigator"
+		},
+		"isValid": true
+	}
+}

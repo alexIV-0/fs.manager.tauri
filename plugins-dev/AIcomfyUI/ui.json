@@ -1,0 +1,70 @@
+{
+	"type": "ComfyUI",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 620,
+	"data": {
+		"label": "ComfyUI",
+		"colorType": "ai",
+		"comment": "Отправляет workflow на ComfyUI сервер с подменой нужных значений",
+		"properties": [
+			{
+				"id": "jsonPath",
+				"controlType": "pathNavigator",
+				"controlProps": {
+					"label": "Workflow JSON",
+					"tooltip": "Путь до workflow.json файла",
+					"value": "",
+					"editLabel": false
+				},
+				"isInput": false,
+				"acceptedTypes": [],
+				"outputType": "string",
+				"required": true
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Куда сохранить результат",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"outputType": "path",
+				"required": false
+			},
+			{
+				"id": "addPatch",
+				"controlType": "addPathLink",
+				"controlProps": {
+					"label": "Patch Values",
+					"tooltip": "Добавляем файлы или данные , которые нужно заменить в оригинальном json файле. Значений может быть много, но каждый",
+					"value": [
+						"video"
+					]
+				},
+				"isInput": false,
+				"acceptedTypes": [],
+				"outputType": "array",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "addPatch"
+		},
+		"isValid": true
+	}
+}

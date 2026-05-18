@@ -1,0 +1,17 @@
+{
+	"id": "merge2files",
+	"name": "Merge 2 Files",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Объединяем 2 файла путем наложения одного на другой. Это нужно для того что бы объединить 2 аудиофайла в один, миксонув их, или же объединить или добавить аудиодорожку к видео.",
+	"main": "merge2files.js",
+	"ui": "ui.json",
+	"copyAssets": [],
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

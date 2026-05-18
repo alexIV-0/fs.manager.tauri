@@ -1,0 +1,94 @@
+{
+	"type": "getFileFromFolder",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 600,
+	"data": {
+		"label": "Get File From Folder",
+		"colorType": "helpers",
+		"comment": "Ищем файлы в папке.",
+		"properties": [
+			{
+				"id": "inputFolder",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Input Folder",
+					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
+					"multiSelect": false,
+					"allowDuplicates": false,
+					"options": [
+						"#folders",
+						"Custom Folder..."
+					],
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path",
+					"folders"
+				],
+				"required": true,
+				"outputType": "array"
+			},
+			{
+				"id": "searchType",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "searchType",
+					"tooltip": "Тип файла, который нужно найти в указанной папке. только один",
+					"options": [
+						"#typeOfFile",
+						"folders"
+					],
+					"multiSelect": false,
+					"allowDuplicates": false,
+					"value": []
+				},
+				"isInput": false,
+				"outputType": "array",
+				"acceptedTypes": [
+					"#typeOfFile",
+					"folders"
+				],
+				"required": true
+			},
+			{
+				"id": "searchInRandomFolder",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Search in Random Folder",
+					"tooltip": "В случае если у нас не нашлось совпадений в имени элемента в папке IN, то нам нужно решить нужно ли вообще использовать какие либо файлы из папки с футажами. если стоит true - то мы выберем рандомную папку и возьмём файлы уже от туда. Если же стоит false - то мы игнорируем поиск в папках вообще. т.е. не нашлось совпадений - ничего не вернём. Это не относится к рекурсивному поиску.",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "recursiveSearch",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Recursive Search",
+					"tooltip": "Рекурсивный поиск по подпапкам. Начало поиска будет зависить от предыдущих выборов.",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "oneRandomeFile",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Get One Random File",
+					"tooltip": "Вернем только один рандомный файл, а не весь список файлов",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"sourceProperty": "searchType"
+		},
+		"isValid": true
+	}
+}

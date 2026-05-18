@@ -1,0 +1,94 @@
+{
+	"type": "convertFile",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 330,
+	"height": 480,
+	"data": {
+		"label": "Convert File",
+		"colorType": "ffmpeg",
+		"comment": "Конвертируем файл в другой формат или с другими параметрами. Все параметры выставляются вручную",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "fileExt",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Final Extension",
+					"tooltip": "Какое расширение будет у финального файла?. Указывается формат без точки. т.е. просто mp4 или wav",
+					"options": [
+						"mp4",
+						"wav",
+						"mp3",
+						"png",
+						"jpeg"
+					],
+					"multiSelect": false,
+					"value": [
+						"mp4"
+					]
+				},
+				"isInput": false,
+				"outputType": "typeByExtension",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": true
+			},
+			{
+				"id": "ffmpegCommand",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "ffmpeg command",
+					"tooltip": "Команда для конвертации файла. Нужна только середина, без указания самого ffmpeg и финального файла.",
+					"value": "",
+					"language": "javascript"
+				},
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "fileExt"
+		},
+		"isValid": false
+	}
+}

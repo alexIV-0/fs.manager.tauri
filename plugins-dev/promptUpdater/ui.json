@@ -1,0 +1,86 @@
+{
+	"type": "promptUpdater",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 580,
+	"data": {
+		"label": "Prompt Updater",
+		"colorType": "helpers",
+		"comment": "Обновляем готовый промпт данными из других источников.&nbsp;<br>Данные, которые обновляются в тексте должны быть взяты в квадратные скобки. в квадратных скобках должно быть прописано имя того input откуда будут браться данные.<div><br>например&nbsp;<i><u><font color=\"#ffff00\">newText</font></u></i>&nbsp;= месту в тесте <i><u><b><font color=\"#89b4fa\">[newText]</font></b></u></i></div>",
+		"properties": [
+			{
+				"id": "promptPath",
+				"controlType": "pathNavigator",
+				"controlProps": {
+					"label": "Prompt",
+					"tooltip": "Указываем конкретный файл промпта, который нужно модифицировать",
+					"value": ""
+				},
+				"outputType": "path",
+				"required": true,
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				]
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Папка для сохранения. Указывается в виде маски. все маски начинаются с $.<br><div><font color=\"#ffff00\">$clearName</font> - чистое имя найденного элемента в папке IN на GD без <font color=\"#ffff00\">эмоджиков</font> и кавычек () []</div><div><font color=\"#ffff00\">$findTime</font> - время когда был найден элемент в папке IN</div><div><font color=\"#ffff00\">$curItemName</font> - текущий элемент в папке IN (с эмоджиками и кавычками). это может быть папка. но без расширения</div><div><font color=\"#ffff00\">$id</font> - уникальный id для каждого элемента если он есть в имени найденного элемента в папке IN</div><div><font color=\"#ffff00\">$projectName</font> - название проекта (имя папки в которой находится папка IN)</div><div><font color=\"#ffff00\">$projectPathGD</font> - полный путь до папки проекта на GD</div><div><font color=\"#ffff00\">$mainFolderName</font> - название папки, в которой находится проект на GD</div><div><font color=\"#ffff00\">$mainFolderPath</font> - название папки, в которой находится проект на GD</div><div><br></div><div><span style=\"font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;\"><font color=\"#ffff00\">$index</font> - индекс элемента если файл не единственный</span></div><div><font color=\"#ffff00\">$fileName</font> - имя текущего файла без расширения как есть</div><div><font color=\"#ffff00\">$clearFileName</font> - чистое имя текущего файла без расширения без кавычек, эмоджи и текста в круглых и квадратных скобках</div><div><br></div><div><font color=\"#ffff00\">$curMonthStr</font> - текущий месяц в виде строки (January, February, ...)</div><div><font color=\"#ffff00\">$localFolder</font> - рабочая папка на локальном дике (указывается в настройках)</div><div><br></div><div><font color=\"#ffff00\">$YYYY</font> - год (4 цифры)</div><div><font color=\"#ffff00\">$MM</font> - месяц (2 цифры)</div><div><font color=\"#ffff00\">$DD - день (2 цифры)</font></div><div><font color=\"#ffff00\">$HH</font> - часы (2 цифры)</div><div><font color=\"#ffff00\">$mm</font> - минуты (2 цифры)</div><div><font color=\"#ffff00\">$ss</font> - секунды (2 цифры)</div>",
+					"options": [
+						"#pathPattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"outputType": "path",
+				"required": false
+			},
+			{
+				"id": "saveAsText",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Save As Text",
+					"tooltip": "Модифицированный текст может быть сохранен в текстовый файл или же отправиться дальше в качестве строки.<br>Если выбрано \"Сохранить\", то далее отправиться ссылка на текстовый файл",
+					"value": false
+				},
+				"outputType": "boolean",
+				"required": false,
+				"outputTypeMap": {
+					"true": "text",
+					"false": "string"
+				}
+			},
+			{
+				"id": "addLink",
+				"controlType": "addLink",
+				"controlProps": {
+					"label": "Add Link",
+					"tooltip": "Добавляем входы для модификации промпта. Название входа = тому месту в тексте, которое нужно заменить.<br><font color=\"#ffff00\">Link</font> - добавляет просто ссылку на файл или свойство<br>Остальные свойство - это статично заданные параметры.<br><br>например <i style=\"\"><u style=\"\"><font color=\"#74c7ec\">newText</font></u></i> = месту в тесте [<font color=\"#89b4fa\">newText]</font>",
+					"value": [],
+					"allowedTypes": [
+						"Link"
+					]
+				},
+				"outputType": "string",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "saveAsText"
+		},
+		"isValid": true
+	}
+}

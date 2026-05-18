@@ -1,0 +1,84 @@
+{
+	"type": "addTitle",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 520,
+	"data": {
+		"label": "Add Title",
+		"colorType": "ffmpeg",
+		"comment": "Накладываем титры на видео. Настройте стили для каждого формата отдельно.",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Video",
+					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "inputTitle",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Title",
+					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"title"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "titleSettings",
+				"controlType": "titleSettings",
+				"controlProps": {
+					"label": "Title Settings",
+					"tooltip": "Открыть настройки титров",
+					"value": ""
+				},
+				"isInput": false,
+				"outputType": "string",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

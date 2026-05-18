@@ -1,0 +1,16 @@
+{
+	"id": "createPath",
+	"name": "Create Path",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Нода, создает пути по маскам. Т.е физически еще ничего нет на диске, но тут мы создаем путь для дальнейших действий с элементами. он создасться автоматически в других местах",
+	"main": "createPath.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

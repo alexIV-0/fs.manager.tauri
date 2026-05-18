@@ -1,0 +1,127 @@
+{
+	"type": "merge2files",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 670,
+	"data": {
+		"label": "Merge 2 Files",
+		"colorType": "ffmpeg",
+		"comment": "Объединяем 2 файла в один путем наложения. Можно объединить видео и аудио, или же 2 аудио",
+		"properties": [
+			{
+				"id": "inputVA",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Imput Video/Audio File",
+					"tooltip": "Указываем видео или аудио файл",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "inputA",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Imput Audio File",
+					"tooltip": "Указываем только аудио файл для наложения или объединения",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "durationMode",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Duration Mode",
+					"tooltip": "Т.к. объединяемые файлы имеют разную длительность, нужно опредеиться с тем, откуда брать длительность, Можно с аудио файла или видео файла, а можно не смотреть на тип файла и определять максимальную или минимальную длительность.",
+					"options": [
+						"video",
+						"audio",
+						"min",
+						"max"
+					],
+					"freeInput": false,
+					"value": "video"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "changeVideoSpeed",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Change Video Speed",
+					"tooltip": "Можно изменить скорость видео и подогнать файл под аудио если это необходимо",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "mixAudio",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Mix Audio",
+					"tooltip": "Объединить или заменить? При объединении 2 аудиофайлов или оригинальной аудиодорожки с новой нужно выставить в true, при замене нужно в false",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "outputFormat",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "output Format",
+					"tooltip": "Тип файла в который объединяем 2 файла",
+					"options": [
+						"mp4",
+						"mp3",
+						"wav"
+					],
+					"freeInput": true,
+					"value": "mp4"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			}
+		],
+		"output": {
+			"sourceProperty": "outputFormat"
+		},
+		"isValid": true
+	}
+}

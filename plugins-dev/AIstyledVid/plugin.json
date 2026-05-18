@@ -1,0 +1,16 @@
+{
+	"id": "AIstyledVid",
+	"name": "AIstyledVid",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Отправляем на стилизацию в мультяшный вид.",
+	"main": "AIstyledVid.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

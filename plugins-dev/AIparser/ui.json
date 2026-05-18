@@ -1,0 +1,106 @@
+{
+	"type": "AIParserVid",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 560,
+	"data": {
+		"label": "AI parser Vid",
+		"colorType": "ai",
+		"comment": "Отправляем видео для распознавания в parser. на выходе получаем текст в виде файла",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Input File",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
+					"options": [
+						"#pathPattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false,
+				"outputType": "path"
+			},
+			{
+				"id": "modelName",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Model for Parsing",
+					"tooltip": "Нужно выбрать одну из моделей для парсинга",
+					"options": [
+						"gemini-flash",
+						"gemini-pro-25",
+						"gemini-pro",
+						"qwen"
+					],
+					"freeInput": false,
+					"value": "gemini-pro"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "inputPrompt",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Prompt",
+					"tooltip": "Указать файл или же просто прописать пропт в это поле",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "textOrString",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Save result as File",
+					"tooltip": "Сохраняем результат в виде файла на txt. Либо отправляем результат в виде просто строки далее",
+					"value": true
+				},
+				"outputType": "boolean",
+				"outputTypeMap": {
+					"true": "text",
+					"false": "string"
+				}
+			}
+		],
+		"output": {
+			"sourceProperty": "textOrString"
+		},
+		"isValid": true
+	}
+}

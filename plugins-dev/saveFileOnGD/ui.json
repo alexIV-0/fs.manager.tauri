@@ -1,0 +1,69 @@
+{
+	"type": "saveFileOnGD",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 430,
+	"data": {
+		"label": "Save File On GD",
+		"colorType": "main",
+		"comment": "Копируем файл в папку OUT на Google Drive",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Input File",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image",
+					"text",
+					"aep",
+					"moho",
+					"files",
+					"folders",
+					"all",
+					"file"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "path",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Path",
+					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен в папку OUT в папке с проектом на GD. имя будет стандартное (\"[$id]_$findTime-$clearName ($random(3))\"), если не указано",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"optionsOnly": false,
+					"value": [
+						"$MM $curMonthStr",
+						"[$id]_$findTime_$clearName"
+					]
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": true,
+				"outputType": "path"
+			}
+		],
+		"output": {
+			"functionName": "saveFileOnGDFunc",
+			"sourceProperty": ""
+		},
+		"isValid": true
+	}
+}

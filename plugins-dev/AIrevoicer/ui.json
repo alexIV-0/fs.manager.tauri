@@ -1,0 +1,144 @@
+{
+	"type": "AIRevoicer",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 750,
+	"data": {
+		"label": "AI revoicer",
+		"colorType": "ai",
+		"comment": "Отправляем текст для озвучивания в revoicer. на выходе получаем mp3 файл",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Text",
+					"tooltip": "На вход подается текст в виде файла или строки",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"string",
+					"text"
+				],
+				"required": true,
+				"outputType": "audio"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
+					"options": [
+						"#pathPattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false,
+				"outputType": "path"
+			},
+			{
+				"id": "splitByLines",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Split By Lines",
+					"tooltip": "Отправляем результат построчно или же сразу все вместе. в зависимости от этого на выходе будет либо много файлов, либо один. И тут нужно учесть что максимальное кол-во символов для озвучки - 10 000, если текст большой, он все равно будет отправлен построчно.",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "voiseId",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Voice name",
+					"tooltip": "Указать имя голоса, который будет использован для озвучки. его можно взять на сайте https://ai-video-parse-frontend-yglmi.ondigitalocean.app/revoice",
+					"value": "",
+					"language": "plaintext"
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "stability",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Stability",
+					"tooltip": "Определяет степень стабильности голоса и степень случайности между каждым поколением. Более низкие значения обеспечивают более широкий эмоциональный диапазон голоса. Более высокие значения могут привести к появлению монотонного голоса с ограниченным эмоциональным диапазоном.",
+					"value": 0.5,
+					"minValue": 0,
+					"maxValue": 1,
+					"step": 0.05,
+					"useValuesAsLabels": false,
+					"minMaxValueVisible": true
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "speed",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Speed",
+					"tooltip": "Отвечает за скорость речи",
+					"value": 1,
+					"minValue": 0.5,
+					"maxValue": 1.5,
+					"step": 0.05,
+					"useValuesAsLabels": false,
+					"minMaxValueVisible": true
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "style",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Style",
+					"tooltip": "Определяет степень стилистической преувеличенности голоса. Этот параметр предназначен для усиления стилистических особенностей исходного голоса. При значении, отличном от 0, он потребляет дополнительные вычислительные ресурсы и может увеличить задержку.",
+					"value": 0,
+					"minValue": 0,
+					"maxValue": 1,
+					"step": 0.05,
+					"useValuesAsLabels": false,
+					"minMaxValueVisible": true
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "convertTimeStamp",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Convert Timestamp",
+					"tooltip": "Если включен параметр, то таймкоды в тексте не будут озвучены, а предположительно сервис будет стараться вписать голос в эти таймкоды",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "useSpeakerBoost",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Use Speaker Boost",
+					"tooltip": "Эта настройка повышает сходство с голосом исходного говорящего. Использование этой настройки требует несколько большей вычислительной нагрузки, что, в свою очередь, увеличивает задержку.",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

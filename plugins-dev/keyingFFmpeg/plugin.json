@@ -1,0 +1,16 @@
+{
+	"id": "keyingFFmpeg",
+	"name": "Keying",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Делаем keying файла.&nbsp; В отдельном окне настраиваем все необходимые параметры.&nbsp;<div>Все настраивается на статичном кадре, на любом кадре. т.е. нельзя включить проигрывание файла и начать его настраивать.&nbsp;</div>",
+	"main": "keyingFFmpeg.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

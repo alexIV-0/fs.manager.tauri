@@ -1,0 +1,17 @@
+{
+	"id": "retimeVA",
+	"name": "Retime VA",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Изменяем длительность файла. Работает только с видео и аудио",
+	"main": "retimeVA.js",
+	"ui": "ui.json",
+	"copyAssets": [],
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

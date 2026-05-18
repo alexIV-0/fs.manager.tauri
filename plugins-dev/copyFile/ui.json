@@ -1,0 +1,82 @@
+{
+	"type": "copyItem",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 520,
+	"data": {
+		"label": "Copy File",
+		"colorType": "helpers",
+		"comment": "Копируем элемент в нужную папку",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Input File",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image",
+					"text",
+					"aep",
+					"moho",
+					"folders"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
+					"options": [
+						"#pathPattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false,
+				"outputType": "path"
+			},
+			{
+				"id": "overwriteOldest",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Owerwrite Oldest File",
+					"tooltip": "Если true - перезаписываем файл, только если текущий новее предыдущего",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "deleteAfter",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Delete after copy",
+					"tooltip": "Удалить оригинальный файл после копирования?",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

@@ -1,0 +1,16 @@
+{
+	"id": "txt2string",
+	"name": "txt 2 string",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Для преобразование текстового файла в строку. Или просто ввода текста в ноду и передача дальше как текст.",
+	"main": "txt2string.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

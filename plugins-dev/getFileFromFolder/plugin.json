@@ -1,0 +1,16 @@
+{
+	"id": "getFileFromFolder",
+	"name": "Get File From Folder",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Получаем ссылки на файлы из указанной папки",
+	"main": "getFileFromFolder.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

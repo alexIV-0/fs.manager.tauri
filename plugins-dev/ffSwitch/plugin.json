@@ -1,0 +1,16 @@
+{
+	"id": "ffSwitch",
+	"name": "Frame Format Switch",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Меняем формат кадра. Из 16:9 в 9:16 и наоборот (вертикальное в горизонтальное и наоборот). Само видео так же можно настроить для отображения, т.е. как насколько оно будет выходить за границы и что будет на бэграунде.",
+	"main": "ffSwitch.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

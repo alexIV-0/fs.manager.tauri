@@ -1,0 +1,16 @@
+{
+	"id": "AItranslateVA",
+	"name": "AI Translate VA",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Перевод видео/аудио через сайт 11labs.<br><div>можно переводить как сразу видео файл, так и только аудио.&nbsp;<br></div>",
+	"main": "AItranslateVA.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "1",
+	"costUnit": "run"
+}

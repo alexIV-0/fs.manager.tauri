@@ -1,0 +1,92 @@
+{
+	"type": "transcribeAudio",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 650,
+	"data": {
+		"label": "Transcribe File",
+		"colorType": "ai",
+		"comment": "Пытаемся сделать транскрипцию аудио в текст или титры. Используем для этого whisper. <br>Все локально, модели нужно подключить через опции",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Imput File",
+					"tooltip": "Указываем видео или аудио файл который нужно распознать и выдать транскрипцию",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "whisperModel",
+				"controlType": "ddm",
+				"outputType": "string",
+				"required": true,
+				"controlProps": {
+					"label": "Whisper model",
+					"tooltip": "Нужно выбрать модель которая будет использоваться для распознавания аудио в whisper",
+					"value": "",
+					"freeInput": false,
+					"options": [
+						"#whisperModels",
+						"Custom File..."
+					]
+				}
+			},
+			{
+				"id": "outputFormat",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "output Format",
+					"tooltip": "Тип файла, который нужно найти в указанной папке. только один",
+					"options": [
+						"srt",
+						"vtt",
+						"JSONfull",
+						"json",
+						"txt"
+					],
+					"freeInput": false,
+					"value": "JSONfull"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			}
+		],
+		"output": {
+			"sourceProperty": "outputFormat"
+		},
+		"isValid": true
+	}
+}

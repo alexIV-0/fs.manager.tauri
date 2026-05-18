@@ -1,0 +1,16 @@
+{
+	"id": "overlayAndOffset",
+	"name": "Overlay And Offset",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Накладываем видео или изображение поверх другого со смещением. Как логотип в угол кадра.",
+	"main": "overlayAndOffset.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

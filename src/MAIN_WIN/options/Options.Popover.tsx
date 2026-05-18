@@ -1,0 +1,195 @@
+import { cyanColor, greyColor } from '@/Store/Color/grayColor';
+import { Box, Modal, Tab, Tabs } from '@mui/material';
+import { File, FolderCog, Plug, Settings, Waypoints } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { PluginSortableList } from './plugin/PluginSortableList';
+import TabMain from './tabs/TabMain';
+import TabNodes from './tabs/TabNodes';
+import TabPaths from './tabs/TabPaths';
+import TabTypes from './tabs/TabTypes';
+import { appSettings_client } from '@/Store/Settings/appSettings_client';
+import type { AppSettings } from '@/types/appSettings';
+
+const modalStyle = {
+	position: 'absolute',
+	top: '50%',
+	left: '50%',
+	transform: 'translate(-50%, -50%)',
+	width: '90%',
+	height: '90%',
+	border: '2px solid rgba(113, 113, 113, 0.75)',
+	borderRadius: '4px',
+	boxShadow: 24,
+	bgcolor: greyColor(18),
+	display: 'flex',
+	flexDirection: 'column',
+	overflow: 'hidden',
+};
+
+const scrollbarStyles = {
+	'&::-webkit-scrollbar': { width: '8px' },
+	'&::-webkit-scrollbar-track': { background: greyColor(10), borderRadius: '4px' },
+	'&::-webkit-scrollbar-thumb': {
+		background: greyColor(30),
+		borderRadius: '4px',
+		'&:hover': { background: greyColor(40) },
+	},
+	scrollbarWidth: 'thin',
+	scrollbarColor: `${greyColor(30)} ${greyColor(10)}`,
+};
+
+interface TabPanelProps {
+	children?: React.ReactNode;
+	index: number;
+	value: number;
+}
+
+function CustomTabPanel(props: TabPanelProps) {
+	const { children, value, index, ...other } = props;
+
+	return (
+		<div
+			role='tabpanel'
+			hidden={value !== index}
+			id={`simple-tabpanel-${index}`}
+			aria-labelledby={`simple-tab-${index}`}
+			style={{ height: '100%', overflow: 'hidden' }}
+			{...other}
+		>
+			{value === index && (
+				<Box
+					sx={{
+						p: '10px 36px',
+						borderBottom: 0.5,
+						borderColor: 'divider',
+						minHeight: '100%',
+						height: '100%',
+						overflow: 'auto',
+						...scrollbarStyles,
+						'&:hover': {
+							'&::-webkit-scrollbar-thumb': { background: greyColor(30) },
+						},
+					}}
+				>
+					{children}
+				</Box>
+			)}
+		</div>
+	);
+}
+
+interface OptionsPopoverProps {
+	open: boolean;
+	handleClose: () => void;
+}
+
+export default function OptionsPopover({ open, handleClose }: OptionsPopoverProps) {
+	const [tabIndex, setTabIndex] = useState(0);
+	const [version, setVersion] = useState('');
+
+	// Черновик настроек для TabMain. При открытии модалки инициализируется
+	// текущим состоянием стора, при закрытии кликом вне — пишется в файл,
+	// при Esc — просто отбрасывается.
+	const settings = appSettings_client((s) => s.settings);
+	const setFull = appSettings_client((s) => s.setFull);
+	const loaded = appSettings_client((s) => s.loaded);
+	const load = appSettings_client((s) => s.load);
+	const [draft, setDraft] = useState<AppSettings>(settings);
+
+	useEffect(() => {
+		if (!loaded) load();
+	}, [loaded, load]);
+
+	// Каждый раз при открытии модалки — синхронизируем черновик с актуальным стором.
+	useEffect(() => {
+		if (open) setDraft(settings);
+	}, [open, settings]);
+
+	useEffect(() => {
+		window.electronAPI
+			.invoke<string>('app:getVersion')
+			.then(setVersion)
+			.catch(() => {});
+	}, []);
+
+	const handleChange = (_event: React.SyntheticEvent, newValue: number) => {
+		setTabIndex(newValue);
+	};
+
+	// MUI Modal вызывает onClose с reason: 'backdropClick' | 'escapeKeyDown'.
+	// backdropClick (или явный close-button через handleClose) — commit черновика.
+	// escapeKeyDown — отбрасываем, ничего не сохраняем.
+	const handleModalClose = async (_event: object, reason: 'backdropClick' | 'escapeKeyDown') => {
+		if (reason !== 'escapeKeyDown') {
+			try {
+				await setFull(draft);
+			} catch (e) {
+				console.warn('[Options] failed to save settings on close:', e);
+			}
+		}
+		handleClose();
+	};
+
+	return (
+		<Modal open={open} onClose={handleModalClose}>
+			<Box sx={modalStyle}>
+				{version && (
+					<Box
+						sx={{
+							position: 'absolute',
+							top: 8,
+							right: 12,
+							opacity: 0.4,
+							fontSize: '0.72rem',
+							color: 'white',
+							pointerEvents: 'none',
+							userSelect: 'none',
+						}}
+					>
+						v{version}
+					</Box>
+				)}
+				<Box sx={{ flexShrink: 0 }}>
+					<Tabs
+						value={tabIndex}
+						onChange={handleChange}
+						centered
+						slotProps={{ indicator: { style: { display: 'none' } } }}
+						sx={{
+							borderBottom: 0.5,
+							borderColor: 'divider',
+							'& .MuiTab-root': {
+								color: greyColor(50),
+								'&.Mui-selected': { color: cyanColor(80) },
+							},
+						}}
+					>
+						<Tab disableRipple label='Main' id='tab-0' aria-controls='tabpanel-0' icon={<Settings strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label='Paths' id='tab-1' aria-controls='tabpanel-1' icon={<FolderCog strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label='Types' id='tab-2' aria-controls='tabpanel-2' icon={<File strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label='Nodes' id='tab-3' aria-controls='tabpanel-3' icon={<Waypoints strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label='Plugins' id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
+					</Tabs>
+				</Box>
+
+				<Box sx={{ flexGrow: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+					<CustomTabPanel value={tabIndex} index={0}>
+						<TabMain draft={draft} setDraft={setDraft} />
+					</CustomTabPanel>
+					<CustomTabPanel value={tabIndex} index={1}>
+						<TabPaths />
+					</CustomTabPanel>
+					<CustomTabPanel value={tabIndex} index={2}>
+						<TabTypes />
+					</CustomTabPanel>
+					<CustomTabPanel value={tabIndex} index={3}>
+						<TabNodes />
+					</CustomTabPanel>
+					<CustomTabPanel value={tabIndex} index={4}>
+						<PluginSortableList />
+					</CustomTabPanel>
+				</Box>
+			</Box>
+		</Modal>
+	);
+}

@@ -1,0 +1,16 @@
+{
+	"id": "getPicFromFileByTime",
+	"name": "Get Pic From Video",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Делаем картинки из видеофайла по таймкодам.",
+	"main": "getPicFromFileByTime.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

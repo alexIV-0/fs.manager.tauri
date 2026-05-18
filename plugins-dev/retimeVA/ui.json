@@ -1,0 +1,92 @@
+{
+	"type": "retimeVA",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 570,
+	"data": {
+		"label": "Retime VA",
+		"colorType": "ffmpeg",
+		"comment": "Изменяем длительность видео файла или аудиофайла",
+		"properties": [
+			{
+				"id": "inputVA",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Imput Video/Audio File",
+					"tooltip": "Указываем видео или аудио файл",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "timecode",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Set timecode",
+					"tooltip": "Задаем финальный таймкод для файла. Лучше если он будет задаваться из другого файла через ноду Timecode",
+					"value": 0
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "speedUp",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "SpeedUp",
+					"tooltip": "Ускоряем файл если длительность оказалась больше необходимой. Либо он будет просто обрезан. ",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "SlowDown",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "SlowDown",
+					"tooltip": "Замедляем файл если длительность оказалась меньше необходимой. Либо в конце будет просто статичный кадр",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputVA"
+		},
+		"isValid": true
+	}
+}

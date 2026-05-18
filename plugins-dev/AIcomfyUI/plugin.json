@@ -1,0 +1,16 @@
+{
+	"id": "AIcomfyUI",
+	"name": "AIcomfyUI",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Берем настроенный flow для comfyUI, и отправляем его на сервер для обработки. На выходе получаем результат",
+	"main": "AIcomfyUI.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "HH"
+}

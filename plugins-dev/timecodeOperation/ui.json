@@ -1,0 +1,73 @@
+{
+	"type": "timecodeOperation",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 400,
+	"data": {
+		"label": "Timecode Operation",
+		"colorType": "helpers",
+		"comment": "Простые математические операции над таймкодом из предыдущей ноды.<br>Сложение, вычитание, умножение, деление<br>На выходе получаем модифицированный таймкод.",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Main Timecode",
+					"tooltip": "Таймкод из предыдущей ноды.<br>На входе только один таймкод. даже если их будет несколько, операции произведуться только над первым",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"outputType": "timecode",
+				"required": true
+			},
+			{
+				"id": "operation",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Operation",
+					"tooltip": "Простые математические операции над таймкодом<br>",
+					"options": [
+						"＋ Summ",
+						"－ Substract",
+						"✕ Multiply",
+						"÷ Divide"
+					],
+					"freeInput": false,
+					"value": "＋ Summ"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "slider",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Value",
+					"tooltip": "Второй аргумет в операции. Это может быть как фиксированное число, которое будет автоматически конвертироваться либо в секунды, если нужно добавить или удалить секунды, либо как просто число, если нужно разделить таймкод на несколько равных частей.<br>Так же тут можно использовать другой таймкод.",
+					"value": 0,
+					"minValue": 0,
+					"maxValue": 10,
+					"step": 1,
+					"isTextInput": true,
+					"minMaxValueVisible": false
+				},
+				"outputType": "string",
+				"required": false,
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				]
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

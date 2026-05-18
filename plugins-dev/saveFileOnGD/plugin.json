@@ -1,0 +1,16 @@
+{
+	"id": "saveFileOnGD",
+	"name": "Save File On GD",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Сохраняем финальный файл в папку на Google Drive. А так же это нода прописывает метаданные по обработке в сам файл (только если это видеофайл)",
+	"main": "saveFileOnGD.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

@@ -1,0 +1,20 @@
+.button-edge__label {
+	position: absolute;
+	pointer-events: all;
+	transform-origin: center;
+}
+
+.MuiButton-root.button-edge__button {
+	min-width: 0;
+	width: 30px;
+	height: 30px;
+	cursor: pointer;
+	border-radius: 50%;
+	color: black;
+}
+
+.react-flow__edge-path {
+	pointer-events: all;
+	stroke-width: 3px;
+	stroke: var(--edge-color);
+}

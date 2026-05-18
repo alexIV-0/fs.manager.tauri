@@ -1,0 +1,16 @@
+{
+	"id": "join",
+	"name": "Join Video/Audio",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Объединяем видео или аудио файлы в один путем соединения их в один последовательно, т.е. друг за другом.",
+	"main": "join.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

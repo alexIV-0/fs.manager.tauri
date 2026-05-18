@@ -1,0 +1,88 @@
+{
+	"type": "sortByType",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 470,
+	"data": {
+		"label": "Sorting By Type",
+		"colorType": "helpers",
+		"comment": "Сортируем поступившие файлы по типу",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Input File",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"img",
+					"text",
+					"aep",
+					"moho"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "sortBy",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Sort By",
+					"tooltip": "По какому параметру будет происходить сортировка? Число в начале имени файла, имя файла, Дата модификации, размер",
+					"options": [
+						"StartNumber",
+						"EndNumber",
+						"Name",
+						"Date",
+						"Size"
+					],
+					"multiSelect": false,
+					"allowDuplicates": false,
+					"value": []
+				},
+				"isInput": false,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": true
+			},
+			{
+				"id": "sortDirection",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Sort Direction",
+					"tooltip": "По какому принципу будет происходить сортировка? По возрастанию (\"asc\") или по уменьшению (\"desc\")?",
+					"options": [
+						"asc",
+						"desc"
+					],
+					"multiSelect": false,
+					"allowDuplicates": false,
+					"value": [
+						"asc"
+					]
+				},
+				"isInput": false,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": true
+			}
+		],
+		"output": {
+			"functionName": "sortByTypeFunc",
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

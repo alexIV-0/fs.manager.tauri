@@ -1,0 +1,57 @@
+{
+	"type": "keyingFFmpeg",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 420,
+	"data": {
+		"label": "Keying",
+		"colorType": "ffmpeg",
+		"comment": "Настраиваем Keying для видео или картинки",
+		"properties": [
+			{
+				"id": "keyingFFmpeg",
+				"controlType": "keying",
+				"controlProps": {
+					"label": "Keying (FFmpeg)",
+					"tooltip": "Отдельное окно для кеинга. Эти настройки потом сохраняются для всех файлов, которые сюда попадают.",
+					"value": ""
+				},
+				"outputType": "accepted",
+				"required": true,
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"image"
+				]
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Папка для сохранения",
+					"options": [
+						"#pathPattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"outputType": "path",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "keyingFFmpeg"
+		},
+		"isValid": true
+	}
+}

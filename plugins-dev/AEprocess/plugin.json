@@ -1,0 +1,16 @@
+{
+	"id": "aeProcess",
+	"name": "AE Process",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Собираем необходимые данные и отправляем их в After Effects для обработки.",
+	"main": "aeProcess.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

@@ -1,0 +1,16 @@
+{
+	"id": "promptUpdater",
+	"name": "Prompt Updater",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Обновление готового промпта данными из разных источников для формирования нового промпта",
+	"main": "promptUpdater.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

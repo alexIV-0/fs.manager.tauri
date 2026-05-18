@@ -1,0 +1,115 @@
+{
+	"type": "overlayAndOffset",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 630,
+	"data": {
+		"label": "Overlay And Offset",
+		"colorType": "ffmpeg",
+		"comment": "Накладываем видео или изображение поверх другого со смещением. Как логотип в угол кадра.",
+		"properties": [
+			{
+				"id": "inputFG",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Foregraund Element",
+					"tooltip": "Тут нужно указать файл, который будет накладываться поверх нижнего элемента\n\nЭто может быть видео или картинка.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"image"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "inputBG",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Background Element",
+					"tooltip": "Тут нужно указать файл, на который будет накладываться элемент\n\nЭто может быть видео или картинка.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"image"
+				],
+				"required": true,
+				"outputType": "video"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			},
+			{
+				"id": "originalSoundFG",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Foregraund Original Audio",
+					"tooltip": "Вкл/выкл оригинального звука с Foregdaund Element (если он есть)",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "originalSoundBG",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Background Original Audio",
+					"tooltip": "Вкл/выкл оригинального звука с Foregdaund Element (если он есть). Обычно оригинальный слой оставляют, поэтому значение должно быть выбрано (true)",
+					"value": true
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "offsetBG",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Offset Background",
+					"tooltip": "Когда Foregraund Element по ширине или высоте заполняет весь кадр, то может возникнуть необходимость сместитт Background Element в противополложную сторону. \nВключаем если нужно смещение.",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "overlaySettings",
+				"controlType": "overlaySettings",
+				"controlProps": {
+					"label": "Overlay Settings",
+					"tooltip": "Настройки наложения FG поверх BG: позиция, масштаб и поворот слоя для каждого формата (landscape / portrait / square)",
+					"value": ""
+				},
+				"isInput": false,
+				"outputType": "string",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "inputBG"
+		},
+		"isValid": true
+	}
+}

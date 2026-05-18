@@ -1,0 +1,70 @@
+{
+	"type": "timecode",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 380,
+	"height": 520,
+	"data": {
+		"label": "Timecode",
+		"colorType": "helpers",
+		"comment": "Задаем таймкод для дальнейших действий. Можно вытаскивать таймкод из аудио или видео файла, а так же из нескольких файлов вытаскивать максимальный или минимальный таймкод. Тaк же можно задавать таймкод в ручную",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": false,
+				"outputType": "accepted"
+			},
+			{
+				"id": "operation",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Type",
+					"tooltip": "Задаем значение таймкода. если выставлено \"`SET`\". Так же \"`SET`\" отвечает за передачу таймкодов как есть из входящих файлов, если сам таймкод выставлен в 0. т.е. пришел файл, определеили его хронометраж - передали дальше. <br>В остальных случаях можно узнать таймкод из входящего файла или нескольких файлов. <br>Если файлов несколько, то остальные параметры помогут с определением необходимого таймкода: <br><ul><li><span style=\"font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;\">\"`<font color=\"#ffff00\">MAX</font>`\" - максимальный таймкод</span></li><li><span style=\"font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;\">\"`<font color=\"#ffff00\">MIN</font>`\" - минимальный таймкод</span></li><li><span style=\"font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;\">\"`<font color=\"#ffff00\">SUMM</font>`\" - суммарный таймкод</span></li><li>\"`<font color=\"#ffff00\">SUMM</font>`\" - суммарный таймкод</li></ul>",
+					"options": [
+						"Set",
+						"Max",
+						"Min",
+						"Summ",
+						"Scene timecode"
+					],
+					"freeInput": false,
+					"value": "Set"
+				},
+				"outputType": "timecode",
+				"required": true
+			},
+			{
+				"id": "splitBy",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Set timecode",
+					"tooltip": "Таймкод для нарезки файла. Можно указывать таймкод через . или , и он трансформируется в нормальный таймкод. Т.е. 90 = 00:01:30, или же 1.30 = 00:01:30. Это не обязательное свойство, если значение равно 0, то разделение файла будет по сценам.",
+					"value": 0
+				},
+				"isInput": false,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "operation"
+		},
+		"isValid": true
+	}
+}

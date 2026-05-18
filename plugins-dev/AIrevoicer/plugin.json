@@ -1,0 +1,16 @@
+{
+	"id": "AIrevoicer",
+	"name": "AIrevoicer",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Отправляем текст для озвучивания в revoicer. на выходе получаем mp3 файл",
+	"main": "AIrevoicer.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

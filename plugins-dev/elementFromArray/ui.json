@@ -1,0 +1,60 @@
+{
+	"type": "elementFromArray",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 400,
+	"data": {
+		"label": "Array works",
+		"colorType": "helpers",
+		"comment": "Что бы как то разделить несколько одинаковых типов файлов что бы можно было каждый из них использовать по отдельности нужна эта нода. Она вытаскивает из массива одинаковых файлов один элемент или наоборот все кроме одного элемента.<br>Так же в поле \"Text in fName\" можно указать как слова, которые нужно найти, так и ссылку на файл. В этом случае будет происходить поиск этих слов в имени файла. в случае со ссылкой на файл, будет использовано имя файла.<br>Например на входе папка с 2 видео. нужно каждое из этих видео обработать по отдельности, а потом соединь каждое со своей копией обработанно видео.<br>Т.к. нода ничего не сохраняет, то и поля Target Path так же нет<br>",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Array",
+					"tooltip": "Массив из нескольких типов одинаковых файлов.<br>Узнать это никак не получиться, это просто нужно держать в голове что в эту ноду приходит массив из файлов, а не один файл",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": ["video", "audio", "image", "aep"],
+				"outputType": "accepted",
+				"required": true
+			},
+			{
+				"id": "ddm",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Select Option",
+					"tooltip": "Выбираем что будет на выходе<br><font color=\"#ffff00\">First</font> - только первый элемент<br><font color=\"#ffff00\">Last </font>- только последний элемент<br><font color=\"#ffff00\">Except First</font> - все кроме первого элемента<div><font color=\"#ffff00\">Except Last</font> - все кроме последнего элемента<br><font color=\"#ffff00\">Random</font> - рандомный из массива<br><font color=\"#ffff00\">Text in fName</font> - ищем текст в имени файла и возвращаем этот элемент<br><font color=\"#ffff00\">Except&nbsp;text in fName</font> - возвращаем все, кроме элемента в котором есть найденый текст</div>",
+					"options": ["First", "Last", "Except First", "Except Last", "Random", "Text In fName", "Exept text in fName"],
+					"freeInput": false,
+					"value": "First"
+				},
+				"outputType": "typeByExtension",
+				"required": true
+			},
+			{
+				"id": "textInFName",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Text in file name",
+					"tooltip": "Поиск определённых слов в тексте имён файлов.<br>Слова можно указывать через запятую. чем больше слов указано, тем точнее будет поиск. поиск будет идти без учёта регистра.<br>На выходе будет файл с максимальным совпадением.<br><br>Так же можно указать работу предыдущей ноды. Но в этом случае для поиска будет использоваться имя файла без расширения.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"outputType": "string",
+				"required": false,
+				"isInput": true,
+				"acceptedTypes": ["video", "audio", "image", "text", "title", "aep", "moho"]
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

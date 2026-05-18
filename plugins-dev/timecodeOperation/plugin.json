@@ -1,0 +1,16 @@
+{
+	"id": "timecodeOperation",
+	"name": "Timecode Operation",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Простые операции над таймкодом.&nbsp;<br>Добавить, удалить, разделить и т.д.",
+	"main": "timecodeOperation.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

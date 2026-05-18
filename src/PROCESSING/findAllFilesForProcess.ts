@@ -1,0 +1,126 @@
+/*
+	тут будем искать только необходимые файлы и собирать массив для обработки
+	никакой обработки тут не будет.
+	только создаем массив файлов для обработки.
+	один ITEM в папке IN = одному (или нескольким) файлам в папке OUT
+	если это папка - то все файлы, которые в ней должны быть использованы для создания финального ролика
+*/
+
+import { isScanningStore } from '@/Store/MainWin/isScaning_store';
+import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
+import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
+import { useErrors_Store } from '@/Store/Processing/useErrors_Store';
+import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
+import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
+import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
+import { joinPath } from '@/Utils/joinPath';
+import { reloadFolders } from './reloadFolders';
+import { timeToWait } from './runProcessing';
+import { waitingSome } from './waitingSome';
+import { getSignal } from './function/utils/processingAbort';
+import { findFilesForSingleFolder } from './findFilesForSingleFolder';
+import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
+import { getAppSettings } from '@/Store/Settings/appSettings_client';
+
+export async function findAllFilesForProcess(clearQueue = true) {
+	useProcessingStats_store.getState().incIteration();
+	const { setMainFolderIndex, setCurentFolderIndex } = isScanningStore.getState();
+	const { errors, clearErrorsState } = useErrors_Store.getState();
+	const { setStatusBarState } = useStatusBar_Store.getState();
+	const signal = getSignal();
+
+	const dateTime: any = await window.electronAPI.invoke('formatNameByPattern', {
+		string: '$YYYY.$DD.$MM-$HH.$mm',
+	});
+	const year = dateTime.slice(0, 4);
+	const findDateName = dateTime.slice(5);
+	console.groupCollapsed(`File search (${findDateName}):`);
+
+	if (clearQueue) {
+		useWorkProject_Store.getState().clearWorkProjectState();
+		clearErrorsState();
+	}
+
+	// цикл по вкл. главным папкам
+	for (let i = 0; i < mainFolders_stor.getState().mainFolderArr.length; i++) {
+		if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+		const curMainFolder = mainFolders_stor.getState().mainFolderArr[i];
+		if (!curMainFolder.active) continue;
+
+		const mainFolderName = await window.electronAPI.invoke('pathBasename', curMainFolder.path);
+
+		// обновляем все папки, вдруг новые добавили
+		const finalArr = await reloadFolders(curMainFolder);
+		mainFolders_stor.getState().updateParameters({
+			id: curMainFolder.id,
+			projectFolders: finalArr,
+		});
+
+		setMainFolderIndex(i);
+		let getOffArr: string[] = loadFromLocalStorage(curMainFolder.id) || [];
+
+		// ── авто-отключение проектов по mtime папки OUT ──────────────────
+		// Если включено в настройках и OUT не модифицировалась N дней —
+		// добавляем проект в off-список (тот же массив в LS, что и ручной чекбокс).
+		// Если в итоге не остаётся включённых проектов — выключаем главную папку.
+		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
+		if (autoDisableDays && autoDisableDays > 0) {
+			const cutoffMs = Date.now() - autoDisableDays * 24 * 60 * 60 * 1000;
+			const offSet = new Set<string>(getOffArr);
+			for (const projectName of curMainFolder.projectFolders) {
+				if (offSet.has(projectName)) continue;
+				const outPath = joinPath(curMainFolder.path, projectName, 'OUT');
+				const info: any = await window.electronAPI.invoke('getFileInfo', outPath);
+				if (!info || !info.isDirectory) continue;
+				if (info.modifiedMs < cutoffMs) {
+					offSet.add(projectName);
+					console.log(`[autoDisable] ${mainFolderName}/${projectName} — OUT idle > ${autoDisableDays}d`);
+				}
+			}
+			if (offSet.size !== getOffArr.length) {
+				getOffArr = Array.from(offSet);
+				saveToLocalStorage(curMainFolder.id, getOffArr);
+			}
+			// Если ВСЕ проекты выключены — выключаем и главную папку.
+			if (curMainFolder.projectFolders.length > 0 && offSet.size >= curMainFolder.projectFolders.length) {
+				mainFolders_stor.getState().updateParameters({ id: curMainFolder.id, active: false });
+				console.log(`[autoDisable] ${mainFolderName} — disabled (no active projects)`);
+				continue;
+			}
+		}
+
+		// цикл по всем вкл. папкам проектов в основной папке
+		for (let fIndex = 0; fIndex < curMainFolder.projectFolders.length; fIndex++) {
+			if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+			const projectName = curMainFolder.projectFolders[fIndex];
+			if (getOffArr.includes(projectName)) continue;
+
+			setCurentFolderIndex(fIndex);
+			setStatusBarState(`[${mainFolderName}] - ${projectName}`);
+
+			console.groupCollapsed(`[${mainFolderName}] - ${projectName}`);
+
+			const projectPathOnGD = joinPath(curMainFolder.path, projectName);
+
+			const beforeCount = useWorkProject_Store.getState().workProject.length;
+			await findFilesForSingleFolder(projectPathOnGD as string, curMainFolder.path as string, year, findDateName);
+			const addedCount = useWorkProject_Store.getState().workProject.length - beforeCount;
+			if (addedCount > 0) {
+				console.log(`%c→ found ${addedCount} item(s)`, 'color: #d4a017');
+			}
+
+			console.groupEnd();
+			await waitingSome(timeToWait.folders);
+		}
+
+		console.log('-----------------');
+	}
+	console.groupEnd();
+
+	if (errors.length != 0) {
+		errors.forEach((error: any) => console.error(`Error in ${error.project}: ${error.message}`));
+	}
+	if (clearQueue) clearErrorsState();
+}

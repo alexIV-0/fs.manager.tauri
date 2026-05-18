@@ -1,0 +1,65 @@
+{
+	"type": "FileInfo",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 400,
+	"data": {
+		"label": "File Info",
+		"colorType": "helpers",
+		"comment": "",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Можно подключить видео, аудио или картинку как файлы. а так же просто текст и string.<br>Но тогда будут работать только манипуляции с имененм файла или текстом.<br>Что бы получить информацию о формате кадра или ширине/высоте, нужно подключить только видео файл или картинку.<br>",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image",
+					"string",
+					"files"
+				],
+				"outputType": "accepted",
+				"required": true
+			},
+			{
+				"id": "getInfo",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Get Info",
+					"tooltip": "Какую информацию получаем из файла<br><font color=\"#ffff00\">frameFormat</font> - формат кадра, т.к. вертикальный, горизонтальный или квадрат<br><span style=\"color: rgb(255, 255, 0);\">duration in sec </span>- длительность видео в сек. (не таймкод)<br><span style=\"color: rgb(255, 255, 0);\">duration in timecode&nbsp;</span>- длительность видео в виде таймкода<div><font color=\"#ffff00\">frame Rate</font> - кол-во адлов в сек в видео файле<br><font color=\"#ffff00\">width</font> - только ширина кадра<br><font color=\"#ffff00\">height</font> - только высота кадра<div><br><div>- обработки имени файла -<br><font color=\"#ffff00\">text in []</font> - текст из квадратных скобок имени файла<br><font color=\"#ffff00\">text in () </font>- текст из круглых скобок имени файла<br><font color=\"#ffff00\">text without () </font>- убираются все что есть в круглых скобках<br><font color=\"#ffff00\">text without []</font>&nbsp;- убираются все что есть в квадратных&nbsp; скобках<br><font color=\"#ffff00\">text without ()[]</font> - убираются все что есть в квадратных и круглых скобках<br>все эмоджи автоматически убираются из имени файла если они есть.</div></div></div>",
+					"options": [
+						"frameFormat",
+						"duration In Seconds",
+						"duration in Timecode",
+						"frame Rate",
+						"width",
+						"height",
+						"- file name",
+						"text in []",
+						"text in ()",
+						"text without []",
+						"text without ()",
+						"text without ()[]"
+					],
+					"freeInput": false,
+					"value": "frameFormat"
+				},
+				"outputType": "string",
+				"required": true
+			}
+		],
+		"output": {
+			"sourceProperty": "getInfo"
+		},
+		"isValid": true
+	}
+}

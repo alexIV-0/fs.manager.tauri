@@ -1,0 +1,183 @@
+{
+	"type": "AItranslateVA",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 650,
+	"data": {
+		"label": "AI Translate VA",
+		"colorType": "ai",
+		"comment": "Перевод видео/аудио через сайт 11labs.<br><div>можно переводить как сразу видео файл, так и только аудио.&nbsp;<br>Только аудио - предпочтительнее.<br><br>Поддерживаемые языки&nbsp;<br><font color=\"#74c7ec\">Arabic, Bulgarian, Chinese, Croatian, Czech, Danish, Dutch, English, Filipino, Finnish, French, German, Greek, Hindi, Indonesian, Italian, Japanese, Korean, Malay, Polish, Portuguese, Romanian, Russian, Slovak, Spanish, Swedish, Tamil, Turkish, Ukrainian</font><br><br>так же можно переводить нескольких спикеров сразу.&nbsp;<br>а так же автоматически убрать бэграунд</div>",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Файл для перевода.<br>Можно передавать массив файлов. тогда все они будут переведены на выбранные языки.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"outputType": "accepted",
+				"required": true
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Папка для сохранения. Указывается в виде маски. все маски начинаются с $.<br><div><font color=\"#ffff00\">$clearName</font> - чистое имя найденного элемента в папке IN на GD без <font color=\"#ffff00\">эмоджиков</font> и кавычек () []</div><div><font color=\"#ffff00\">$findTime</font> - время когда был найден элемент в папке IN</div><div><font color=\"#ffff00\">$curItemName</font> - текущий элемент в папке IN (с эмоджиками и кавычками). это может быть папка. но без расширения</div><div><font color=\"#ffff00\">$id</font> - уникальный id для каждого элемента если он есть в имени найденного элемента в папке IN</div><div><font color=\"#ffff00\">$projectName</font> - название проекта (имя папки в которой находится папка IN)</div><div><font color=\"#ffff00\">$projectPathGD</font> - полный путь до папки проекта на GD</div><div><font color=\"#ffff00\">$mainFolderName</font> - название папки, в которой находится проект на GD</div><div><font color=\"#ffff00\">$mainFolderPath</font> - название папки, в которой находится проект на GD</div><div><br></div><div><span style=\"font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;\"><font color=\"#ffff00\">$index</font> - индекс элемента если файл не единственный</span></div><div><font color=\"#ffff00\">$fileName</font> - имя текущего файла без расширения как есть</div><div><font color=\"#ffff00\">$clearFileName</font> - чистое имя текущего файла без расширения без кавычек, эмоджи и текста в круглых и квадратных скобках</div><div><br></div><div><font color=\"#ffff00\">$curMonthStr</font> - текущий месяц в виде строки (January, February, ...)</div><div><font color=\"#ffff00\">$localFolder</font> - рабочая папка на локальном дике (указывается в настройках)</div><div><br></div><div><font color=\"#ffff00\">$YYYY</font> - год (4 цифры)</div><div><font color=\"#ffff00\">$MM</font> - месяц (2 цифры)</div><div><font color=\"#ffff00\">$DD - день (2 цифры)</font></div><div><font color=\"#ffff00\">$HH</font> - часы (2 цифры)</div><div><font color=\"#ffff00\">$mm</font> - минуты (2 цифры)</div><div><font color=\"#ffff00\">$ss</font> - секунды (2 цифры)</div><div><br></div><div><b>Локальные маски этой ноды:</b></div><div><font color=\"#ffff00\">$ISO</font> - короткий ISO-код языка перевода (ru, en, ja, ...)</div><div><font color=\"#ffff00\">$language</font> - полное название языка перевода (Russian, English, ...)</div><div>Если ни $ISO ни $language не указаны в маске — суффикс _&lt;ISO&gt; добавляется к имени файла автоматически.</div>",
+					"options": [
+						"#pathPattern",
+						"$ISO",
+						"$language",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"outputType": "path",
+				"required": false
+			},
+			{
+				"id": "sourceLang",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Source Language",
+					"tooltip": "Исходный язык. Если не указан — определяется автоматически (auto).",
+					"options": [
+						"auto",
+						"Arabic",
+						"Bulgarian",
+						"Chinese",
+						"Croatian",
+						"Czech",
+						"Danish",
+						"Dutch",
+						"English",
+						"Filipino",
+						"Finnish",
+						"French",
+						"German",
+						"Greek",
+						"Hindi",
+						"Indonesian",
+						"Italian",
+						"Japanese",
+						"Korean",
+						"Malay",
+						"Polish",
+						"Portuguese",
+						"Romanian",
+						"Russian",
+						"Slovak",
+						"Spanish",
+						"Swedish",
+						"Tamil",
+						"Turkish",
+						"Ukrainian"
+					],
+					"multiSelect": false,
+					"allowDuplicates": false,
+					"value": [
+						"auto"
+					],
+					"optionsOnly": true
+				},
+				"isInput": false,
+				"outputType": "path",
+				"required": false
+			},
+			{
+				"id": "translateLang",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Translate Language",
+					"tooltip": "Можно выбрать несколько языков для перевода.",
+					"options": [
+						"Arabic",
+						"Bulgarian",
+						"Chinese",
+						"Croatian",
+						"Czech",
+						"Danish",
+						"Dutch",
+						"English",
+						"Filipino",
+						"Finnish",
+						"French",
+						"German",
+						"Greek",
+						"Hindi",
+						"Indonesian",
+						"Italian",
+						"Japanese",
+						"Korean",
+						"Malay",
+						"Polish",
+						"Portuguese",
+						"Romanian",
+						"Russian",
+						"Slovak",
+						"Spanish",
+						"Swedish",
+						"Tamil",
+						"Turkish",
+						"Ukrainian"
+					],
+					"multiSelect": true,
+					"allowDuplicates": false,
+					"value": [],
+					"optionsOnly": true
+				},
+				"isInput": false,
+				"outputType": "path",
+				"required": true
+			},
+			{
+				"id": "numSpeakers",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Num Speakers",
+					"tooltip": "Количество спикеров в файле. 0 = автоопределение.",
+					"value": 0,
+					"minValue": 0,
+					"maxValue": 5,
+					"step": 1,
+					"useValuesAsLabels": true,
+					"minMaxValueVisible": true
+				},
+				"isInput": false,
+				"outputType": "number",
+				"required": false
+			},
+			{
+				"id": "dropBackgroundAudio",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Drop Background Audio",
+					"tooltip": "Убрать фоновый звук (музыку, шумы) из оригинала.",
+					"value": false
+				},
+				"isInput": false,
+				"outputType": "boolean",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": false
+	}
+}

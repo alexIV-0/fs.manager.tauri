@@ -1,0 +1,16 @@
+{
+	"id": "convertFile_v2",
+	"name": "Convert File v2",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Универсальная нода для конвертации файлов. <br>Работает только с video, аудио и image.<br>Для конвертации использует ffmpeg.<br>Для всех команд есть миниинтерфейс. там можно настроить тип, кодек, и небольшие простые фильтры.<br>Подходит для неопытного пользователя",
+	"main": "convertFileV2.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

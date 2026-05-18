@@ -1,0 +1,41 @@
+{
+	"type": "loop",
+	"width": 600,
+	"height": 400,
+	"data": {
+		"label": "-= Loop =-",
+		"colorType": "helpers",
+		"comment": "",
+		"executionType": "loop",
+		"properties": [
+			{
+				"id": "loopInput",
+				"controlType": "loop",
+				"controlProps": {
+					"label": "Loop",
+					"tooltip": "Подключи массив элементов для итерации",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image",
+					"text",
+					"aep",
+					"moho",
+					"folders",
+					"all"
+				],
+				"required": true,
+				"outputType": "accepted"
+			}
+		],
+		"output": {
+			"sourceProperty": "loopInput"
+		},
+		"isUnique": false,
+		"required": false,
+		"isValid": false
+	}
+}

@@ -1,0 +1,47 @@
+.output-handlers {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	position: absolute;
+	bottom: 24px;
+	right: 4px;
+	padding-bottom: 4px;
+}
+
+.output-handler {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 14px;
+}
+
+.react-flow__handle {
+	width: 20px;
+	height: 20px;
+	transform: none;
+	left: 0;
+	top: 0;
+	position: relative;
+}
+
+/* убираем дефолтные рамку/подсветку react-flow у кастомных нод */
+.react-flow__node {
+	border: none;
+	outline: none !important;
+	box-shadow: none;
+	padding: 0;
+	background: transparent;
+}
+
+.react-flow__node:focus,
+.react-flow__node:focus-visible {
+	outline: none !important;
+	box-shadow: none;
+}
+
+/* собственная подсветка выделенной ноды — мягкий зелёный */
+.react-flow__node.selected {
+	outline: 5px solid #18b835c8 !important;
+	outline-offset: 0px;
+	border-radius: 6px;
+}

@@ -1,0 +1,58 @@
+{
+	"type": "ConvertFile_v2",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 400,
+	"data": {
+		"label": "Convert File (v2)",
+		"colorType": "ffmpeg",
+		"comment": "Конвертируем файл в другой формат или с другими параметрами. Все параметры выставляются вручную",
+		"properties": [
+			{
+				"id": "convertSettings",
+				"controlType": "convertSettings",
+				"controlProps": {
+					"label": "Convert Settings",
+					"tooltip": "",
+					"value": ""
+				},
+				"outputType": "typeByExtension",
+				"required": true,
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image"
+				]
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern",
+						"CustomFolder..."
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "convertSettings"
+		},
+		"isValid": true
+	}
+}

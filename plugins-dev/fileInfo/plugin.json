@@ -1,0 +1,16 @@
+{
+	"id": "fileInfo",
+	"name": "File Info",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Вытаскиваем информацию из файла. Такую как чистое имя файла, размер кадра, формат кадра и т.д.",
+	"main": "fileInfo.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

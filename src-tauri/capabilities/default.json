@@ -1,0 +1,29 @@
+{
+	"identifier": "default",
+	"description": "Default capability with full access",
+	"windows": ["*"],
+	"permissions": [
+		"core:default",
+		"core:event:default",
+		"core:path:default",
+		"core:resources:default",
+		"core:window:default",
+		"core:window:allow-create",
+		"core:window:allow-close",
+		"core:window:allow-show",
+		"core:window:allow-hide",
+		"core:window:allow-set-size",
+		"core:window:allow-set-position",
+		"core:webview:default",
+		"core:webview:allow-create-webview-window",
+		"fs:default",
+		"fs:read-all",
+		"fs:write-all",
+		"fs:scope",
+		"fs:scope-app",
+		"fs:scope-appdata",
+		"fs:scope-home",
+		"dialog:default",
+		"shell:default"
+	]
+}

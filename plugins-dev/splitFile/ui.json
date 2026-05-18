@@ -1,0 +1,93 @@
+{
+	"type": "splitFile",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 420,
+	"height": 560,
+	"data": {
+		"label": "Split File",
+		"colorType": "ffmpeg",
+		"comment": "Нарезаем файл на отдельные части, либо по заданному таймкоду, либо с учетом сцен (стыков)",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Input File",
+					"value": ""
+				},
+				"isInput": true,
+				"isOutput": true,
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если не указан - файл будет сохранен в ту же папку с рандомным именем",
+					"options": [
+						"#filePattern"
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"path"
+				],
+				"required": false,
+				"outputType": "path"
+			},
+			{
+				"id": "splitBy",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Duration",
+					"tooltip": "Таймкод для нарезки файла. Можно указывать таймкод через . или , и он трансформируется в нормальный таймкод. Т.е. 90 = 00:01:30, или же 1.30 = 00:01:30. Это не обязательное свойство, если значение равно 0, то разделение файла будет по сценам.",
+					"value": 0
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "sceneDetection",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Split by scenes",
+					"tooltip": "Нужно ли учитывать стыки сцен при нарезании?",
+					"value": false
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "blackFrames",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Black Frames detection",
+					"tooltip": "Нужно ли искать черные кадры для разбивки?",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"functionName": "splitFileFunc",
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

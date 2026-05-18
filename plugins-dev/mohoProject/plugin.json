@@ -1,0 +1,16 @@
+{
+	"id": "mohoProject",
+	"name": "Moho Project",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Обновляем проект Moho и сохраняем под новым именем.<br>Может работать в цикле и на выходе будет несколько файлов проектов с разными именами",
+	"main": "mohoProject.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

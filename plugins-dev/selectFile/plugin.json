@@ -1,0 +1,16 @@
+{
+	"id": "selectFile",
+	"name": "Select File",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Выбираем файл не динамически, а указываем на конкретный файл.<br>Обычно это нужно для статичных файлов пропмтов и ватермарков",
+	"main": "selectFile.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

@@ -1,0 +1,16 @@
+{
+	"id": "mergeToArray",
+	"name": "Merge 2 Array",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Объединяем несколько источников в один массив",
+	"main": "mergeToArray.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

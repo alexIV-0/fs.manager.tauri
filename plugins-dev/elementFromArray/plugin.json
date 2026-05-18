@@ -1,0 +1,16 @@
+{
+	"id": "elementFromArray",
+	"name": "Array works",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Простая работа с массивом элементов.<br>Взять первый/последний элемент из массива,&nbsp; <br>все кроме первого/последнего, <br>рандомный",
+	"main": "elementFromArray.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

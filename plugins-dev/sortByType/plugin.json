@@ -1,0 +1,16 @@
+{
+	"id": "sortByType",
+	"name": "Sort By Type",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Сортирцем файл по какому либо признаку",
+	"main": "sortByType.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}
