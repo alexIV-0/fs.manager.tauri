@@ -88,7 +88,7 @@ jobs:
             args: --target x86_64-apple-darwin
             artifact-suffix: x86_64
           - platform: windows-latest
-            args: ''
+            args: --bundles nsis
             artifact-suffix: windows
 
     runs-on: ${{ matrix.platform }}
@@ -112,9 +112,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: yarn install
-
-      - name: Build plugins
-        run: yarn plug:build:all
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

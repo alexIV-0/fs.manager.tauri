@@ -54,8 +54,7 @@
 		],
 		"resources": {
 			"icons/nodeS.icns": "icons/nodeS.icns",
-			"icons/nodeS.ico": "icons/nodeS.ico",
-			"../distr-plugins/**/*": "plugins"
+			"icons/nodeS.ico": "icons/nodeS.ico"
 		}
 	}
 }
