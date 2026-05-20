@@ -1,0 +1,10 @@
+{
+	"id": "updater",
+	"name": "App Updater",
+	"description": "Manages application updates from GitHub releases. Provides fetchReleases, downloadAndOpen, getPlatformAsset.",
+	"version": "1.0.0",
+	"apiVersion": 1,
+	"type": ["system"],
+	"main": "updater.js",
+	"external": []
+}

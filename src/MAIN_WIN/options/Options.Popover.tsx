@@ -168,7 +168,7 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 						<Tab disableRipple label='Paths' id='tab-1' aria-controls='tabpanel-1' icon={<FolderCog strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label='Types' id='tab-2' aria-controls='tabpanel-2' icon={<File strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label='Nodes' id='tab-3' aria-controls='tabpanel-3' icon={<Waypoints strokeWidth={0.8} size={42} />} />
-						<Tab disableRipple label='Plugins' id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label='Plug & Update' id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
 					</Tabs>
 					<Button
 						variant='contained'
