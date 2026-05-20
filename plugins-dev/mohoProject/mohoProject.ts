@@ -1,75 +1,64 @@
-import { getSomeFromFolder } from '../../electron/main/fileSistem/getSomeFromFolder';
-import { sendToMW } from '../_template/pluginSender';
+// mohoProject — запускает Lua-скрипт в Moho для обработки аудио-файлов в проекте.
+// Tauri-port: child_process.exec → exec helper (Rust exec_command), fs через helper.
+
 import path from 'path';
-import fs from 'fs';
-import { exec } from 'child_process';
+import { fs, exec, sendToMW } from '../_template/tauri';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-function execCommand(command: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		exec(command, (error) => {
-			if (error) {
-				reject(error);
-			} else {
-				resolve();
-			}
-		});
-	});
-}
-
-export async function mohoProjectFunc(_item: any, _description: any) {
+export async function mohoProjectFunc(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
 	const inputFiles = _item.import?.inputFile ?? [];
-	if (inputFiles.length === 0) {
-		throw new Error('inputFile is empty');
-	}
+	if (inputFiles.length === 0) throw new Error('inputFile is empty');
 
 	const inputFilePath = Array.isArray(inputFiles) ? inputFiles[0] : inputFiles;
 	const projectFolder = path.dirname(inputFilePath);
 	const originalMohoProject = path.basename(inputFilePath, path.extname(inputFilePath));
 
-	const mohoRaw = _description.programmPath.moho;
+	const mohoRaw = _description.programmPath?.moho;
 	const mohoPath = (Array.isArray(mohoRaw) ? String(mohoRaw[0]) : String(mohoRaw)).trim();
+	if (!mohoPath) throw new Error('[mohoProject] description.programmPath.moho не указан');
 
 	const scriptPath = path.join(projectFolder, 'script.lua');
-
-	const luaScript = `
-taperedCogs = false
+	const luaScript =
+		`taperedCogs = false
 function MohoScript(moho)
 	local file_path = "${inputFilePath.replace(/\\/g, '\\\\')}"
 	moho:FileOpen(file_path)
 	gd_auto_animation_general:Run(moho)
 end
-	`;
+`;
 
 	try {
-		fs.writeFileSync(scriptPath, luaScript, 'utf8');
+		await fs.write(scriptPath, luaScript);
 
-		const command = `"${mohoPath}" "${scriptPath}"`;
-		let audioFiles = getSomeFromFolder(projectFolder, [{ type: 'audio', ext: _description.typeOfFile['audio'] }]).audio;
+		const audioExts: string[] = _description.typeOfFile?.['audio'] ?? [];
+		const mohoExts: string[] = _description.typeOfFile?.['moho'] ?? [];
 
+		let audioFiles = await fs.filesByExt(projectFolder, audioExts);
 		while (audioFiles.length > 0) {
 			sendToMW('statusbar', {
 				text: `${_description.infoText}: [Moho Project] Processing (${audioFiles.length} audio files)`,
 			});
 
-			await execCommand(command);
+			const result = await exec(mohoPath, [scriptPath]);
+			if (result.exit_code !== 0) {
+				throw new Error(`Moho exited with code ${result.exit_code}: ${result.stderr.slice(-400)}`);
+			}
 
-			audioFiles = getSomeFromFolder(projectFolder, [{ type: 'audio', ext: _description.typeOfFile['audio'] }]).audio;
+			audioFiles = await fs.filesByExt(projectFolder, audioExts);
 		}
 
-		const mohoProjects = getSomeFromFolder(projectFolder, [{ type: 'moho', ext: _description.typeOfFile['moho'] }]).moho;
-
+		const mohoProjects = await fs.filesByExt(projectFolder, mohoExts);
 		for (const mohoProj of mohoProjects) {
-			const mohjoProjName = path.basename(mohoProj, path.extname(mohoProj));
-			if (mohjoProjName !== originalMohoProject) {
+			const projName = path.basename(mohoProj, path.extname(mohoProj));
+			if (projName !== originalMohoProject) {
 				finalFile.push(path.join(projectFolder, mohoProj));
 			}
 		}
 
-		fs.unlinkSync(scriptPath);
+		await fs.remove(scriptPath).catch(() => {});
 	} catch (error) {
 		sendToMW('log', { text: `❌ Error in Moho plugin: ${error}` });
 		throw error;

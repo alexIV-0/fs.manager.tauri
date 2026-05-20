@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/*.html)",
+      "Bash(ls -la /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.tauri/*.html)",
+      "Bash(sed 's/:$//g')",
+      "Bash(cargo check:*)",
+      "Bash(npx tsc:*)",
+      "Bash(grep -E \"\\\\.rs$\")",
+      "Bash(find /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/PROCESSING -type f 2>/dev/null | sort)",
+      "Read(//Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/PROCESSING/**)",
+      "Bash(find /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/Store -type f 2>/dev/null | sort)",
+      "Read(//Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/Store/**)"
+    ]
+  }
+}

@@ -756,7 +756,9 @@ function DocModal({ open, onClose }: DocModalProps) {
 									'& h3': { fontSize: 16, fontWeight: 600, mt: 2, mb: 0.75, color: '#eee' },
 									'& p': { margin: '0 0 10px 0' },
 									'& ul, & ol': { paddingLeft: 3, margin: '8px 0' },
-									'& li': { marginBottom: 4 },
+									'& li': { marginBottom: '4px' },
+									'& li p': { margin: 0 },
+									'& img': { maxWidth: '100%', borderRadius: '4px', display: 'block', margin: '12px 0' },
 									'& strong': { color: '#eee', fontWeight: 700 },
 									'& em': { fontStyle: 'italic' },
 									'& code': {

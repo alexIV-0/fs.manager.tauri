@@ -43,8 +43,11 @@ pub fn getFileInfo(path: String) -> Result<super::fs_commands::FileInfo, String>
 }
 
 #[tauri::command]
-pub fn getFileTypeByExtname(ext: String) -> Result<String, String> {
-    Ok(super::fs_commands::get_file_type_by_extname(ext))
+pub fn getFileTypeByExtname(
+    ext: String,
+    state: tauri::State<std::sync::Mutex<super::settings_commands::AppSettingsState>>,
+) -> Result<String, String> {
+    Ok(super::fs_commands::get_file_type_by_extname(ext, state))
 }
 
 // ==================== FILE OPERATIONS ====================
@@ -132,6 +135,11 @@ pub fn getOptionsFolder(app: tauri::AppHandle) -> Result<String, String> {
     super::fs_commands::get_user_data_path(app)
 }
 
+#[tauri::command]
+pub fn getPluginsDevPath() -> Result<String, String> {
+    super::fs_commands::get_plugins_dev_path()
+}
+
 // ==================== CHECK ====================
 
 #[tauri::command]
@@ -178,8 +186,12 @@ pub fn fsWatchStop(folderPath: String, state: tauri::State<'_, std::sync::Mutex<
 // ==================== PREVIEW ====================
 
 #[tauri::command]
-pub async fn previewResize(app: tauri::AppHandle, opts: super::fs_commands::PreviewResizeOpts) -> Result<(), String> {
-    super::window_commands::preview_resize(app, opts).await
+pub async fn previewResize(
+    app: tauri::AppHandle,
+    opts: super::fs_commands::PreviewResizeOpts,
+    state: tauri::State<'_, std::sync::Mutex<super::window_commands::PreviewWindowState>>,
+) -> Result<(), String> {
+    super::window_commands::preview_resize(app, opts, state).await
 }
 
 #[tauri::command]

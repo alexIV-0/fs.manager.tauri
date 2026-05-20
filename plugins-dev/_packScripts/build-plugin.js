@@ -3,15 +3,49 @@ import path from 'path';
 import fs from 'fs/promises';
 import { builtinModules } from 'module';
 
+// Plugins run in Tauri WebView, not Node.js. Rust plugin:// handler
+// rewrites `node:*` imports to async polyfills in src/PluginAPI/* at fetch time.
+// Plugins should use @plugin-api/tauri helper for fs/ffmpeg/exec/ae operations.
+// Modules below have working async polyfills — keep them external so the handler
+// can substitute them at runtime.
+const POLYFILLED = new Set([
+	'path',
+	'buffer',
+	'url',
+	'util',
+	'events',
+	'os',
+	// fs/crypto/child_process polyfills exist but are async-only — plugins must
+	// migrate to the @plugin-api/tauri helper. Old plugins still load.
+	'fs',
+	'fs/promises',
+	'crypto',
+	'child_process',
+	'stream',
+	'stream/promises',
+]);
+
 const nodeBuiltinsPlugin = {
 	name: 'node-builtins',
 	setup(build) {
-		const builtins = new Set(builtinModules);
-
-		build.onResolve({ filter: /^[a-zA-Z0-9_\-:]+$/ }, (args) => {
+		build.onResolve({ filter: /^node:/ }, (args) => {
 			const name = args.path.replace(/^node:/, '');
-			if (builtins.has(name)) {
+			if (POLYFILLED.has(name)) {
 				return { path: `node:${name}`, external: true };
+			}
+			// Bare `node:something` we don't polyfill yet — fail loudly.
+			return {
+				errors: [
+					{
+						text: `Plugin imports node:${name} which has no polyfill in Tauri. Use @plugin-api/tauri helper instead.`,
+					},
+				],
+			};
+		});
+		// Bare imports of builtins without `node:` prefix (e.g. `import fs from 'fs'`)
+		build.onResolve({ filter: /^[a-zA-Z0-9_\-]+$/ }, (args) => {
+			if (POLYFILLED.has(args.path)) {
+				return { path: `node:${args.path}`, external: true };
 			}
 		});
 	},
@@ -45,13 +79,17 @@ const outFile = path.join(outDir, manifest.main);
 const entryFileName = manifest.main.replace(/\.js$/, '.ts');
 
 // ===== СБОРКА =====
+// platform: 'browser' — плагины крутятся в WebView, не в Node.js
+// target: 'es2022' — современный WebView/Safari/Chrome поддерживает всё
+// node:* импорты остаются external и переписываются Rust plugin:// handler'ом
+// на полифилы из src/PluginAPI/*.
 await esbuild.build({
 	entryPoints: [path.join(pluginDevPath, entryFileName)],
 	outfile: outFile,
 
 	bundle: true,
-	platform: 'node',
-	target: 'node18',
+	platform: 'browser',
+	target: 'es2022',
 	format: 'esm',
 	sourcemap: true,
 
@@ -59,7 +97,7 @@ await esbuild.build({
 	minify: false,
 	keepNames: true,
 
-	external: ['electron', ...builtinModules, ...builtinModules.map((m) => `node:${m}`), ...(manifest.external || [])],
+	external: ['electron', ...(manifest.external || [])],
 
 	plugins: [nodeBuiltinsPlugin],
 });

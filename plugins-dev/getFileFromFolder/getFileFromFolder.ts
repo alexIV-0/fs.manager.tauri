@@ -1,16 +1,19 @@
-import { checkFolderPath } from '../../electron/main/fileSistem/checkFolderPath';
+// getFileFromFolder — ищет файлы/папки в заданной директории по паттерну.
+// Поддерживает рекурсивный поиск, выбор по тегу из имени родителя или случайный выбор.
+// Tauri-port: все fs-операции через @plugin-api/tauri helper.
+
+import path from 'path';
+import { fs, sendToMW } from '../_template/tauri';
 import { formatNameByPattern } from '../../electron/main/fileSistem/formatNameByPattern';
 import { extractFromParentheses } from '../../electron/main/utilits/extractFromParentheses';
-import { getSomeFromFolder, recursiveFindFiles } from '../../electron/main/fileSistem/getSomeFromFolder';
 import { getRandomInt } from '../../electron/main/utilits/getRandomInt';
-import path from 'path';
-import { sendToMW } from '../_template/pluginSender';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-export async function getFileFromFolder(_item: any, _description: any) {
-	const finalFile = [];
-	let curPath = [..._item.inputFolder];
+export async function getFileFromFolder(_item: any, _description: any): Promise<string[]> {
+	const finalFile: string[] = [];
+
+	let curPath: string[] = [..._item.inputFolder];
 	if (_item.import.inputFolder && _item.import.inputFolder.length > 0) {
 		curPath.unshift(..._item.import.inputFolder);
 	} else {
@@ -21,45 +24,43 @@ export async function getFileFromFolder(_item: any, _description: any) {
 		string: path.join(...curPath),
 		description: _description,
 	});
-	sendToMW('statusbar', `${_description.infoText}: [get File from Folder]\n${pathByPattern}`);
+	sendToMW('statusbar', { text: `${_description.infoText}: [get File from Folder]\n${pathByPattern}` });
 
-	const textInBrackets = extractFromParentheses(path.basename(_description.curItem, path.extname(_description.curItem)));
+	// Если включён поиск по тегу из имени файла или случайной подпапке —
+	// сначала залезаем в подпапку.
+	const textInBrackets = extractFromParentheses(
+		path.basename(_description.curItem, path.extname(_description.curItem)),
+	);
 	if ((textInBrackets.length > 0 && _item.searchInFolder) || _item.searchInRandomFolder) {
-		const folderArr = getSomeFromFolder(pathByPattern, [{ type: 'folders', ext: [] }]).folders;
+		const folderArr = await fs.folders(pathByPattern);
 		if (_item.searchInFolder) {
 			const match = textInBrackets.find((text) => folderArr.includes(text));
-			if (match) {
-				pathByPattern = path.join(pathByPattern, match);
-			}
+			if (match) pathByPattern = path.join(pathByPattern, match);
 		}
-		if (_item.searchInRandomFolder) {
+		if (_item.searchInRandomFolder && folderArr.length > 0) {
 			const match = folderArr[getRandomInt(folderArr.length - 1)];
 			pathByPattern = path.join(pathByPattern, match);
 		}
 	}
-	let allItems = getSomeFromFolder(pathByPattern, [
-		{
-			type: _item.searchType[0],
-			ext: _description.typeOfFile[_item.searchType[0]],
-		},
-	])[_item.searchType[0]];
-	if (_item.recursiveSearch) {
-		allItems = recursiveFindFiles(pathByPattern, [
-			{
-				type: _item.searchType[0],
-				ext: _description.typeOfFile[_item.searchType[0]],
-			},
-		])[_item.searchType[0]];
-	}
 
-	// Приводим к полным путям (getSomeFromFolder может вернуть только имена)
-	allItems = allItems.map((file: string) => (path.isAbsolute(file) ? file : path.join(pathByPattern, file)));
+	const searchType: string = _item.searchType[0];
+	const exts: string[] = _description.typeOfFile?.[searchType] ?? [];
+	const recursive = Boolean(_item.recursiveSearch);
 
-	if (_item.oneRandomeFile) {
+	let allItems: string[] =
+		searchType === 'folders'
+			? await fs.folders(pathByPattern, recursive)
+			: await fs.filesByExt(pathByPattern, exts, recursive);
+
+	// Полные пути (Rust возвращает только имена).
+	allItems = allItems.map((file) => (path.isAbsolute(file) ? file : path.join(pathByPattern, file)));
+
+	if (_item.oneRandomeFile && allItems.length > 0) {
 		finalFile.push(allItems[getRandomInt(allItems.length - 1)]);
 	} else {
 		finalFile.push(...allItems);
 	}
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFile}` });
+
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
 	return finalFile;
 }

@@ -1,14 +1,11 @@
-// plugins-dev/convertFile_v2/convertFileV2.ts
-//
-// Universal file conversion plugin — builds a full ffmpeg command from
-// ConvertSettings (video frame, codec, filters, audio, image quality, etc.)
+// convertFile_v2 — универсальная нода конвертации файлов. Tauri-port: ffmpeg
+// вызывается через @plugin-api/tauri helper (ffmpeg.run), вместо
+// spawnFFmpegCommand из Electron.
 
-import { getFullInfoFromVideoFile } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
-import { spawnFFmpegCommand } from '../../electron/main/processing/ffmpeg/spawnFFmpegCommand';
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
+import path from 'path';
+import { fs, ffmpeg, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
 import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { sendToMW } from '../_template/pluginSender';
 import {
 	ConvertSettings,
 	buildVideoFilterString,
@@ -16,9 +13,8 @@ import {
 	buildAudioFilterString,
 	defaultConvertSettings,
 } from '../../src/NODE_WIN/nodes/properties/ConvertEdit/types';
-import path from 'path';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
 // ── Codec name mappings ──────────────────────────────────────────────────────
 
@@ -30,7 +26,7 @@ const VIDEO_CODEC_MAP: Record<string, string> = {
 	prores: 'prores_ks',
 	dnxhd: 'dnxhd',
 	hap: 'hap',
-	hap_q: 'hap', // format flag added separately
+	hap_q: 'hap',
 	copy: 'copy',
 };
 
@@ -43,48 +39,32 @@ const AUDIO_CODEC_MAP: Record<string, string> = {
 	copy: 'copy',
 };
 
-// Codecs that accept -preset / -crf / -b:a
 const PRESET_CODECS = new Set(['h264', 'h265', 'av1']);
 const CRF_CODECS = new Set(['h264', 'h265', 'vp9', 'av1']);
 const BITRATE_CODECS = new Set(['aac', 'mp3', 'opus']);
 
 // ── Core ffmpeg arg builder ──────────────────────────────────────────────────
 
-/**
- * Converts a ConvertSettings object into an ffmpeg argument array.
- * Does NOT include `-y`, `-i <input>`, or the output path — those are added
- * by the caller so they appear in the correct position.
- */
 function buildConvertFFmpegArgs(settings: ConvertSettings, outputMode: 'image' | 'audio' | 'video'): string[] {
 	const ext = settings.outputExtension.toLowerCase();
-	const mode = outputMode;
 	const args: string[] = [];
 
-	// ── Image ──────────────────────────────────────────────────────────────
-	if (mode === 'image') {
+	if (outputMode === 'image') {
 		const vf = buildImageFilterString(settings.image);
 		if (vf) args.push('-vf', vf);
 
-		const q = settings.image.quality; // 0–100
-
+		const q = settings.image.quality;
 		if (ext === 'jpg' || ext === 'jpeg') {
-			// q:v 2 = best quality, 31 = worst  →  invert the 0–100 scale
 			const qv = Math.max(2, Math.round(31 - (q / 100) * 29));
 			args.push('-q:v', String(qv));
 		} else if (ext === 'webp') {
-			// libwebp q:v 0–100 where 100 = best
 			args.push('-q:v', String(q));
 		} else if (ext === 'png') {
-			// PNG compression level 0 (none/fastest) → 9 (max)
-			// Higher quality setting = less compression (prefer speed/accuracy over size)
 			const cl = Math.round(9 - (q / 100) * 9);
 			args.push('-compression_level', String(cl));
 		}
-		// Ensure only one output frame (avoids -vframes deprecation)
 		args.push('-frames:v', '1');
-
-		// ── Audio-only ─────────────────────────────────────────────────────────
-	} else if (mode === 'audio') {
+	} else if (outputMode === 'audio') {
 		const af = buildAudioFilterString(settings.audio);
 		if (af) args.push('-af', af);
 
@@ -97,32 +77,23 @@ function buildConvertFFmpegArgs(settings: ConvertSettings, outputMode: 'image' |
 				args.push('-ac', String(settings.audio.channels));
 			}
 		}
-		args.push('-vn'); // strip video stream
-
-		// ── Video (+ audio) ────────────────────────────────────────────────────
+		args.push('-vn');
 	} else {
-		// Video track
 		if (settings.video.enabled) {
 			const vf = buildVideoFilterString(settings.video);
 			if (vf) args.push('-vf', vf);
-
 			const codec = settings.video.codec;
 			args.push('-c:v', VIDEO_CODEC_MAP[codec] ?? codec);
-
-			// HAP Q requires a -format flag (HAP family uses the same encoder)
 			if (codec === 'hap_q') args.push('-format', 'hap_q');
-
 			if (PRESET_CODECS.has(codec)) args.push('-preset', settings.video.preset);
 			if (CRF_CODECS.has(codec)) args.push('-crf', String(settings.video.crf));
 		} else {
 			args.push('-vn');
 		}
 
-		// Audio track
 		if (settings.audio.enabled) {
 			const af = buildAudioFilterString(settings.audio);
 			if (af) args.push('-af', af);
-
 			const codec = settings.audio.codec;
 			args.push('-c:a', AUDIO_CODEC_MAP[codec] ?? codec);
 			if (BITRATE_CODECS.has(codec)) args.push('-b:a', settings.audio.bitrate);
@@ -140,7 +111,7 @@ function buildConvertFFmpegArgs(settings: ConvertSettings, outputMode: 'image' |
 
 // ── Plugin entry point ───────────────────────────────────────────────────────
 
-export async function convertFileV2Func(_item: any, _description: any) {
+export async function convertFileV2Func(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
 	// Parse ConvertSettings — fall back to defaults for empty / invalid JSON
@@ -153,14 +124,18 @@ export async function convertFileV2Func(_item: any, _description: any) {
 
 	const ext = settings.outputExtension.toLowerCase();
 	const fileType = getFileTypeByExt('file.' + ext, _description.typeOfFile as Record<string, string[]>);
-	const outputMode: 'image' | 'audio' | 'video' = fileType === 'image' ? 'image' : fileType === 'audio' ? 'audio' : 'video';
+	const outputMode: 'image' | 'audio' | 'video' =
+		fileType === 'image' ? 'image' : fileType === 'audio' ? 'audio' : 'video';
+
+	const inputs: string[] = _item.import.convertSettings as string[];
 	let iteration = 1;
 
-	for (const fileFrom of _item.import.convertSettings as string[]) {
+	for (const fileFrom of inputs) {
 		// Build output path (copy the array to avoid mutating _item.targetPath)
-		let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+		let curPath: string[] =
+			_item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
-		if (_item.import.targetPath) {
+		if (_item.import.targetPath?.length) {
 			curPath.unshift(..._item.import.targetPath);
 		} else {
 			curPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
@@ -172,13 +147,13 @@ export async function convertFileV2Func(_item: any, _description: any) {
 		const newName = path.basename(newPath, path.extname(newPath)) + '.' + ext;
 		const fileTo = path.join(dirTo, newName);
 
-		testAndCreateFolder(dirTo);
+		await fs.mkdir(dirTo);
 
-		const info = await getFullInfoFromVideoFile(fileFrom, _description);
+		const info = await ffmpeg.getInfo(fileFrom);
 		const curDuration = info.durationInSeconds ?? 0;
 
-		// Resolve frame.mode='original' → fixed with the source file's actual dimensions, so
-		// all filters that reference Frame W/H (Position, cover-fill, etc.) work consistently.
+		// Resolve frame.mode='original' → fixed with source dimensions, so filters
+		// that reference Frame W/H work consistently.
 		const effSettings: ConvertSettings =
 			outputMode === 'video' && settings.video.frame.mode === 'original' && info.width && info.height
 				? {
@@ -192,24 +167,17 @@ export async function convertFileV2Func(_item: any, _description: any) {
 
 		const ffmpegArgs = buildConvertFFmpegArgs(effSettings, outputMode);
 
-		const command = {
-			text: `${_description.infoText}: [convert ${iteration}/${(_item.import.convertSettings as string[]).length}]\n ${originalName} → ${newName}`,
+		await ffmpeg.run({
+			text: `${_description.infoText}: [convert ${iteration}/${inputs.length}]\n ${originalName} → ${newName}`,
 			duration: curDuration,
-			// ffmpeg -y -i <input> [codec/filter args] <output>
-			// command: ['-y', '-i', `"${fileFrom}"`, ...ffmpegArgs, `"${fileTo}"`],
+			nodeId: _item.id,
 			command: ['-y', '-i', fileFrom, ...ffmpegArgs, fileTo],
-		};
-
-		// sendToMW('log', {
-		// 	text: `[convertFileV2] cmd: ffmpeg ${command.command.join(' ')}`,
-		// });
-
-		await spawnFFmpegCommand(command, _description, sendToMW);
+		});
 
 		finalFile.push(fileTo);
 		iteration++;
 	}
 
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFile}` });
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
 	return finalFile;
 }

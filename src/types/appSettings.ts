@@ -86,9 +86,24 @@ export const COLOR_TYPE_DEFAULT_LIMITS: Record<string, number> = {
 	afterEffect: 1,
 	moho: 1,
 	ffmpeg: 2,
+	ffprobe: 4,
 	ai: 1,
 	helpers: 10,
+	main: 5,
 };
+
+// Типы, требующие исполняемый файл (путь в programPaths.json).
+// Показываем статус в UI ресурсных пулов.
+export const COLOR_TYPE_REQUIRES_EXECUTABLE: Record<string, string> = {
+	afterEffect: 'afterEffect',
+	moho: 'moho',
+	ffmpeg: 'ffmpeg',
+	ffprobe: 'ffprobe',
+};
+
+// Системные типы — всегда присутствуют после rescan, ffplay исключён.
+export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'helpers', 'main'];
+export const COLOR_TYPE_EXCLUDED: string[] = ['ffplay'];
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
 	version: APP_SETTINGS_VERSION,

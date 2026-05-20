@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Box, Button, Checkbox, IconButton, MenuItem, Select, TextField, Typography } from '@mui/material';
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import { pathPattern_store, typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
@@ -8,6 +8,7 @@ import MySettingRow from './settings/MySettingRow';
 import MyTooltip from '@/MAIN_WIN/Universal/MyTooltip';
 import MyAutocomplete from '@/MAIN_WIN/Universal/MyAutocomplete';
 import { filePathNamePattern } from '@/NODE_WIN/utils/searchTypes';
+import { COLOR_TYPE_EXCLUDED, COLOR_TYPE_REQUIRES_EXECUTABLE } from '@/types/appSettings';
 import type { AppSettings, AppSettingsPatch } from '@/types/appSettings';
 
 const CUSTOM_FOLDER = 'Custom Folder...';
@@ -74,20 +75,63 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 	// Маски, доступные для вкомпоновки в путь архива.
 	// Плюс триггер Custom Folder... для выбора произвольной папки.
 	const pathPatterns = pathPattern_store((s) => s.patternStore);
-	const archiveOptions = useMemo(() => [CUSTOM_FOLDER, ...filePathNamePattern, ...pathPatterns.map((p) => p.name)], [pathPatterns]);
+	// Системные маски (filePathNamePattern) имеют приоритет над пользовательскими паттернами.
+	// Дедупликация по имени убирает дубли когда пользователь случайно добавил $projectName.
+	const archiveOptions = useMemo(() => {
+		const seen = new Set<string>();
+		const out: string[] = [CUSTOM_FOLDER];
+		for (const name of filePathNamePattern) {
+			if (seen.has(name)) continue;
+			seen.add(name);
+			out.push(name);
+		}
+		for (const p of pathPatterns) {
+			if (seen.has(p.name)) continue;
+			seen.add(p.name);
+			out.push(p.name);
+		}
+		if (!seen.has('#historyValue(pathBD)')) out.push('#historyValue(pathBD)');
+		return out;
+	}, [pathPatterns]);
 
 	const [newTypeName, setNewTypeName] = useState('');
+
+	// Пути исполняемых файлов — для отображения статуса в строках ресурсного пула.
+	// Структура: [{ id, name, path: string[] }]. Нас интересует path[0] — первый путь.
+	const [execPaths, setExecPaths] = useState<Record<string, string>>({});
 
 	useEffect(() => {
 		if (!loaded) load();
 	}, [loaded, load]);
 
+	useEffect(() => {
+		window.electronAPI
+			.invoke('program_paths_get')
+			.then((raw: unknown) => {
+				const map: Record<string, string> = {};
+				if (Array.isArray(raw)) {
+					for (const entry of raw) {
+						const id = (entry as any)?.id ?? (entry as any)?.name ?? '';
+						const p = Array.isArray((entry as any)?.path) ? (entry as any).path[0] : (entry as any)?.path;
+						if (id && typeof p === 'string') map[id] = p;
+					}
+				}
+				setExecPaths(map);
+			})
+			.catch(() => {});
+	}, []);
+
 	// Мерджим colorTypes (из main-файла) с typeOfNodes_store (renderer).
-	// Отображаем всё что есть в любом из источников.
+	// Исключаем ffplay и другие нежелательные типы.
 	const mergedTypes = useMemo(() => {
-		const byName = new Map(colorTypes.types.map((t) => [t.name, { ...t }]));
+		const excluded = new Set(COLOR_TYPE_EXCLUDED);
+		const byName = new Map(
+			colorTypes.types
+				.filter((t) => !excluded.has(t.name))
+				.map((t) => [t.name, { ...t }]),
+		);
 		for (const nt of nodeTypes) {
-			if (!byName.has(nt.name)) {
+			if (!byName.has(nt.name) && !excluded.has(nt.name)) {
 				byName.set(nt.name, { name: nt.name, defaultLimit: 1, orphan: true });
 			}
 		}
@@ -285,10 +329,31 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 
 				{mergedTypes.map((t) => {
 					const limit = settings.resourcePools[t.name] ?? t.defaultLimit ?? 1;
+					const execKey = COLOR_TYPE_REQUIRES_EXECUTABLE[t.name];
+					const execPath = execKey ? (execPaths[execKey] ?? '') : null;
+					// null = не требует исполняемого; '' = требует но не задан; string = задан
+					const execOk = execPath === null ? null : execPath.length > 0;
+
 					return (
 						<MySettingRow
 							key={t.name}
-							label={t.name + (t.orphan ? ' — не используется' : '')}
+							label={
+								<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+									{execOk === true && (
+										<span title={`Путь задан: ${execPath}`} style={{ display: 'flex', alignItems: 'center' }}>
+											<CheckCircle size={13} color='#4caf50' />
+										</span>
+									)}
+									{execOk === false && (
+										<span title='Путь к исполняемому файлу не задан в настройках' style={{ display: 'flex', alignItems: 'center' }}>
+											<AlertTriangle size={13} color='#e8a838' />
+										</span>
+									)}
+									<span style={{ color: t.orphan ? greyColor(45) : undefined }}>
+										{t.name + (t.orphan ? ' — не используется' : '')}
+									</span>
+								</Box>
+							}
 							type='number'
 							value={limit}
 							onChange={(v) => updatePoolLimit(t.name, v)}

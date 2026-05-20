@@ -1,27 +1,25 @@
-import { detectSceneCuts } from '../../electron/main/processing/ffmpeg/detectSceneCut';
-import { getFullInfoFromVideoFile } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
+// getPicFromFileByTime — извлекает кадры из видео по таймкодам (сцены /
+// чёрные кадры / регулярные интервалы / импортированные точки).
+// Tauri-port: ffmpeg/fs через helper.
+
 import path from 'path';
-import fs from 'fs';
-import { spawnFFmpegCommand } from '../../electron/main/processing/ffmpeg/spawnFFmpegCommand';
+import { fs, ffmpeg, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { sendToMW } from '../_template/pluginSender';
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-export async function getPicFromFileByTime(_item: any, _description: any) {
+export async function getPicFromFileByTime(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
-	const sceneDetect = _item.sceneDetection || false;
-	const splitBy = _item.splitBy || 0;
-	const ALLOWED_IMAGE_FORMATS = ['jpeg', 'jpg', 'png', 'webp', 'bmp', 'tiff'];
+	const sceneDetect: boolean = _item.sceneDetection || false;
+	const splitBy: number = Number(_item.splitBy || 0);
+	const ALLOWED = ['jpeg', 'jpg', 'png', 'webp', 'bmp', 'tiff'];
 	const rawFormat = (_item.outputFormat || 'jpeg').toLowerCase();
-	const outputFormat = ALLOWED_IMAGE_FORMATS.includes(rawFormat) ? rawFormat : 'jpeg';
-	const qualityPic = _item.qualityPic || 2;
+	const outputFormat = ALLOWED.includes(rawFormat) ? rawFormat : 'jpeg';
+	const qualityPic: number = _item.qualityPic || 2;
 
-	// ── Путь для сохранения ───────────────────────────────────────────────────
-	let curPath: string[] = _item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName (pics $random(3))'];
-
+	let curPath: string[] =
+		_item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName (pics $random(3))'];
 	if (_item.import.targetPath?.length > 0) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -29,8 +27,8 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 	}
 
 	const splitByImport: any[] = _item.import?.splitBy || [];
-
 	let importedTimestamps: number[] | null = null;
+
 	if (splitByImport.length > 0) {
 		importedTimestamps = [];
 		for (const val of splitByImport) {
@@ -38,7 +36,7 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 			if (parsed !== null) {
 				if (!importedTimestamps.includes(parsed)) importedTimestamps.push(parsed);
 			} else if (typeof val === 'string') {
-				for (const t of parseTimecodeFile(val)) {
+				for (const t of await parseTimecodeFile(val)) {
 					if (!importedTimestamps.includes(t)) importedTimestamps.push(t);
 				}
 			}
@@ -46,29 +44,28 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 		importedTimestamps.sort((a, b) => a - b);
 	}
 
-	for (const fileFrom of _item.import.inputFile) {
+	for (const fileFrom of _item.import.inputFile as string[]) {
 		const fileTo = createPathForFileByPattern(curPath, _description, fileFrom);
 		const dirPath = path.dirname(fileTo);
 		const fileName = path.basename(fileTo, path.extname(fileTo));
 
-		testAndCreateFolder(dirPath);
+		await fs.mkdir(dirPath);
 
-		const fileInfo = await getFullInfoFromVideoFile(fileFrom, _description);
-		sendToMW('statusbar', `${_description.infoText}: [get pic from video]\n${path.basename(fileFrom)}`);
+		const fileInfo = await ffmpeg.getInfo(fileFrom);
+		sendToMW('statusbar', { text: `${_description.infoText}: [get pic from video]\n${path.basename(fileFrom)}` });
 
 		const finalArrTimeStamp: { stTime: number; sceneDuration: number }[] = [];
 
 		if (importedTimestamps !== null) {
-			// Приоритет: таймкоды из файла (только в пределах длины видео)
 			for (const t of importedTimestamps) {
 				if (t < +fileInfo.durationInSeconds) {
 					finalArrTimeStamp.push({ stTime: t, sceneDuration: 0 });
 				}
 			}
-		} else if (sceneDetect || splitBy == 0) {
-			const timeStamp = await detectSceneCuts(fileFrom, _description);
-
+		} else if (sceneDetect || splitBy === 0) {
+			const timeStamp = await ffmpeg.detectScenes(fileFrom);
 			timeStamp.push(+fileInfo.durationInSeconds);
+
 			let i = 0;
 			let startSceneTime = timeStamp[i];
 			let accumulatedDuration = 0;
@@ -76,9 +73,7 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 			while (i < timeStamp.length - 1) {
 				const nextTime = timeStamp[i + 1];
 				let curStTimeScene = timeStamp[i];
-				if (timeStamp[i] < startSceneTime) {
-					curStTimeScene = startSceneTime;
-				}
+				if (timeStamp[i] < startSceneTime) curStTimeScene = startSceneTime;
 				const curSceneLength = Math.round((nextTime - curStTimeScene) * 1000) / 1000;
 
 				if (curSceneLength >= splitBy && splitBy > 0) {
@@ -90,9 +85,7 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 					startSceneTime = curStTimeScene + splitBy;
 				} else {
 					if (accumulatedDuration === 0) {
-						if (timeStamp[i] > startSceneTime) {
-							startSceneTime = timeStamp[i];
-						}
+						if (timeStamp[i] > startSceneTime) startSceneTime = timeStamp[i];
 						accumulatedDuration = curSceneLength;
 						i++;
 					} else {
@@ -106,7 +99,6 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 					}
 				}
 			}
-
 			if (accumulatedDuration > 0) {
 				finalArrTimeStamp.push({ stTime: startSceneTime, sceneDuration: accumulatedDuration });
 			}
@@ -124,25 +116,23 @@ export async function getPicFromFileByTime(_item: any, _description: any) {
 			const timeCode = formatTimecodeForFilename(stTime);
 			const outputFile = path.join(dirPath, `${scNumm + 1} [${timeCode}] ${fileName}.${outputFormat}`);
 
-			const command = {
+			await ffmpeg.run({
 				text: `${_description.infoText}: [get pic from video]\n${path.basename(fileFrom)} (${scNumm + 1}/${finalArrTimeStamp.length})`,
 				duration: sceneDuration,
-				command: ['-ss', String(stTime), '-i', fileFrom, '-vframes', '1', '-q:v', String(qualityPic), outputFile],
-			};
-
-			await spawnFFmpegCommand(command, _description, sendToMW);
+				nodeId: _item.id,
+				command: ['-y', '-ss', String(stTime), '-i', fileFrom, '-vframes', '1', '-q:v', String(qualityPic), outputFile],
+			});
 			finalFile.push(outputFile);
 		}
 	}
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFile}` });
+
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
 	return finalFile;
 }
 
-// Читает файл с таймкодами и возвращает массив секунд.
-// Формат файла пока не определён — при необходимости доработать эту функцию.
-function parseTimecodeFile(filePath: string): number[] {
+async function parseTimecodeFile(filePath: string): Promise<number[]> {
 	try {
-		const content = fs.readFileSync(filePath, 'utf-8');
+		const content = await fs.read(filePath);
 		const lines = content
 			.split(/[\r\n,;]+/)
 			.map((l) => l.trim())
@@ -158,40 +148,29 @@ function parseTimecodeFile(filePath: string): number[] {
 	}
 }
 
-// Парсит строку таймкода в секунды.
-// Поддерживает: HH:MM:SS, MM:SS, HH.MM.SS, plain seconds
 function parseTimecodeToSeconds(tc: string): number | null {
 	tc = tc.trim();
 	if (!tc) return null;
 
-	// HH:MM:SS или HH:MM:SS.mmm
 	let match = tc.match(/^(\d+):(\d{2}):(\d{2})(?:[.,](\d+))?$/);
 	if (match) {
 		const ms = match[4] ? parseInt(match[4]) / Math.pow(10, match[4].length) : 0;
 		return parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]) + ms;
 	}
-
-	// MM:SS или MM:SS.mmm
 	match = tc.match(/^(\d+):(\d{2})(?:[.,](\d+))?$/);
 	if (match) {
 		const ms = match[3] ? parseInt(match[3]) / Math.pow(10, match[3].length) : 0;
 		return parseInt(match[1]) * 60 + parseInt(match[2]) + ms;
 	}
-
-	// HH.MM.SS (через точку)
 	match = tc.match(/^(\d+)\.(\d{2})\.(\d{2})$/);
 	if (match) {
 		return parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]);
 	}
-
-	// Просто секунды
 	const num = parseFloat(tc);
 	if (!isNaN(num)) return num;
-
 	return null;
 }
 
-// Форматирует секунды в строку HH.MM.SS для имени файла
 function formatTimecodeForFilename(timecode: number): string {
 	const seconds = Math.floor(timecode);
 	const pad = (num: number) => num.toString().padStart(2, '0');

@@ -5,6 +5,7 @@ import { getSignal } from './function/utils/processingAbort';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { processItem } from './processItem';
+import { initResourcePools } from './ResourcePool';
 
 let isSubscribed = false;
 
@@ -13,8 +14,14 @@ export async function startProcessing() {
 	let totalProcessedFile = 0;
 
 	// Снимок настроек на старте цикла — лимиты применяются при старте processing.
-	const { maxParallel } = getAppSettings().processing;
+	const settings = getAppSettings();
+	const { maxParallel } = settings.processing;
 	const MAX_PARALLEL = Math.max(1, maxParallel);
+
+	// Инициализируем семафоры по colorType. Слоты = лимит из settings.resourcePools
+	// (с fallback на COLOR_TYPE_DEFAULT_LIMITS). Пересоздаём на каждый старт, чтобы
+	// подхватить изменения лимитов без перезапуска приложения.
+	initResourcePools(settings.resourcePools ?? {});
 
 	// Processing events are now routed to logWindow in main process.
 	// Only handle aborted/error here for status bar feedback.
@@ -80,7 +87,14 @@ export async function startProcessing() {
 	// Queued-записи в окне логов, которые так и не стартовали (стоп/abort), переводим в aborted.
 	window.electronAPI.invoke('log-window:abort-queued').catch(() => {});
 
+	// Сбрасываем statusBar в idle. Локальный set обновляет стор в этом окне (nodeWin),
+	// а IPC `setStatusBar` транслирует событие в main window — там стор отдельный.
 	useStatusBar_Store.getState().setStatusBarState('waiting starting');
+	window.electronAPI.invoke('setStatusBar', 'waiting starting').catch(() => {});
+
+	// Финальный broadcast: node_win получит 'process:complete' и сбросит подсветку
+	// активной ноды через 2 секунды (см. ProcessingEventListener).
+	window.electronAPI.invoke('sendProcessComplete').catch(() => {});
 
 	window.electronAPI.removeProcessingEvent(handleProcessingEvent);
 	isSubscribed = false;

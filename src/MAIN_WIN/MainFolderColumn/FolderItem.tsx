@@ -74,23 +74,34 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 		mainFolders_stor.getState().updateParameters({ id: obj.id, active: !obj.active });
 	};
 
-	// Подсветка жёлтым: главная папка выключена И ни одного включённого проекта.
+	// Подсветка жёлтым: папка активна, но все подпапки отключены — нечего сканировать.
 	// off-список проектов лежит в LS под ключом obj.id (тот же, что использует ProjectFolderItem).
+	// Слушаем кастомное событие чтобы перерисоваться когда ProjectFolderItem меняет off-список.
+	const [offListVersion, setOffListVersion] = useState(0);
+	useEffect(() => {
+		const handler = (e: Event) => {
+			if ((e as CustomEvent).detail?.key === obj.id) setOffListVersion((v) => v + 1);
+		};
+		window.addEventListener('folders-off-list-changed', handler);
+		return () => window.removeEventListener('folders-off-list-changed', handler);
+	}, [obj.id]);
+
 	const offArr: string[] = loadFromLocalStorage(obj.id) || [];
 	const hasProjects = Array.isArray(obj.projectFolders) && obj.projectFolders.length > 0;
 	const allProjectsOff = hasProjects && obj.projectFolders.every((n: string) => offArr.includes(n));
-	const idleHighlight = !obj.active && allProjectsOff;
+	const idleHighlight = obj.active && allProjectsOff;
 
 	return (
 		<ListItem
 			disablePadding
 			ref={listItemRef}
+			style={{ '--hover-bg': idleHighlight ? 'rgba(255, 213, 0, 0.28)' : '#ffffff0b' } as React.CSSProperties}
 			sx={{
 				height: '34px',
-				backgroundColor: isActive ? '#ffffff1b' : idleHighlight ? 'rgba(255, 213, 0, 0.18)' : 'transparent',
+				backgroundColor: isActive && idleHighlight ? 'rgba(255, 213, 0, 0.32)' : isActive ? '#ffffff1b' : idleHighlight ? 'rgba(255, 213, 0, 0.18)' : 'transparent',
 				position: 'relative',
 				'&:hover': {
-					backgroundColor: '#ffffff0b',
+					backgroundColor: 'var(--hover-bg)',
 				},
 				'&:hover .removeProjectButton': {
 					opacity: 1,

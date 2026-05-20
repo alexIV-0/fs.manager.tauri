@@ -15,6 +15,8 @@ pub const COLOR_TYPES_VERSION: u32 = 1;
 pub struct AppSettingsState {
     pub settings: Value,
     pub color_types: Value,
+    pub file_types: Value,
+    pub program_paths: Value,
 }
 
 impl AppSettingsState {
@@ -22,6 +24,8 @@ impl AppSettingsState {
         Self {
             settings: default_app_settings(),
             color_types: default_color_types(),
+            file_types: default_file_types(),
+            program_paths: default_program_paths(),
         }
     }
 }
@@ -51,6 +55,49 @@ fn default_color_types() -> Value {
         "types": [],
         "lastScannedAt": null
     })
+}
+
+fn default_file_types() -> Value {
+    json!([
+        {"id":"video","name":"video","path":["avi","mov","mp4","mpeg","mpg","m2v","m4v","ts","mxf","wmv","mkv","webm"],"color":"#0a84feff","inactivePath":[]},
+        {"id":"audio","name":"audio","path":["wav","mp3","aac","m4a","flac","ogg","aiff","aif","opus","wma"],"color":"#ffae0cff","inactivePath":[]},
+        {"id":"image","name":"image","path":["jpg","jpeg","png","tiff","tga","pdf","gif","pgf","bmp","webp","svg"],"color":"#00e308ff","inactivePath":[]},
+        {"id":"text","name":"text","path":["txt","json","md","log","yaml","yml","xml","ini","toml","env"],"color":"#90bae5ff","inactivePath":[]},
+        {"id":"title","name":"title","path":["vtt","lrc","srt"],"color":"#9be590ff","inactivePath":[]},
+        {"id":"xlsx","name":"xlsx","path":["xlsx","tsv","csv"],"color":"rgb(99, 214, 81)","inactivePath":[]},
+        {"id":"aep","name":"aep","path":["aep"],"color":"#9857ffff","inactivePath":[]},
+        {"id":"moho","name":"moho","path":["moho"],"color":"#b20affff","inactivePath":[]},
+        {"id":"ai","name":"ai","path":["ai","eps"],"color":null,"inactivePath":[]},
+        {"id":"psd","name":"psd","path":["psd","psb"],"color":null,"inactivePath":[]},
+        {"id":"scripts","name":"scripts","path":["js","jsx","lua"],"color":"rgb(0, 50, 200)","inactivePath":[]}
+    ])
+}
+
+fn default_program_paths() -> Value {
+    json!([
+        {"id":"ffmpeg","name":"ffmpeg","path":[],"color":null,"inactivePath":[]},
+        {"id":"ffprobe","name":"ffprobe","path":[],"color":null,"inactivePath":[]},
+        {"id":"afterEffect","name":"afterEffect","path":[],"color":null,"inactivePath":[]},
+        {"id":"moho","name":"moho","path":[],"color":null,"inactivePath":[]}
+    ])
+}
+
+fn file_types_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {}", e))?;
+    Ok(dir.join("fileTypes.json"))
+}
+
+fn program_paths_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {}", e))?;
+    Ok(dir.join("programPaths.json"))
 }
 
 fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -214,12 +261,144 @@ pub fn color_types_set(
     Ok(types)
 }
 
+/// Пересканит установленные плагины и обновит список colorTypes:
+/// — добавляет новые colorType (которые встречаются в `ui.json#data.colorType`)
+/// — помечает orphan: true тем, что больше не используются ни одним плагином
+/// — ничего не удаляет (юзер может вернуть плагин обратно)
+///
+/// Порт `electron/main/settings/colorTypes.ts#rescanColorTypes`.
 #[tauri::command]
 pub fn color_types_rescan(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
+    plugin_state: tauri::State<Mutex<super::plugin_commands::PluginManagerState>>,
 ) -> Result<Value, String> {
-    color_types_get(app, state)
+    let path = color_types_path(&app)?;
+    let mut current = read_json(&path, default_color_types());
+
+    // Системные типы — всегда присутствуют, их defaultLimit задан жёстко.
+    // ffplay исключён полностью.
+    let system_types: &[(&str, i64)] = &[
+        ("afterEffect", 1),
+        ("moho", 1),
+        ("ffmpeg", 2),
+        ("ffprobe", 4),
+        ("ai", 1),
+        ("helpers", 10),
+        ("main", 5),
+    ];
+    let excluded: std::collections::HashSet<&str> = ["ffplay"].iter().copied().collect();
+
+    // Собираем уникальные colorType из ui.json всех загруженных плагинов.
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Системные типы всегда считаются "используемыми" (не orphan).
+    for (name, _) in system_types {
+        used.insert(name.to_string());
+    }
+    if let Ok(pm) = plugin_state.lock() {
+        for plugin in pm.plugins.values() {
+            let ui_file = plugin
+                .manifest
+                .ui
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let Some(ui_file) = ui_file else { continue };
+
+            let ui_path = std::path::Path::new(&plugin.path).join(ui_file);
+            if !ui_path.exists() {
+                continue;
+            }
+            let Ok(raw) = fs::read_to_string(&ui_path) else { continue };
+            let Ok(json) = serde_json::from_str::<Value>(&raw) else { continue };
+
+            if let Some(ct) = json
+                .get("data")
+                .and_then(|d| d.get("colorType"))
+                .and_then(|c| c.as_str())
+            {
+                let trimmed = ct.trim();
+                if !trimmed.is_empty() && !excluded.contains(trimmed) {
+                    used.insert(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    // Берём существующие записи, обновляем orphan-флаг. ffplay пропускаем.
+    let mut merged: Vec<Value> = Vec::new();
+    let mut existing_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(types_arr) = current.get("types").and_then(|t| t.as_array()) {
+        for entry in types_arr {
+            let name = entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() || excluded.contains(name.as_str()) {
+                continue;
+            }
+            let mut e = entry.clone();
+            if let Some(obj) = e.as_object_mut() {
+                obj.insert("orphan".to_string(), json!(!used.contains(&name)));
+            }
+            existing_names.insert(name);
+            merged.push(e);
+        }
+    }
+
+    // Добавляем системные типы, которых ещё нет в файле.
+    for (name, default_limit) in system_types {
+        if !existing_names.contains(*name) {
+            merged.push(json!({
+                "name": name,
+                "defaultLimit": default_limit,
+                "orphan": false,
+            }));
+            existing_names.insert(name.to_string());
+        }
+    }
+
+    // Добавляем новые colorType из плагинов (не системные и не существующие).
+    for name in &used {
+        if !existing_names.contains(name) {
+            merged.push(json!({
+                "name": name,
+                "defaultLimit": 1,
+                "orphan": false,
+            }));
+        }
+    }
+
+    // Сортируем: сначала активные (по имени), потом orphan.
+    merged.sort_by(|a, b| {
+        let a_orphan = a.get("orphan").and_then(|v| v.as_bool()).unwrap_or(false);
+        let b_orphan = b.get("orphan").and_then(|v| v.as_bool()).unwrap_or(false);
+        if a_orphan != b_orphan {
+            return if a_orphan {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            };
+        }
+        let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        a_name.cmp(b_name)
+    });
+
+    if let Some(obj) = current.as_object_mut() {
+        obj.insert("types".to_string(), Value::Array(merged));
+        obj.insert(
+            "lastScannedAt".to_string(),
+            json!(chrono::Utc::now().to_rfc3339()),
+        );
+    }
+
+    write_json(&path, &current)?;
+    if let Ok(mut st) = state.lock() {
+        st.color_types = current.clone();
+    }
+    Ok(current)
 }
 
 #[tauri::command]
@@ -271,4 +450,62 @@ pub fn color_types_remove(
         st.color_types = current.clone();
     }
     Ok(current)
+}
+
+// ==================== File Types ====================
+
+#[tauri::command]
+pub fn file_types_get(
+    app: tauri::AppHandle,
+    state: tauri::State<Mutex<AppSettingsState>>,
+) -> Result<Value, String> {
+    let path = file_types_path(&app)?;
+    let value = read_json(&path, default_file_types());
+    if let Ok(mut st) = state.lock() {
+        st.file_types = value.clone();
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub fn file_types_set(
+    app: tauri::AppHandle,
+    state: tauri::State<Mutex<AppSettingsState>>,
+    types: Value,
+) -> Result<Value, String> {
+    let path = file_types_path(&app)?;
+    write_json(&path, &types)?;
+    if let Ok(mut st) = state.lock() {
+        st.file_types = types.clone();
+    }
+    Ok(types)
+}
+
+// ==================== Program Paths ====================
+
+#[tauri::command]
+pub fn program_paths_get(
+    app: tauri::AppHandle,
+    state: tauri::State<Mutex<AppSettingsState>>,
+) -> Result<Value, String> {
+    let path = program_paths_path(&app)?;
+    let value = read_json(&path, default_program_paths());
+    if let Ok(mut st) = state.lock() {
+        st.program_paths = value.clone();
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub fn program_paths_set(
+    app: tauri::AppHandle,
+    state: tauri::State<Mutex<AppSettingsState>>,
+    paths: Value,
+) -> Result<Value, String> {
+    let path = program_paths_path(&app)?;
+    write_json(&path, &paths)?;
+    if let Ok(mut st) = state.lock() {
+        st.program_paths = paths.clone();
+    }
+    Ok(paths)
 }

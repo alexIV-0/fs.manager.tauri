@@ -50,7 +50,7 @@ export async function findAllFilesForProcess(clearQueue = true) {
 
 		const mainFolderName = await window.electronAPI.invoke('pathBasename', curMainFolder.path);
 
-		// обновляем все папки, вдруг новые добавили
+		// обновляем все папки, вдруг новые добавили — ПЕРЕД сканированием файлов
 		const finalArr = await reloadFolders(curMainFolder);
 		mainFolders_stor.getState().updateParameters({
 			id: curMainFolder.id,
@@ -63,12 +63,12 @@ export async function findAllFilesForProcess(clearQueue = true) {
 		// ── авто-отключение проектов по mtime папки OUT ──────────────────
 		// Если включено в настройках и OUT не модифицировалась N дней —
 		// добавляем проект в off-список (тот же массив в LS, что и ручной чекбокс).
-		// Если в итоге не остаётся включённых проектов — выключаем главную папку.
+		// Если все подпапки отключены — главная папка остаётся активной (желтеет в UI).
 		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
 		if (autoDisableDays && autoDisableDays > 0) {
 			const cutoffMs = Date.now() - autoDisableDays * 24 * 60 * 60 * 1000;
 			const offSet = new Set<string>(getOffArr);
-			for (const projectName of curMainFolder.projectFolders) {
+			for (const projectName of finalArr) {
 				if (offSet.has(projectName)) continue;
 				const outPath = joinPath(curMainFolder.path, projectName, 'OUT');
 				const info: any = await window.electronAPI.invoke('getFileInfo', outPath);
@@ -82,19 +82,19 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				getOffArr = Array.from(offSet);
 				saveToLocalStorage(curMainFolder.id, getOffArr);
 			}
-			// Если ВСЕ проекты выключены — выключаем и главную папку.
-			if (curMainFolder.projectFolders.length > 0 && offSet.size >= curMainFolder.projectFolders.length) {
-				mainFolders_stor.getState().updateParameters({ id: curMainFolder.id, active: false });
-				console.log(`[autoDisable] ${mainFolderName} — disabled (no active projects)`);
+			// Все подпапки отключены — не выключаем главную папку, просто пропускаем цикл файлов.
+			// Главная папка продолжает сканировать на появление новых подпапок.
+			if (finalArr.length > 0 && offSet.size >= finalArr.length) {
+				console.log(`[autoDisable] ${mainFolderName} — all projects off, folder stays active`);
 				continue;
 			}
 		}
 
 		// цикл по всем вкл. папкам проектов в основной папке
-		for (let fIndex = 0; fIndex < curMainFolder.projectFolders.length; fIndex++) {
+		for (let fIndex = 0; fIndex < finalArr.length; fIndex++) {
 			if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			const projectName = curMainFolder.projectFolders[fIndex];
+			const projectName = finalArr[fIndex];
 			if (getOffArr.includes(projectName)) continue;
 
 			setCurentFolderIndex(fIndex);

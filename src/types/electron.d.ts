@@ -237,6 +237,26 @@ declare global {
 			/** Вызов processing-функции плагина */
 			call(pluginId: string, version: string, method: string, ...args: any[]): Promise<any>;
 		};
+
+		// API для шаблонов сохранения результатов обработки (см. tauri-api.ts).
+		templates: {
+			/** Список встроенных шаблонов для dropdown в настройках. */
+			list(): Promise<Array<{ id: string; label: string }>>;
+			/** История ошибок выполнения шаблонов (пока возвращает []). */
+			getErrors(): Promise<
+				Array<{
+					timestamp: string;
+					templateLabel: string;
+					error: { message: string };
+				}>
+			>;
+		};
+
+		// API для документации в плагин-окне (см. tauri-api.ts).
+		docs: {
+			list(): Promise<Array<{ name: string; files: Array<{ name: string; fileName: string }> }>>;
+			read(sectionName: string, fileName: string): Promise<string>;
+		};
 	}
 
 	// ==================== РАСШИРЕНИЕ ТИПОВ БРАУЗЕРА ====================

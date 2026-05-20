@@ -20,9 +20,7 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"scripts"
-				],
+				"acceptedTypes": ["scripts"],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -32,19 +30,14 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
-					"options": [
-						"#filePattern",
-						"CustomFolder..."
-					],
+					"options": ["#filePattern", "CustomFolder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": [
-					"path"
-				],
+				"acceptedTypes": ["path"],
 				"required": false
 			},
 			{
@@ -53,9 +46,7 @@
 				"controlProps": {
 					"label": "Input files",
 					"tooltip": "Параметр для добавление новых input, которые передадутся в After Effect.<div>Все inputs нужно переименовать так, что бы при написании скрипта для обработки можно было использовать эти имена входов для получения информации с их коенктеров.<br>Так же тут нужно выставить тип файла, который мы получим в результате обработки в After Effect.&nbsp;</div>",
-					"value": [
-						"video"
-					]
+					"value": ["video"]
 				},
 				"isInput": false,
 				"isOutput": true,

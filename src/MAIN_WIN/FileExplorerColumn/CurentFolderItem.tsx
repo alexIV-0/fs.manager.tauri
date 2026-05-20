@@ -20,6 +20,7 @@ import {
 	createFolder,
 } from '@/PROCESSING/function/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
+import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 
 interface CurentFolderItemProps {
 	name: string;
@@ -72,6 +73,14 @@ export function CurentFolderItem({
 
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
 
+	const getMultiPaths = () => {
+		if (!isMultiSelected) return [path];
+		const s = useColumnView_Store.getState();
+		if (s.instances.gd.multiSelectedPaths.includes(path)) return s.instances.gd.multiSelectedPaths;
+		if (s.instances.local.multiSelectedPaths.includes(path)) return s.instances.local.multiSelectedPaths;
+		return [path];
+	};
+
 	const menuItems = useMenuItems({
 		type: 'folder',
 		onRename: () => {
@@ -84,8 +93,8 @@ export function CurentFolderItem({
 		onShowInFinder: () => showInFinder(path),
 		onDelete: () => deleteItem(path),
 		onCreateFolder: () => createFolder(path),
-		onCopy: () => copyToClipboardFs([path]),
-		onCut: () => cutToClipboardFs([path]),
+		onCopy: () => copyToClipboardFs(getMultiPaths()),
+		onCut: () => cutToClipboardFs(getMultiPaths()),
 		onPaste: () => pasteFromClipboardFs(path),
 		hasClipboard,
 	});
@@ -95,6 +104,7 @@ export function CurentFolderItem({
 			<ListItem
 				disablePadding
 				ref={listItemRef}
+				data-item-path={path}
 				onContextMenu={(e) => handleContextMenu(e, onSelect)}
 				onMouseEnter={() => prefetchDir(path)}
 				sx={{

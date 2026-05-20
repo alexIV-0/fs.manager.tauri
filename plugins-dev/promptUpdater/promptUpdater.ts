@@ -1,13 +1,14 @@
+// promptUpdater — берёт текст (из файла или строки), подставляет в него динамические
+// [label]-токены и опционально сохраняет результат в .txt. Tauri-port: все fs-операции
+// через @plugin-api/tauri helper.
 
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { sendToMW } from '../_template/pluginSender';
 import path from 'path';
-import fs from 'fs';
+import { fs, sendToMW } from '../_template/tauri';
+import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-// Fixed keys that belong to the node infrastructure or static properties — not dynamic addLink inputs
+// Ключи плагинной инфраструктуры — не считаются динамическими addLink-входами.
 const KNOWN_ITEM_KEYS = new Set([
 	'id', 'nodeType', 'isTerminal', 'import',
 	'pluginId', 'pluginVersion', 'colorType', 'cost', 'costUnit', 'functionName',
@@ -25,15 +26,15 @@ function toStringValue(value: any): string {
 	return String(value);
 }
 
-export async function promptUpdaterFunc(_item: any, _description: any) {
-	// ── 1. Get text content ────────────────────────────────────────────────────
+export async function promptUpdaterFunc(_item: any, _description: any): Promise<string[]> {
+	// ── 1. Get text content ──────────────────────────────────────────────────
 	let text = '';
 
 	const importedPrompt: string[] = _item.import?.promptPath ?? [];
 	if (importedPrompt.length > 0) {
 		const src = importedPrompt[0];
-		if (fs.existsSync(src)) {
-			text = fs.readFileSync(src, 'utf-8');
+		if (await fs.existsFile(src)) {
+			text = await fs.read(src);
 		} else {
 			// treat as plain text string
 			text = src;
@@ -43,40 +44,33 @@ export async function promptUpdaterFunc(_item: any, _description: any) {
 		const resolvedPath = path.isAbsolute(rawPath)
 			? rawPath
 			: path.join(_description.projectPathGD ?? '', rawPath);
-		if (fs.existsSync(resolvedPath)) {
-			text = fs.readFileSync(resolvedPath, 'utf-8');
+		if (await fs.existsFile(resolvedPath)) {
+			text = await fs.read(resolvedPath);
 		}
 	}
 
-	// ── 2. Collect dynamic labels added via addLink ────────────────────────────
-	// Dynamic properties use their label as the key in _item (editLabel: true).
-	// All other keys belong to the node infrastructure or fixed static properties.
+	// ── 2. Collect dynamic addLink labels ────────────────────────────────────
 	const dynamicLabels = Object.keys(_item).filter((k) => !KNOWN_ITEM_KEYS.has(k));
 
-	// ── 3. Replace [label] tokens in text ─────────────────────────────────────
+	// ── 3. Replace [label] tokens in text ───────────────────────────────────
 	let modifiedText = text;
 	for (const label of dynamicLabels) {
 		const importedValues: any[] = _item.import?.[label] ?? [];
-		// Priority: upstream import value → static controlProps value
-		// Use entire importedValues array so multi-value results (e.g. timecodes) are joined, not truncated to [0]
 		const rawValue = importedValues.length > 0 ? importedValues : _item[label];
 		const strValue = toStringValue(rawValue);
-
 		const pattern = new RegExp(`\\[${escapeRegExp(label)}\\]`, 'g');
 		modifiedText = modifiedText.replace(pattern, strValue);
 	}
 
-	sendToMW('statusbar', {
-		text: `${_description.infoText}: [promptUpdater]\n ${_description.curItem}`,
-	});
+	sendToMW('statusbar', { text: `${_description.infoText}: [promptUpdater]\n ${_description.curItem}` });
 
-	// ── 4. Output: save to .txt file or return as string ──────────────────────
+	// ── 4. Output: save to .txt file or return as string ────────────────────
 	const saveAsText: boolean = _item.saveAsText ?? false;
 
 	if (saveAsText) {
 		let curPath: string[] = (_item.targetPath?.length ?? 0) === 0
 			? ['$clearName ($random(3))']
-			: _item.targetPath;
+			: [..._item.targetPath];
 
 		if (_item.import?.targetPath?.length > 0) {
 			curPath.unshift(..._item.import.targetPath);
@@ -88,8 +82,8 @@ export async function promptUpdaterFunc(_item: any, _description: any) {
 		const basePath = createPathForFileByPattern(curPath, _description, fileForName);
 		const fileTo = basePath.replace(/\.[^.]*$/, '') + '.txt';
 
-		testAndCreateFolder(path.dirname(fileTo));
-		fs.writeFileSync(fileTo, modifiedText, 'utf-8');
+		await fs.mkdir(path.dirname(fileTo));
+		await fs.write(fileTo, modifiedText);
 
 		sendToMW('log', { level: 'info', text: `Saved to: ${fileTo}` });
 		return [fileTo];

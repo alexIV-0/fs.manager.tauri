@@ -8,24 +8,26 @@ function useFoldersFromLS(storageKey: string) {
 	// Получаем актуальный массив из LS
 	const getFolders = useCallback((): string[] => loadFromLocalStorage(storageKey) || [], [storageKey]);
 
+	const notify = () => {
+		window.dispatchEvent(new CustomEvent('folders-off-list-changed', { detail: { key: storageKey } }));
+		forceUpdate((v) => v + 1);
+	};
+
 	const addFolder = (name: string) => {
 		const current = loadFromLocalStorage(storageKey) || [];
 		saveToLocalStorage(storageKey, [...current, name]);
-		forceUpdate((v) => v + 1); // чтобы React перерендерил компонент
+		notify();
 	};
 
 	const removeFolder = (name: string) => {
 		const current = loadFromLocalStorage(storageKey) || [];
-		saveToLocalStorage(
-			storageKey,
-			current.filter((f: string) => f !== name)
-		);
-		forceUpdate((v) => v + 1);
+		saveToLocalStorage(storageKey, current.filter((f: string) => f !== name));
+		notify();
 	};
 
 	const updateFolders = (newFolders: string[]) => {
 		saveToLocalStorage(storageKey, newFolders);
-		forceUpdate((v) => v + 1);
+		notify();
 	};
 
 	return {

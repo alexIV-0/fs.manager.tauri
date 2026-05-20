@@ -192,6 +192,13 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 				const idx = currentCols.findIndex((c) => c.path === colPath);
 				if (idx === -1) return state;
 
+				const oldItems = currentCols[idx].items;
+				// Пропускаем обновление если содержимое не изменилось — избегаем лишних ре-рендеров и мерцания.
+				if (
+					oldItems.length === items.length &&
+					oldItems.every((item, i) => item.path === items[i].path)
+				) return state;
+
 				const updatedCols = [...currentCols];
 				updatedCols[idx] = { ...currentCols[idx], items };
 
@@ -404,6 +411,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 
 	setMultiSelectedPaths: (instanceType: 'gd' | 'local', paths: string[], anchor: { colIndex: number; path: string }) => {
 		set((state) => ({
+			lastActiveInstance: instanceType,
 			instances: {
 				...state.instances,
 				[instanceType]: {

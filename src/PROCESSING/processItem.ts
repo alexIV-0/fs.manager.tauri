@@ -8,6 +8,7 @@
 
 import { basename, join } from '@plugin-api/path';
 import { loadPlugin } from '@/PluginAPI/loader';
+import { acquirePool, releasePool } from './ResourcePool';
 
 const api = () => (window as any).electronAPI;
 
@@ -32,7 +33,7 @@ export interface PluginCtx {
 	pluginPath?: string;
 	log: (level: 'info' | 'warn' | 'error' | 'debug', text: string, meta?: any) => void;
 	send: SendFn;
-	sendToMW: (msg: any) => void;
+	sendToMW: (type: string, payload: any) => void;
 }
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
@@ -161,6 +162,10 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					startTime: new Date().toISOString(),
 				})
 				.catch(() => {});
+			// Broadcast в node_win (через Rust → app.emit "processing-event").
+			// Без этого подсветка ноды и статусбар в node_win не обновляются —
+			// `window.dispatchEvent` выше работает только в main_win.
+			api().invoke('sendNodeStart', payload.nodeId).catch(() => {});
 		} else if (type === 'node:done') {
 			api()
 				.invoke('log-window:emit-node-update', {
@@ -171,6 +176,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					finalCost: payload.finalCost,
 				})
 				.catch(() => {});
+			api().invoke('sendNodeDone', payload.nodeId, payload.output ?? null).catch(() => {});
 		} else if (type === 'node:error') {
 			api()
 				.invoke('log-window:emit-node-update', {
@@ -180,6 +186,9 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					endTime: new Date().toISOString(),
 				})
 				.catch(() => {});
+			api().invoke('sendNodeError', payload.nodeId, payload.message ?? '').catch(() => {});
+		} else if (type === 'process:complete') {
+			api().invoke('sendProcessComplete').catch(() => {});
 		} else if (type === 'log' || type === 'error') {
 			api()
 				.invoke('log-window:emit-item-log', {
@@ -277,6 +286,11 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		return false;
 	}
 
+	// Захватываем слот ресурсного пула по colorType (afterEffect → лимит 1, helpers → 10 и т.д.).
+	// Если лимит исчерпан — ждём освобождения слота другим item'ом.
+	const colorType: string | undefined = execObj.colorType;
+	if (colorType) await acquirePool(colorType);
+
 	send('node:start', { nodeId: stepId, itemId: ctx.itemId });
 	send('log', { level: 'info', text: `→ ${stepId} (${execObj.pluginId}@${execObj.pluginVersion})`, itemId: ctx.itemId, stepId });
 
@@ -287,6 +301,22 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			throw new Error(`Plugin ${execObj.pluginId}@${execObj.pluginVersion} has no callable export`);
 		}
 
+		// sendToMW из плагинов имеет сигнатуру (type, payload) — маршрутизируем по type.
+		const sendToMW = (type: string, payload: any) => {
+			if (type === 'log') {
+				const p = typeof payload === 'string' ? { text: payload } : (payload ?? {});
+				send('log', { level: p.level ?? 'info', text: p.text ?? '', meta: p.meta, itemId: ctx.itemId, stepId });
+			} else if (type === 'error') {
+				const p = typeof payload === 'string' ? { message: payload } : (payload ?? {});
+				send('log', { level: 'error', text: p.message ?? p.text ?? String(payload), meta: p.meta, itemId: ctx.itemId, stepId });
+			} else if (type === 'statusbar') {
+				const text = typeof payload === 'string' ? payload : (payload?.text ?? '');
+				send('statusbar', { text });
+			} else {
+				send(type, { ...(typeof payload === 'object' && payload !== null ? payload : { value: payload }), itemId: ctx.itemId, stepId });
+			}
+		};
+
 		const pluginCtx: PluginCtx = {
 			itemId: ctx.itemId,
 			stepId,
@@ -295,10 +325,20 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			pluginVersion: execObj.pluginVersion,
 			log: (level, text, meta) => send('log', { level, text, meta, itemId: ctx.itemId, stepId }),
 			send,
-			sendToMW: (msg: any) => send('log', { ...msg, itemId: ctx.itemId, stepId }),
+			sendToMW,
 		};
 
-		const result = await pluginFn(execObj, ctx.description, pluginCtx);
+		// pluginSender.ts (inlined в каждый плагин) читает globalThis.__pluginSendToMW
+		// при каждом вызове sendToMW(...). Выставляем перед вызовом, восстанавливаем после.
+		const prevGlobalSend = (globalThis as any).__pluginSendToMW;
+		(globalThis as any).__pluginSendToMW = sendToMW;
+
+		let result: any;
+		try {
+			result = await pluginFn(execObj, ctx.description, pluginCtx);
+		} finally {
+			(globalThis as any).__pluginSendToMW = prevGlobalSend;
+		}
 		const output = Array.isArray(result) ? result : [result];
 		ctx.results.set(stepId, output);
 		stepObj.output = output;
@@ -310,6 +350,9 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		send('error', { step: stepId, message: e?.message ?? String(e), itemId: ctx.itemId, stepId });
 		console.error(`[processItem] Error in step "${stepId}":`, e);
 		return false;
+	} finally {
+		// Всегда освобождаем слот — даже при ошибке
+		if (colorType) releasePool(colorType);
 	}
 }
 

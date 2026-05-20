@@ -30,7 +30,7 @@ type CustomVariant = {
 };
 
 type Props = {
-	label: string;
+	label: string | React.ReactNode;
 	tooltip?: string;
 	unit?: string;
 	// фиксированная ширина поля значения (прилегает к правой границе «колонки значений»)
@@ -133,6 +133,7 @@ export default function MySettingRow(props: Props) {
 			}}
 		>
 			<Typography
+				component='div'
 				sx={{
 					color: greyColor(75),
 					fontSize: '0.92rem',

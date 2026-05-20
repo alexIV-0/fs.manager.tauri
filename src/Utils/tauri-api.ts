@@ -66,6 +66,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	readFileSync: (filePath) => ({ filePath }),
 	readMediaPreview: (filePath) => ({ filePath }),
 	writeFile: (filePath, content) => ({ filePath, content }),
+	write_binary_file: (filePath: string, dataB64: string) => ({ filePath, dataB64 }),
 	getSomeFromFolder: (path, search?) => ({ path, ...(search ? { search } : {}) }),
 	listSubfolders: (paths) => ({ paths }),
 	recursiveFindFiles: (path, search?) => ({ path, ...(search ? { search } : {}) }),
@@ -74,6 +75,8 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	// Check
 	checkFilePath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
 	checkFolderPath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
+	// Plugins dev path (for PluginBuilderWin)
+	getPluginsDevPath: () => ({}),
 	// Fonts
 	fontsGetList: () => ({}),
 	fontsLoadOne: (fontPath) => ({ fontPath }),
@@ -153,6 +156,12 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	color_types_rescan: () => ({}),
 	color_types_add: (name: string, defaultLimit?: number) => ({ name, defaultLimit }),
 	color_types_remove: (name: string) => ({ name }),
+	// File types
+	file_types_get: () => ({}),
+	file_types_set: (types: any) => ({ types }),
+	// Program paths
+	program_paths_get: () => ({}),
+	program_paths_set: (paths: any) => ({ paths }),
 	// Docs
 	docs_list: () => ({}),
 	docs_read: (sectionName: string, fileName: string) => ({ sectionName, fileName }),
@@ -174,10 +183,17 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	createTextFile: (path: string) => ({ path }),
 	ensure_and_read_dir: (path: string) => ({ path }),
 	get_stat: (path: string) => ({ path }),
+	path_exists: (path: string) => ({ path }),
 	os_tmpdir: () => ({}),
 	hash_file: (path: string, algo?: string) => ({ path, algo }),
 	cleanup_auto_delete: () => ({}),
 	db_register_found: (payload: any) => ({ payload }),
+	// HTTP via Rust (no CORS)
+	// Tauri сопоставляет аргументы по имени параметра Rust-функции.
+	// Все три команды объявлены как fn http_xxx(args: ...) → оборачиваем в { args }.
+	http_fetch: (args: any) => ({ args }),
+	http_upload: (args: any) => ({ args }),
+	http_download: (args: any) => ({ args }),
 };
 
 // Алиасы: фронтенд имена → Rust имена
@@ -223,6 +239,12 @@ const commandAliases: Record<string, string> = {
 	'color-types:rescan': 'color_types_rescan',
 	'color-types:add': 'color_types_add',
 	'color-types:remove': 'color_types_remove',
+	// File types
+	'file-types:get': 'file_types_get',
+	'file-types:set': 'file_types_set',
+	// Program paths
+	'program-paths:get': 'program_paths_get',
+	'program-paths:set': 'program_paths_set',
 	// Docs
 	'docs:list': 'docs_list',
 	'docs:read': 'docs_read',
@@ -438,15 +460,24 @@ export const tauriAPI = {
 		tauriSend('renderer-log', payload);
 	},
 	onProcessingEvent: (callback: (event: { type: string; payload: any }) => void) => {
-		tauriOn('processing-event', callback);
+		// tauriOn вызывает cb(tauriEvent, tauriEvent.payload).
+		// Rust-структура ProcessingEvent сериализуется как { type, payload }
+		// (поле event_type переименовано через #[serde(rename = "type")]).
+		// rawPayload уже имеет нужную форму — передаём напрямую.
+		const wrapped = (_rawEvent: any, rawPayload: any) => {
+			if (rawPayload?.type) callback(rawPayload);
+		};
+		(callback as any).__tauriWrapped = wrapped;
+		tauriOn('processing-event', wrapped);
 		return {} as any;
 	},
 	removeProcessingEvent: (callback: (event: { type: string; payload: any }) => void) => {
-		tauriOff('processing-event', callback);
+		const wrapped = (callback as any).__tauriWrapped;
+		tauriOff('processing-event', wrapped ?? callback);
 	},
 
 	onFsChanged: (callback: (changedPath: string) => void) => {
-		tauriOn('fs-changed', (event: any, path: string) => callback(path));
+		tauriOn('fs-changed', (_event: any, path: string) => callback(path));
 		return () => tauriOff('fs-changed');
 	},
 
@@ -531,10 +562,26 @@ const tauriDocs = {
 };
 
 /**
- * Templates API объект (window.templates) — заглушка для совместимости с Electron-кодом
+ * Templates API объект (window.templates) — статичный список встроенных шаблонов
+ * сохранения результатов обработки (локальный архив, синхронизация с БД, агрегаты).
+ *
+ * В Electron-эре это был IPC-вызов в `electron/main/templates/registry.ts`. В
+ * Tauri-порте сама логика записи шаблонов ещё не портирована, но dropdown в
+ * настройках должен показывать имена. Этот список синхронизирован с
+ * `electron/main/templates/registry.ts` (id/label оттуда же).
  */
+const BUILTIN_TEMPLATES: Array<{ id: string; label: string }> = [
+	{ id: 'local-archive', label: 'Локальный архив (JSONL)' },
+	{ id: 'database-sync', label: 'Синхронизация с БД' },
+	{ id: 'total-by-project', label: 'Всего по проектам' },
+	{ id: 'by-year', label: 'По годам' },
+	{ id: 'by-month', label: 'По месяцам' },
+	{ id: 'by-week', label: 'По неделям' },
+	{ id: 'by-day', label: 'По дням' },
+];
+
 const tauriTemplates = {
-	list: async () => [] as any[],
+	list: async () => BUILTIN_TEMPLATES.slice(),
 	getErrors: async () =>
 		[] as Array<{
 			timestamp: string;

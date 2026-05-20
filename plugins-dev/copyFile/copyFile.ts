@@ -1,38 +1,69 @@
-// main/copyFileFuncMain.ts
+// copyFile — копирует файл по сформированному паттерну.
+// Tauri-port: все file-операции идут через @plugin-api/tauri helper, который
+// дёргает Tauri IPC. Старая Electron-логика (fs.existsSync + copyFileWithHashCheck)
+// заменена на copy_item в Rust (там же создаются родительские директории).
+
 import path from 'path';
-import { copyItem, tryToUnlinkFile } from '../../electron/main/fileSistem/copyOrMoveItem';
+import { fs, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { sendToMW } from '../_template/pluginSender';
 
-export { onLoad } from '../_template/pluginSender';
-export async function copyFileFunc(_item: any, _description: any) {
-	const finalFile = [];
+export { onLoad } from '../_template/tauri';
 
-	let curPath = _item.targetPath.length == 0 ? ['$clearName ($random(3))'] : _item.targetPath;
+export async function copyFileFunc(_item: any, _description: any): Promise<string[]> {
+	const finalFile: string[] = [];
 
-	if (_item.import.targetPath) {
+	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+
+	if (_item.import.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
 		curPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
 	}
 
-	for (let fileFrom of _item.import.inputFile) {
+	for (const fileFrom of _item.import.inputFile as string[]) {
 		const fileTo = createPathForFileByPattern(curPath, _description, fileFrom);
 
-		// Отправляем статус перед копированием
 		sendToMW('statusbar', {
-			text: `${_description.infoText}: [copy file] ${fileFrom} → ${fileTo}`,
+			text: `${_description.infoText ?? ''}: [copy file] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 		});
 
-		const ok = copyItem(fileFrom, fileTo, { overwrite: _item.overwriteOldest });
-		if (!ok) throw new Error(`[copyFile] Copy failed: ${path.basename(fileFrom)} → ${path.basename(fileTo)}`);
+		// destination уже существует?
+		const destExists = await fs.existsFile(fileTo);
+
+		if (destExists) {
+			if (!_item.overwriteOldest) {
+				// overwrite=false — пропускаем (как в оригинальном Electron-плагине).
+				console.log('Destination exists and overwrite=false:', fileTo);
+				finalFile.push(fileTo);
+				continue;
+			}
+
+			// overwriteOldest=true: перезаписываем только если source новее.
+			const newer = await fs.isSourceNewer(fileFrom, fileTo);
+			if (!newer) {
+				console.log('Destination is newer or same age — skip:', path.basename(fileTo));
+				finalFile.push(fileTo);
+				continue;
+			}
+		}
+
+		// copy_item в Rust сам создаёт родительские директории.
+		// overwrite:true — мы уже отфильтровали кейсы выше.
+		await fs.copy(fileFrom, fileTo, { overwrite: true });
+
+		// Проверка что файл действительно появился (защита от тихого фейла).
+		const copied = await fs.existsFile(fileTo);
+		if (!copied) {
+			throw new Error(`[copyFile] Copy failed: ${path.basename(fileFrom)} → ${path.basename(fileTo)}`);
+		}
 
 		if (_item.deleteAfter) {
-			tryToUnlinkFile(fileFrom);
+			await fs.remove(fileFrom).catch(() => {});
 		}
+
 		finalFile.push(fileTo);
 	}
 
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFile}` });
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
 	return finalFile;
 }

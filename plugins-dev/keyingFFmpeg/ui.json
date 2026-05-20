@@ -22,10 +22,7 @@
 				"outputType": "accepted",
 				"required": true,
 				"isInput": true,
-				"acceptedTypes": [
-					"video",
-					"image"
-				]
+				"acceptedTypes": ["video", "image"]
 			},
 			{
 				"id": "targetPath",
@@ -33,18 +30,13 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Папка для сохранения",
-					"options": [
-						"#pathPattern",
-						"CustomFolder..."
-					],
+					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"path"
-				],
+				"acceptedTypes": ["path"],
 				"outputType": "path",
 				"required": false
 			}

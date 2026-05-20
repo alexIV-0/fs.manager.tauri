@@ -197,6 +197,10 @@ pub fn renameFile(oldPath: String, newPath: String) -> Result<bool, String> {
 pub fn saveFlowToOptionsFolder(path: String, flow: serde_json::Value) -> Result<serde_json::Value, String> {
     let path_buf = std::path::PathBuf::from(&path);
 
+    if !path_buf.is_absolute() {
+        return Err(format!("[saveFlowToOptionsFolder] path is not absolute: {}", path));
+    }
+
     println!("[saveFlowToOptionsFolder] Input path: {}", path);
     println!("[saveFlowToOptionsFolder] Path is_dir: {}", path_buf.is_dir());
 
@@ -220,6 +224,11 @@ pub fn saveFlowToOptionsFolder(path: String, flow: serde_json::Value) -> Result<
 #[tauri::command]
 pub fn getNodeObjFromFile(path: String) -> Result<serde_json::Value, String> {
     let path_buf = std::path::PathBuf::from(&path);
+
+    if !path_buf.is_absolute() {
+        println!("[getNodeObjFromFile] path is not absolute, returning empty object: {}", path);
+        return Ok(serde_json::json!({}));
+    }
 
     // Загружаем из {path}/options/options.json
     let json_path = path_buf.join("options").join("options.json");

@@ -33,7 +33,7 @@
 			},
 			{
 				"id": "sortBy",
-				"controlType": "autocomplete",
+				"controlType": "ddm",
 				"controlProps": {
 					"label": "Sort By",
 					"tooltip": "По какому параметру будет происходить сортировка? Число в начале имени файла, имя файла, Дата модификации, размер",
@@ -41,46 +41,27 @@
 						"StartNumber",
 						"EndNumber",
 						"Name",
-						"Date",
-						"Size"
+						"Date"
 					],
-					"multiSelect": false,
-					"allowDuplicates": false,
-					"value": []
+					"freeInput": false,
+					"value": "StartNumber"
 				},
-				"isInput": false,
-				"outputType": "path",
-				"acceptedTypes": [
-					"path"
-				],
+				"outputType": "typeByExtension",
 				"required": true
 			},
 			{
 				"id": "sortDirection",
-				"controlType": "autocomplete",
+				"controlType": "checkbox",
 				"controlProps": {
-					"label": "Sort Direction",
-					"tooltip": "По какому принципу будет происходить сортировка? По возрастанию (\"asc\") или по уменьшению (\"desc\")?",
-					"options": [
-						"asc",
-						"desc"
-					],
-					"multiSelect": false,
-					"allowDuplicates": false,
-					"value": [
-						"asc"
-					]
+					"label": "Directional",
+					"tooltip": "Будет ли идти сортировка по возрастанию или по уменьшению.<div>Вкл. (true) - по возрастанию (от А-&gt;Я, 1 -&gt; 99)</div><div>Выкл. (False) - по уменьшению (в обратном порядке)</div>",
+					"value": true
 				},
-				"isInput": false,
-				"outputType": "path",
-				"acceptedTypes": [
-					"path"
-				],
-				"required": true
+				"outputType": "boolean",
+				"required": false
 			}
 		],
 		"output": {
-			"functionName": "sortByTypeFunc",
 			"sourceProperty": "inputFile"
 		},
 		"isValid": true

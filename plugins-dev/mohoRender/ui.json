@@ -20,9 +20,7 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"moho"
-				],
+				"acceptedTypes": ["moho"],
 				"outputType": "accepted",
 				"required": true
 			},
@@ -32,18 +30,13 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Папка для сохранения. Указывается в виде маски. все маски начинаются с $.<br><div><font color=\"#ffff00\">$clearName</font> - чистое имя найденного элемента в папке IN на GD без <font color=\"#ffff00\">эмоджиков</font> и кавычек () []</div><div><font color=\"#ffff00\">$findTime</font> - время когда был найден элемент в папке IN</div><div><font color=\"#ffff00\">$curItemName</font> - текущий элемент в папке IN (с эмоджиками и кавычками). это может быть папка. но без расширения</div><div><font color=\"#ffff00\">$id</font> - уникальный id для каждого элемента если он есть в имени найденного элемента в папке IN</div><div><font color=\"#ffff00\">$projectName</font> - название проекта (имя папки в которой находится папка IN)</div><div><font color=\"#ffff00\">$projectPathGD</font> - полный путь до папки проекта на GD</div><div><font color=\"#ffff00\">$mainFolderName</font> - название папки, в которой находится проект на GD</div><div><font color=\"#ffff00\">$mainFolderPath</font> - название папки, в которой находится проект на GD</div><div><br></div><div><span style=\"font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;\"><font color=\"#ffff00\">$index</font> - индекс элемента если файл не единственный</span></div><div><font color=\"#ffff00\">$fileName</font> - имя текущего файла без расширения как есть</div><div><font color=\"#ffff00\">$clearFileName</font> - чистое имя текущего файла без расширения без кавычек, эмоджи и текста в круглых и квадратных скобках</div><div><br></div><div><font color=\"#ffff00\">$curMonthStr</font> - текущий месяц в виде строки (January, February, ...)</div><div><font color=\"#ffff00\">$localFolder</font> - рабочая папка на локальном дике (указывается в настройках)</div><div><br></div><div><font color=\"#ffff00\">$YYYY</font> - год (4 цифры)</div><div><font color=\"#ffff00\">$MM</font> - месяц (2 цифры)</div><div><font color=\"#ffff00\">$DD - день (2 цифры)</font></div><div><font color=\"#ffff00\">$HH</font> - часы (2 цифры)</div><div><font color=\"#ffff00\">$mm</font> - минуты (2 цифры)</div><div><font color=\"#ffff00\">$ss</font> - секунды (2 цифры)</div>",
-					"options": [
-						"#pathPattern",
-						"CustomFolder..."
-					],
+					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"path"
-				],
+				"acceptedTypes": ["path"],
 				"outputType": "path",
 				"required": false
 			},

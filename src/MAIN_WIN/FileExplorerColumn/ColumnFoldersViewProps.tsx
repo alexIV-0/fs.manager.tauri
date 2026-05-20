@@ -1,6 +1,6 @@
 // ColumnFolderView.tsx
 import { Box, List } from '@mui/material';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { greyColor } from '@/Store/Color/grayColor';
 import { contentStyle, resizeHandleStyle, resizeHandleStyleBottom, resizeHandleStyleLeft } from '../mainStyles';
 import { DraggableFileItem } from './DraggableFileItem';
@@ -47,6 +47,69 @@ export function ColumnFolderView({
 	const [emptyMenu, setEmptyMenu] = useState<{ pos: { mouseX: number; mouseY: number }; colPath: string } | null>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
+
+	// ── Rubber band (marquee) selection ───────────────────────────────────────
+	type RbState = { colIndex: number; startX: number; startY: number };
+	const rbState = useRef<RbState | null>(null);
+	const [rbRect, setRbRect] = useState<{ colIndex: number; left: number; top: number; width: number; height: number } | null>(null);
+
+	const handleRbMouseDown = useCallback((e: React.MouseEvent, colIndex: number) => {
+		if (e.button !== 0) return;
+		if ((e.target as Element).closest('[data-item-path]')) return;
+		e.preventDefault();
+		rbState.current = { colIndex, startX: e.clientX, startY: e.clientY };
+	}, []);
+
+	useEffect(() => {
+		const onMove = (e: MouseEvent) => {
+			if (!rbState.current) return;
+			const { startX, startY, colIndex } = rbState.current;
+			const curX = Math.max(0, Math.min(e.clientX, window.innerWidth));
+			const curY = Math.max(0, Math.min(e.clientY, window.innerHeight));
+			setRbRect({
+				colIndex,
+				left: Math.min(startX, curX),
+				top: Math.min(startY, curY),
+				width: Math.abs(curX - startX),
+				height: Math.abs(curY - startY),
+			});
+		};
+
+		const onUp = (e: MouseEvent) => {
+			if (!rbState.current) return;
+			const { startX, startY, colIndex } = rbState.current;
+			rbState.current = null;
+			setRbRect(null);
+
+			const minX = Math.min(startX, e.clientX);
+			const minY = Math.min(startY, e.clientY);
+			const maxX = Math.max(startX, e.clientX);
+			const maxY = Math.max(startY, e.clientY);
+			if (maxX - minX < 4 && maxY - minY < 4) return;
+
+			const colEl = document.getElementById(`col-${sourceType}-${colIndex}`);
+			if (!colEl) return;
+			const selected: string[] = [];
+			colEl.querySelectorAll('[data-item-path]').forEach((el) => {
+				const itemPath = (el as HTMLElement).dataset.itemPath;
+				if (!itemPath) return;
+				const r = el.getBoundingClientRect();
+				if (r.top < maxY && r.bottom > minY && r.left < maxX && r.right > minX) {
+					selected.push(itemPath);
+				}
+			});
+			if (selected.length > 0) {
+				useColumnView_Store.getState().setMultiSelectedPaths(sourceType, selected, { colIndex, path: selected[0] });
+			}
+		};
+
+		window.addEventListener('mousemove', onMove);
+		window.addEventListener('mouseup', onUp);
+		return () => {
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+		};
+	}, [sourceType]);
 
 	const addItemToColumn = useColumnView_Store((s) => s.addItemToColumn);
 	const cbType = clipboardFs_store((s) => s.type);
@@ -144,6 +207,24 @@ export function ColumnFolderView({
 		>
 			{topPanel}
 
+			{/* Rubber band overlay (position: fixed → не зависит от scroll) */}
+			{rbRect && (
+				<Box
+					sx={{
+						position: 'fixed',
+						pointerEvents: 'none',
+						zIndex: 9999,
+						left: rbRect.left,
+						top: rbRect.top,
+						width: rbRect.width,
+						height: rbRect.height,
+						backgroundColor: 'rgba(0, 123, 255, 0.08)',
+						border: '1px solid rgba(0, 123, 255, 0.45)',
+						borderRadius: '2px',
+					}}
+				/>
+			)}
+
 			{/* Контент с колонками */}
 			<Box
 				ref={contentRef}
@@ -224,7 +305,7 @@ export function ColumnFolderView({
 							{/* Droppable Column */}
 							<DroppableColumn id={`column-${sourceType}-${i}`} path={col.path} source={sourceType}>
 								<Box
-									id={`col-${i}`}
+									id={`col-${sourceType}-${i}`}
 									sx={{
 										display: 'flex',
 										flexDirection: 'column',
@@ -245,6 +326,7 @@ export function ColumnFolderView({
 									}}
 								>
 									<Box
+										onMouseDown={(e) => handleRbMouseDown(e, i)}
 										onContextMenu={(e) => {
 											// Показываем меню пустого места только если клик не попал на элемент списка
 											if ((e.target as HTMLElement).closest('.MuiListItem-root')) return;

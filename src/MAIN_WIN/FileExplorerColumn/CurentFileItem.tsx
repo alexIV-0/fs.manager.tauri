@@ -20,6 +20,7 @@ import {
 	showInFinder,
 } from '@/PROCESSING/function/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
+import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 
 interface CurrentFileItemProps {
 	name: string;
@@ -69,6 +70,14 @@ export function CurrentFileItem({
 
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
 
+	const getMultiPaths = () => {
+		if (!isMultiSelected) return [path];
+		const s = useColumnView_Store.getState();
+		if (s.instances.gd.multiSelectedPaths.includes(path)) return s.instances.gd.multiSelectedPaths;
+		if (s.instances.local.multiSelectedPaths.includes(path)) return s.instances.local.multiSelectedPaths;
+		return [path];
+	};
+
 	// Вставить рядом (в ту же папку что и файл)
 	const handlePaste = async () => {
 		const parentPath = (await window.electronAPI.invoke('pathDirname', path)) as string;
@@ -85,8 +94,8 @@ export function CurrentFileItem({
 		onCopyPath: () => copyPath(path),
 		onShowInFinder: () => showInFinder(path),
 		onDelete: () => deleteItem(path),
-		onCopy: () => copyToClipboardFs([path]),
-		onCut: () => cutToClipboardFs([path]),
+		onCopy: () => copyToClipboardFs(getMultiPaths()),
+		onCut: () => cutToClipboardFs(getMultiPaths()),
 		onPaste: handlePaste,
 		hasClipboard,
 	});
@@ -136,6 +145,7 @@ export function CurrentFileItem({
 			<ListItem
 				disablePadding
 				ref={listItemRef}
+				data-item-path={path}
 				onContextMenu={(e) => handleContextMenu(e, onSelect)}
 				sx={{
 					height: 34,

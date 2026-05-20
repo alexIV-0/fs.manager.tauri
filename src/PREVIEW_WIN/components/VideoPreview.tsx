@@ -227,7 +227,7 @@ export function VideoPreview({ filePath }: { filePath: string }) {
 			<video
 				ref={videoRef}
 				src={toFileUrl(transcodedPath || filePath)}
-				style={{ width: '100%', height: '100%', objectFit: 'fill', display: 'block', cursor: 'pointer' }}
+				style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', cursor: 'pointer' }}
 				onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
 				onPlay={() => setPlaying(true)}
 				onPause={() => setPlaying(false)}

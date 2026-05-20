@@ -1,6 +1,5 @@
 // src/NODE_WIN/components/Sidebar/SidebarAccordion.tsx
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
-import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
 import { CustomNodeData } from '@/NODE_WIN/definitions/types';
 import { getNodeDefinitions } from '@/NODE_WIN/definitions';
 import { Box, Collapse, InputAdornment, Stack, TextField, Typography } from '@mui/material';
@@ -12,6 +11,16 @@ interface GroupedNodes {
 	colorType: string;
 	color: string;
 	nodes: ReturnType<typeof getNodeDefinitions>;
+}
+
+// Кастомный порядок аккордеонов в боковой панели.
+// Группы, чей colorType указан здесь, идут в этом порядке. Все остальные — после,
+// отсортированы алфавитом. Регистр учитывается (afterEffect — camelCase, как в colorTypes_store).
+const GROUP_ORDER = ['main', 'ai', 'helpers', 'ffmpeg', 'afterEffect', 'moho'];
+
+function groupOrderIndex(name: string): number {
+	const idx = GROUP_ORDER.indexOf(name);
+	return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
 }
 
 interface SidebarAccordionProps {
@@ -57,11 +66,23 @@ function SidebarAccordion({ onNodeClick, selectedNodeType, externalSearch }: Sid
 			map.get(ct)!.push(node);
 		});
 
-		return Array.from(map.entries()).map(([colorType, nodes]) => ({
-			colorType,
-			color: (colorTypes[colorType] as string) ?? (colorTypes.default as string),
-			nodes,
-		}));
+		return Array.from(map.entries())
+			.sort(([a], [b]) => {
+				const ai = groupOrderIndex(a);
+				const bi = groupOrderIndex(b);
+				if (ai !== bi) return ai - bi;
+				// Группы вне GROUP_ORDER сортируются между собой алфавитом.
+				return a.localeCompare(b);
+			})
+			.map(([colorType, nodes]) => ({
+				colorType,
+				color: (colorTypes[colorType] as string) ?? (colorTypes.default as string),
+				nodes: [...nodes].sort((a, b) => {
+					const labelA = ((a.data as CustomNodeData)?.label ?? '').toLowerCase();
+					const labelB = ((b.data as CustomNodeData)?.label ?? '').toLowerCase();
+					return labelA.localeCompare(labelB);
+				}),
+			}));
 	}, [nodes, colorTypes, search]);
 
 	// Если есть поиск — раскрываем все группы
@@ -103,7 +124,6 @@ function SidebarAccordion({ onNodeClick, selectedNodeType, externalSearch }: Sid
 			{/* Группы */}
 			<Stack direction='column' sx={{ overflowY: 'auto', flex: 1 }} gap={0.5} px={1}>
 				{groups.map(({ colorType, color, nodes }) => {
-					const textColor = complimentColor(color);
 					const open = isGroupOpen(colorType);
 
 					return (

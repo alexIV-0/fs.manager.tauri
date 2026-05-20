@@ -1,49 +1,18 @@
-// plugins-dev/keyingFFmpeg/keyingFFmpeg.ts
+// keyingFFmpeg — кеинг (chromakey/colorkey/lumakey/despill) через ffmpeg.
+// Tauri-port: spawnFFmpegCommand → ffmpeg.run, getFullInfoFromVideoFile → ffmpeg.getInfo.
 
 import path from 'path';
+import { fs, ffmpeg, sendToMW } from '../_template/tauri';
 import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { getFullInfoFromVideoFile } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
-import { spawnFFmpegCommand } from '../../electron/main/processing/ffmpeg/spawnFFmpegCommand';
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
 import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { sendToMW } from '../_template/pluginSender';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-// ── Типы KeyingSettings (дублируем здесь, чтобы не тащить renderer-код в main) ─
-
-interface ChromakeySettings {
-	enabled: boolean;
-	color: string;
-	similarity: number;
-	blend: number;
-	yuv: boolean;
-}
-interface ColorkeySettings {
-	enabled: boolean;
-	color: string;
-	similarity: number;
-	blend: number;
-}
-interface LumakeySettings {
-	enabled: boolean;
-	threshold: number;
-	tolerance: number;
-	softness: number;
-}
-interface DespillSettings {
-	enabled: boolean;
-	color: string;
-	mix: number;
-	expand: number;
-	brightness: number;
-}
-interface EdgeSettings {
-	erosion: number;
-	dilation: number;
-	blur: number;
-}
-
+interface ChromakeySettings { enabled: boolean; color: string; similarity: number; blend: number; yuv: boolean }
+interface ColorkeySettings { enabled: boolean; color: string; similarity: number; blend: number }
+interface LumakeySettings { enabled: boolean; threshold: number; tolerance: number; softness: number }
+interface DespillSettings { enabled: boolean; color: string; mix: number; expand: number; brightness: number }
+interface EdgeSettings { erosion: number; dilation: number; blur: number }
 interface KeyingSettings {
 	chromakey: ChromakeySettings;
 	colorkey: ColorkeySettings;
@@ -51,8 +20,6 @@ interface KeyingSettings {
 	despill: DespillSettings;
 	edge: EdgeSettings;
 }
-
-// ── Вспомогательные ───────────────────────────────────────────────────────────
 
 function isImageFile(filePath: string, typeOfFile: Record<string, string[]>): boolean {
 	return getFileTypeByExt(filePath, typeOfFile) === 'image';
@@ -76,10 +43,6 @@ function rgbHexToYuvHex(hex: string): string {
 	return `0x${y.toString(16).padStart(2, '0')}${cb.toString(16).padStart(2, '0')}${cr.toString(16).padStart(2, '0')}`;
 }
 
-/**
- * Строит строку ffmpeg -vf из настроек кеинга.
- * Всегда заканчивается format=rgba чтобы гарантировать альфа-канал на выходе.
- */
 function buildKeyingFilterString(s: KeyingSettings): string {
 	const filters: string[] = [];
 
@@ -89,16 +52,13 @@ function buildKeyingFilterString(s: KeyingSettings): string {
 		if (s.chromakey.yuv) f += ':yuv=1';
 		filters.push(f);
 	}
-
 	if (s.colorkey.enabled) {
 		const hex = s.colorkey.color.replace('#', '0x');
 		filters.push(`colorkey=${hex}:${s.colorkey.similarity}:${s.colorkey.blend}`);
 	}
-
 	if (s.lumakey.enabled) {
 		filters.push(`lumakey=threshold=${s.lumakey.threshold}:tolerance=${s.lumakey.tolerance}:softness=${s.lumakey.softness}`);
 	}
-
 	if (s.despill.enabled) {
 		const t = despillTypeFromColor(s.despill.color);
 		const parts = [`type=${t}`, `mix=${s.despill.mix}`];
@@ -106,7 +66,6 @@ function buildKeyingFilterString(s: KeyingSettings): string {
 		if (s.despill.brightness > 0) parts.push(`brightness=${s.despill.brightness}`);
 		filters.push(`despill=${parts.join(':')}`);
 	}
-
 	if (s.edge.erosion > 0) {
 		const v = s.edge.erosion;
 		filters.push(`erosion=${v}:${v}:${v}:${v}`);
@@ -115,8 +74,6 @@ function buildKeyingFilterString(s: KeyingSettings): string {
 		const v = s.edge.dilation;
 		filters.push(`dilation=${v}:${v}:${v}:${v}`);
 	}
-
-	// Размытие только альфа-канала: split → alphaextract → boxblur → alphamerge
 	if (s.edge.blur > 0) {
 		const b = s.edge.blur;
 		filters.push('format=rgba');
@@ -124,14 +81,9 @@ function buildKeyingFilterString(s: KeyingSettings): string {
 		filters.push(`[a]alphaextract,boxblur=${b}:${b}[blurA]`);
 		filters.push('[rgb][blurA]alphamerge');
 	}
-
-	// Гарантируем RGBA на выходе (нужно для PNG и Hap Q)
 	filters.push('format=rgba');
-
 	return filters.join(',');
 }
-
-// ── Обработка одного файла ────────────────────────────────────────────────────
 
 async function processFile(
 	fileFrom: string,
@@ -140,68 +92,46 @@ async function processFile(
 	index: number,
 	total: number,
 	_description: any,
+	nodeId?: string,
 ): Promise<string> {
 	const label = `${_description.infoText}: [keying ${index}/${total}]`;
-	const baseName = path.basename(fileFrom);
-
-	sendToMW('statusbar', { text: `${label}\n${baseName}` });
+	sendToMW('statusbar', { text: `${label}\n${path.basename(fileFrom)}` });
 
 	const filterString = buildKeyingFilterString(settings);
 	const isImage = isImageFile(fileFrom, _description.typeOfFile);
 
-	testAndCreateFolder(path.dirname(fileTo));
+	await fs.mkdir(path.dirname(fileTo));
 
 	if (isImage) {
-		// ── Картинка → PNG с альфа-каналом ───────────────────────────────────────
-
-		const ffmpegArgs: string[] = [
-			'-y',
-			'-i',
-			fileFrom,
-			'-vf',
-			filterString,
-			'-frames:v',
-			'1', // один кадр — для случая если это анимированный gif и т.п.
-			fileTo,
-		];
-
-		await spawnFFmpegCommand({ text: label, duration: 1, command: ffmpegArgs }, _description, sendToMW);
+		await ffmpeg.run({
+			text: label,
+			duration: 1,
+			nodeId,
+			command: ['-y', '-i', fileFrom, '-vf', filterString, '-frames:v', '1', fileTo],
+		});
 	} else {
-		// ── Видео → MOV / Hap Q ───────────────────────────────────────────────────
-
-		const info = await getFullInfoFromVideoFile(fileFrom, _description);
-
-		// Аудио: если есть дорожка — копируем, иначе -an
-		const audioArgs: string[] = info.hasAudio ? ['-c:a', 'copy'] : ['-an'];
-
-		const ffmpegArgs: string[] = [
-			'-y',
-			'-i',
-			fileFrom,
-			'-vf',
-			filterString,
-			'-c:v',
-			'hap',
-			'-format',
-			'hap_q',
-			'-compressor',
-			'snappy', // lossless-сжатие, баланс размер/скорость чтения
-			...audioArgs,
-			fileTo,
-		];
-
-		await spawnFFmpegCommand({ text: label, duration: info.durationInSeconds || 10, command: ffmpegArgs }, _description, sendToMW);
+		const info = await ffmpeg.getInfo(fileFrom);
+		const audioArgs = info.hasAudio ? ['-c:a', 'copy'] : ['-an'];
+		await ffmpeg.run({
+			text: label,
+			duration: info.durationInSeconds || 10,
+			nodeId,
+			command: [
+				'-y', '-i', fileFrom,
+				'-vf', filterString,
+				'-c:v', 'hap',
+				'-format', 'hap_q',
+				'-compressor', 'snappy',
+				...audioArgs,
+				fileTo,
+			],
+		});
 	}
-
 	return fileTo;
 }
 
-// ── Точка входа плагина ───────────────────────────────────────────────────────
-
-export async function keyingFFmpegFunc(_item: any, _description: any) {
+export async function keyingFFmpegFunc(_item: any, _description: any): Promise<string[]> {
 	const finalFiles: string[] = [];
-
-	// ── 1. Парсим настройки кеинга ─────────────────────────────────────────────
 
 	if (!_item.keyingFFmpeg) {
 		sendToMW('statusbar', { text: `${_description.infoText}: [keying] ERROR: keying settings not configured` });
@@ -216,23 +146,18 @@ export async function keyingFFmpegFunc(_item: any, _description: any) {
 		return finalFiles;
 	}
 
-	// ── 2. Входные файлы ───────────────────────────────────────────────────────
 	const inputFiles: string[] = (_item.import?.keyingFFmpeg ?? []).filter(Boolean);
-
 	if (inputFiles.length === 0) {
 		sendToMW('statusbar', { text: `${_description.infoText}: [keying] no input files, skipping` });
 		return finalFiles;
 	}
 
-	// ── 3. Итерируем файлы ────────────────────────────────────────────────────
-
 	for (let i = 0; i < inputFiles.length; i++) {
 		const fileFrom = inputFiles[i];
 
-		// Путь назначения
-		let curPath: string[] = _item.targetPath?.length === 0 ? ['$clearName ($random(3))'] : [...(_item.targetPath ?? [])];
-
-		if (_item.import?.targetPath) {
+		let curPath: string[] =
+			_item.targetPath?.length === 0 ? ['$clearName ($random(3))'] : [...(_item.targetPath ?? [])];
+		if (_item.import?.targetPath?.length) {
 			curPath.unshift(..._item.import.targetPath);
 		} else {
 			curPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
@@ -242,9 +167,10 @@ export async function keyingFFmpegFunc(_item: any, _description: any) {
 		const ext = isImageFile(fileFrom, _description.typeOfFile) ? '.png' : '.mov';
 		const fileTo = path.join(path.dirname(basePath), path.basename(basePath, path.extname(basePath)) + ext);
 
-		const result = await processFile(fileFrom, fileTo, settings, i + 1, inputFiles.length, _description);
+		const result = await processFile(fileFrom, fileTo, settings, i + 1, inputFiles.length, _description, _item.id);
 		finalFiles.push(result);
 	}
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFiles}` });
+
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFiles.join('\n')}` });
 	return finalFiles;
 }

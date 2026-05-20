@@ -1,7 +1,15 @@
-import { List, ListItem, ListItemButton, Paper, Popper, TextField } from '@mui/material';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { IconButton, List, ListItem, ListItemButton, Paper, Popper, TextField } from '@mui/material';
+import { X } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChipAutocompleteContainer from '@/NODE_WIN/nodes/properties/ChipAutocompleteContainer';
 import ControlledChip from '@/NODE_WIN/nodes/properties/ControlledChip';
+import { userInputHistory_store } from '@/Store/Node/userInputHistory_store';
+
+/** Достаёт ключ из токена `#historyValue(key)`. Поддерживает голый `#historyValue`. */
+function parseHistoryKey(token: string): string | null {
+	const m = token.match(/^#historyValue(?:\((.+)\))?$/);
+	return m ? (m[1] ?? '') : null;
+}
 
 const WORD_SPLIT_REGEX = /[\s\[\]\{\}\(\)"'`.,\-_/\\:;!?]+/;
 
@@ -31,8 +39,10 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 	const [editingChipValue, setEditingChipValue] = useState('');
 
 	const [filteredOptions, setFilteredOptions] = useState<string[]>([]);
-	const [highlightedIndex, setHighlightedIndex] = useState(0);
-	const highlightedIndexRef = useRef(0);
+	// -1 = ничего не подсвечено. Чтобы подсветить первую опцию, пользователь должен нажать ↓.
+	// Если оставить 0 — первая опция всегда визуально «выбрана», даже если её ещё не трогали.
+	const [highlightedIndex, setHighlightedIndex] = useState(-1);
+	const highlightedIndexRef = useRef(-1);
 	const [showDropdown, setShowDropdown] = useState(false);
 	const [dropdownType, setDropdownType] = useState<'input' | 'chip' | null>(null);
 
@@ -44,6 +54,58 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 		setChips(props.value ?? []);
 	}, [props.value]);
 
+	// ── History support ──────────────────────────────────────────────────────
+	// Если в options встречается токен `#historyValue(<key>)`, мы:
+	//   1) подменяем его на актуальные значения из userInputHistory_store
+	//   2) при добавлении chip сохраняем введённое в историю
+	//   3) рядом с history-элементами в дропдауне рисуем X для удаления
+	const historyKeys = useMemo(
+		() =>
+			(props.options ?? [])
+				.map(parseHistoryKey)
+				.filter((k): k is string => k !== null && k !== ''),
+		[props.options],
+	);
+
+	// Подписываемся на стор истории — чтобы дропдаун обновлялся при add/remove.
+	const historyMap = userInputHistory_store((s) => s.history);
+
+	// Системные опции (без #historyValue) — имеют приоритет: они не дублируются истории
+	// и не получают ✕-кнопку в дропдауне.
+	const systemOptions = useMemo(() => {
+		const result: string[] = [];
+		for (const opt of props.options ?? []) {
+			if (parseHistoryKey(opt) === null) result.push(opt);
+		}
+		return result;
+	}, [props.options]);
+
+	// effectiveOptions = системные опции + история (с дедупликацией: значения из истории,
+	// которые уже есть среди системных, отбрасываются — чтобы $projectName не появлялся дважды).
+	const effectiveOptions = useMemo(() => {
+		const systemSet = new Set(systemOptions);
+		const result: string[] = [...systemOptions];
+		for (const k of historyKeys) {
+			for (const v of historyMap[k] ?? []) {
+				if (!systemSet.has(v) && !result.includes(v)) result.push(v);
+			}
+		}
+		return result;
+	}, [systemOptions, historyKeys, historyMap]);
+
+	// Значения принадлежат истории ТОЛЬКО если они не дублируют системную опцию.
+	// Это гарантирует что ✕ не появится рядом с $projectName и другими системными паттернами.
+	const historyValueSet = useMemo(() => {
+		const systemSet = new Set(systemOptions);
+		const s = new Set<string>();
+		for (const k of historyKeys) {
+			for (const v of historyMap[k] ?? []) {
+				if (!systemSet.has(v)) s.add(v);
+			}
+		}
+		return s;
+	}, [historyKeys, historyMap, systemOptions]);
+
 	const updateHighlightedIndex = (index: number) => {
 		setHighlightedIndex(index);
 		highlightedIndexRef.current = index;
@@ -51,7 +113,7 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 
 	const filterOptions = useCallback(
 		(text: string, cursor: number) => {
-			let options = props.options ?? [];
+			let options = effectiveOptions;
 
 			if (!props.allowDuplicates) {
 				options = options.filter((opt) => !chips.includes(opt));
@@ -59,7 +121,7 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 
 			if (!text.trim()) {
 				setFilteredOptions(options);
-				updateHighlightedIndex(0);
+				updateHighlightedIndex(-1);
 				setShowDropdown(options.length > 0);
 				return;
 			}
@@ -69,10 +131,10 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 
 			const filtered = options.filter((opt) => opt.toLowerCase().includes(searchWord));
 			setFilteredOptions(filtered);
-			updateHighlightedIndex(0);
+			updateHighlightedIndex(-1);
 			setShowDropdown(filtered.length > 0);
 		},
-		[props.options, props.allowDuplicates, chips],
+		[effectiveOptions, props.allowDuplicates, chips],
 	);
 
 	const addChip = (value: string) => {
@@ -80,9 +142,27 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 		const next = props.multiSelect ? [...chips, value] : [value];
 		setChips(next);
 		props.onChange(next);
+
+		// Сохраняем в историю — для всех historyKey'ев, привязанных к этому полю.
+		// Это решает кейс: пользователь ввёл произвольный путь / название БД,
+		// при следующем открытии оно появится в дропдауне.
+		if (historyKeys.length > 0) {
+			const addToHistory = userInputHistory_store.getState().addToHistory;
+			for (const k of historyKeys) addToHistory(k, value);
+		}
+
 		setInputValue('');
 		setShowDropdown(false);
 		setDropdownType(null);
+	};
+
+	/** Удаление значения из истории (X-кнопка справа от history-элемента). */
+	const handleRemoveFromHistory = (value: string) => {
+		const remove = userInputHistory_store.getState().removeFromHistory;
+		for (const k of historyKeys) remove(k, value);
+		// Локально подрезаем filtered, чтобы дропдаун обновился сразу,
+		// до того как effectiveOptions пересчитается через useMemo.
+		setFilteredOptions((prev) => prev.filter((opt) => opt !== value));
 	};
 
 	const handleSelectOption = async (replacement: string, commit = false) => {
@@ -189,10 +269,13 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
-			updateHighlightedIndex((highlightedIndexRef.current + 1) % filteredOptions.length);
+			const cur = highlightedIndexRef.current;
+			// Из «ничего не выбрано» (-1) сразу прыгаем на первую опцию.
+			updateHighlightedIndex(cur < 0 ? 0 : (cur + 1) % filteredOptions.length);
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
-			updateHighlightedIndex((highlightedIndexRef.current - 1 + filteredOptions.length) % filteredOptions.length);
+			const cur = highlightedIndexRef.current;
+			updateHighlightedIndex(cur < 0 ? filteredOptions.length - 1 : (cur - 1 + filteredOptions.length) % filteredOptions.length);
 		} else if (e.key === 'Tab') {
 			e.preventDefault();
 			const currentOption = filteredOptions[highlightedIndexRef.current];
@@ -331,19 +414,43 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 					}}
 				>
 					<List dense>
-						{filteredOptions.map((opt, i) => (
-							<ListItem key={opt} disablePadding>
-								<ListItemButton
-									selected={i === highlightedIndex}
-									onMouseDown={(e) => {
-										e.preventDefault();
-										handleSelectOption(opt, true);
-									}}
+						{filteredOptions.map((opt, i) => {
+							const isFromHistory = historyValueSet.has(opt);
+							return (
+								<ListItem
+									key={opt}
+									disablePadding
+									secondaryAction={
+										isFromHistory ? (
+											<IconButton
+												edge='end'
+												size='small'
+												aria-label='Remove from history'
+												onMouseDown={(e) => {
+													// preventDefault — иначе ListItemButton получит mousedown и закроет дропдаун.
+													e.preventDefault();
+													e.stopPropagation();
+													handleRemoveFromHistory(opt);
+												}}
+												sx={{ mr: 0.25 }}
+											>
+												<X size={14} />
+											</IconButton>
+										) : null
+									}
 								>
-									{opt}
-								</ListItemButton>
-							</ListItem>
-						))}
+									<ListItemButton
+										selected={i === highlightedIndex}
+										onMouseDown={(e) => {
+											e.preventDefault();
+											handleSelectOption(opt, true);
+										}}
+									>
+										{opt}
+									</ListItemButton>
+								</ListItem>
+							);
+						})}
 					</List>
 				</Paper>
 			</Popper>

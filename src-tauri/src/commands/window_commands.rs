@@ -18,11 +18,16 @@ impl NodeWindowState {
 // Хранилище для последних данных Preview-окна (для handshake-перезапроса)
 pub struct PreviewWindowState {
     pub last_data: Option<String>,
+    /// Соотношение сторон медиафайла (width / height). None — не установлено.
+    pub aspect_ratio: Option<f64>,
+    /// Физический размер окна, который мы сами задали для коррекции пропорций.
+    /// Используется чтобы пропустить Resized-событие, порождённое нашей же коррекцией.
+    pub last_corrected: Option<(u32, u32)>,
 }
 
 impl PreviewWindowState {
     pub fn new() -> Self {
-        Self { last_data: None }
+        Self { last_data: None, aspect_ratio: None, last_corrected: None }
     }
 }
 
@@ -101,7 +106,7 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
         // Отправляем данные
         println!("[NodeWindow] 📤 Emitting update-data to existing window");
         existing_win
-            .emit("update-data", &data)
+            .emit_to("nodeWin", "update-data", &data)
             .map_err(|e| e.to_string())?;
         println!("[NodeWindow] ✅ Data sent successfully");
         return Ok(true);
@@ -128,7 +133,7 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
     window.once("tauri://loaded", move |_event| {
         println!("[NodeWindow] 📤 Window loaded, emitting update-data");
         if let Some(win) = app_clone.get_webview_window("nodeWin") {
-            let _ = win.emit("update-data", &data_clone);
+            let _ = win.emit_to("nodeWin", "update-data", &data_clone);
             println!("[NodeWindow] ✅ Initial data sent to new window");
         } else {
             println!("[NodeWindow] ❌ Could not find window after load");
@@ -198,7 +203,7 @@ pub async fn preview_open(
         existing_win.show().map_err(|e| e.to_string())?;
         existing_win.set_focus().map_err(|e| e.to_string())?;
         existing_win
-            .emit("update-data", &data)
+            .emit_to("previewWin", "update-data", &data)
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -220,8 +225,66 @@ pub async fn preview_open(
     let app_clone = app.clone();
     window.once("tauri://loaded", move |_event| {
         if let Some(win) = app_clone.get_webview_window("previewWin") {
-            let _ = win.emit("update-data", &data_clone);
+            let _ = win.emit_to("previewWin", "update-data", &data_clone);
         }
+    });
+
+    // Listener для сохранения пропорций при ручном ресайзе.
+    // Вычисляем какая ось изменилась меньше и корректируем вторую.
+    let app_for_resize = app.clone();
+    window.on_window_event(move |event| {
+        let tauri::WindowEvent::Resized(new_phys) = event else { return };
+
+        let preview_state = app_for_resize.state::<Mutex<PreviewWindowState>>();
+        let (ratio, last_corrected) = {
+            let Ok(st) = preview_state.lock() else { return };
+            (st.aspect_ratio, st.last_corrected)
+        };
+
+        let Some(ratio) = ratio else { return };
+
+        // Если этот Resized породили мы сами — пропускаем, сбрасываем метку
+        if let Some((lw, lh)) = last_corrected {
+            if lw == new_phys.width && lh == new_phys.height {
+                if let Ok(mut st) = preview_state.lock() {
+                    st.last_corrected = None;
+                }
+                return;
+            }
+        }
+
+        // Вычисляем вариант A (фиксируем ширину → меняем высоту)
+        // и вариант B (фиксируем высоту → меняем ширину), выбираем тот где коррекция меньше.
+        let new_wf = new_phys.width as f64;
+        let new_hf = new_phys.height as f64;
+
+        let h_from_w = new_wf / ratio;
+        let w_from_h = new_hf * ratio;
+
+        let delta_h = (new_hf - h_from_w).abs();
+        let delta_w = (new_wf - w_from_h).abs();
+
+        let (corrected_w, corrected_h) = if delta_h <= delta_w {
+            (new_phys.width, h_from_w.round() as u32)
+        } else {
+            (w_from_h.round() as u32, new_phys.height)
+        };
+
+        // Уже правильные пропорции — ничего не делаем
+        if corrected_w == new_phys.width && corrected_h == new_phys.height {
+            return;
+        }
+
+        // Запоминаем наш исправленный размер чтобы не зациклиться
+        if let Ok(mut st) = preview_state.lock() {
+            st.last_corrected = Some((corrected_w, corrected_h));
+        }
+
+        let Some(win) = app_for_resize.get_webview_window("previewWin") else { return };
+        let _ = win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: corrected_w,
+            height: corrected_h,
+        }));
     });
 
     Ok(())
@@ -249,15 +312,57 @@ pub fn preview_delete_temp(_file_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn preview_resize(app: tauri::AppHandle, opts: crate::commands::fs_commands::PreviewResizeOpts) -> Result<(), String> {
+pub async fn preview_resize(
+    app: tauri::AppHandle,
+    opts: crate::commands::fs_commands::PreviewResizeOpts,
+    state: tauri::State<'_, Mutex<PreviewWindowState>>,
+) -> Result<(), String> {
+    // Сохраняем aspect ratio для resize-listener'а окна
+    if let Some(ratio) = opts.aspect_ratio {
+        if let Ok(mut st) = state.lock() {
+            st.aspect_ratio = Some(ratio);
+            st.last_corrected = None;
+        }
+    }
+
     if let Some(preview_win) = app.get_webview_window("previewWin") {
-        let width = opts.width.round() as u32;
-        let height = opts.height.round() as u32;
+        // JS передаёт CSS-пиксели (логические). Используем LogicalSize, чтобы
+        // Tauri корректно масштабировал под Retina/HiDPI дисплеи.
+        let new_w = opts.width;
+        let new_h = opts.height;
+
+        // Получаем текущий центр окна в физических пикселях для корректировки позиции.
+        let scale = preview_win.scale_factor().unwrap_or(1.0);
+        let cur_outer = preview_win.outer_size().ok();
+        let cur_pos = preview_win.outer_position().ok();
+
+        // Запоминаем физический размер к которому мы сейчас приведём окно,
+        // чтобы resize-listener не перекоррировал наш же вызов.
+        let phys_w = (new_w * scale).round() as u32;
+        let phys_h = (new_h * scale).round() as u32;
+        if let Ok(mut st) = state.lock() {
+            st.last_corrected = Some((phys_w, phys_h));
+        }
+
         preview_win
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }))
+            .set_size(tauri::Size::Logical(tauri::LogicalSize {
+                width: new_w,
+                height: new_h,
+            }))
             .map_err(|e| e.to_string())?;
-        
-        preview_win.center().map_err(|e| e.to_string())?;
+
+        // Корректировка позиции: оставляем тот же центр окна, иначе при изменении
+        // размера окно "съезжает" по верхне-левому углу.
+        if let (Some(size), Some(pos)) = (cur_outer, cur_pos) {
+            let new_w_phys = phys_w as i32;
+            let new_h_phys = phys_h as i32;
+            let dx = (size.width as i32 - new_w_phys) / 2;
+            let dy = (size.height as i32 - new_h_phys) / 2;
+            let _ = preview_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                x: pos.x + dx,
+                y: pos.y + dy,
+            }));
+        }
     }
     Ok(())
 }

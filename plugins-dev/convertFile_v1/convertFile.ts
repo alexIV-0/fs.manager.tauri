@@ -1,21 +1,21 @@
-import { getFullInfoFromVideoFile } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
-import { spawnFFmpegCommand } from '../../electron/main/processing/ffmpeg/spawnFFmpegCommand';
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { sendToMW } from '../_template/pluginSender';
+// convertFile_v1 — ручная конвертация ffmpeg-аргументами. Tauri-port.
+
 import path from 'path';
+import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-export async function convertFileFunc(_item: any, _description: any) {
-	const finalFile = [];
-
+export async function convertFileFunc(_item: any, _description: any): Promise<string[]> {
+	const finalFile: string[] = [];
 	let iteration = 1;
+	const inputs: string[] = _item.import.inputFile;
 
-	for (let fileFrom of _item.import.inputFile) {
-		let curPath = _item.targetPath.length == 0 ? ['$clearName ($random(3))'] : _item.targetPath;
+	for (const fileFrom of inputs) {
+		let curPath: string[] =
+			_item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
-		if (_item.import.targetPath) {
+		if (_item.import.targetPath?.length) {
 			curPath.unshift(..._item.import.targetPath);
 		} else {
 			curPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
@@ -23,32 +23,28 @@ export async function convertFileFunc(_item: any, _description: any) {
 
 		const newPath = createPathForFileByPattern(curPath, _description, fileFrom);
 		const dirTo = path.dirname(newPath);
-
 		const originalName = path.basename(fileFrom);
-
 		const newName = path.basename(newPath, path.extname(newPath)) + '.' + _item.fileExt[0];
-
 		const fileTo = path.join(dirTo, newName);
 
-		testAndCreateFolder(dirTo);
+		await fs.mkdir(dirTo);
 
-		// Отправляем статус перед копированием
+		const curDuration = (await ffmpeg.getInfo(fileFrom)).durationInSeconds;
+		const ffmpegArgs = _item.ffmpegCommand
+			? _item.ffmpegCommand.trim().split(/\s+/).filter(Boolean)
+			: [];
 
-		const curDuration = (await getFullInfoFromVideoFile(fileFrom, _description)).durationInSeconds;
-		const ffmpegArgs = _item.ffmpegCommand ? _item.ffmpegCommand.trim().split(/\s+/).filter(Boolean) : [];
-		const command = {
-			text: `${_description.infoText}: [convert file ${iteration}/${_item.import.inputFile.length}]\n ${originalName} → ${newName}`,
+		await ffmpeg.run({
+			text: `${_description.infoText}: [convert file ${iteration}/${inputs.length}]\n ${originalName} → ${newName}`,
 			duration: curDuration || 0,
+			nodeId: _item.id,
 			command: ['-y', '-i', fileFrom, ...ffmpegArgs, fileTo],
-		};
-
-		await spawnFFmpegCommand(command, _description, sendToMW);
+		});
 
 		finalFile.push(fileTo);
-
 		iteration++;
 	}
 
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFile}` });
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
 	return finalFile;
 }

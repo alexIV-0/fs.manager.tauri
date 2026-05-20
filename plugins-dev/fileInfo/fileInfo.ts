@@ -1,11 +1,15 @@
+// fileInfo — извлекает информацию о медиафайле (size, duration, fps) или текст
+// из имени файла (содержимое скобок). Tauri-port: ffprobe вызывается через
+// Rust-команду ffprobe_get_info из @plugin-api/tauri helper.
+
 import path from 'path';
-import { sendToMW } from '../_template/pluginSender';
-import { getFullInfoFromVideoFile } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
+import { ffmpeg, sendToMW } from '../_template/tauri';
 import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
+import { convertSecondsToTimecode } from '../../electron/main/utilits/convertSecondsToTimecode';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-// ── Filename helpers ──────────────────────────────────────────────────────────
+// ── Filename helpers ─────────────────────────────────────────────────────────
 
 const removeEmoji = (str: string): string =>
 	str.replace(/\p{Extended_Pictographic}/gu, '').replace(/\s{2,}/g, ' ').trim();
@@ -25,39 +29,74 @@ const withoutSquare = (str: string): string =>
 const withoutBoth = (str: string): string =>
 	str.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').replace(/\s{2,}/g, ' ').trim();
 
-// ── Frame format ──────────────────────────────────────────────────────────────
+const frameFormat = (w: number, h: number): string => (w > h ? 'horizontal' : h > w ? 'vertical' : 'square');
 
-const frameFormat = (w: number, h: number): string => {
-	if (w > h) return 'horizontal';
-	if (h > w) return 'vertical';
-	return 'square';
-};
+// ── ffprobe → video info ─────────────────────────────────────────────────────
 
-// ── Main function ─────────────────────────────────────────────────────────────
+interface VideoInfo {
+	width: number;
+	height: number;
+	durationInSeconds: number;
+	durationInTimcode: string;
+	fps: number;
+}
 
-export async function fileInfoFunc(_item: any, _description: any) {
-	sendToMW('statusbar', `${_description.infoText}: [File Info]\n`);
+async function getVideoInfo(filePath: string): Promise<VideoInfo> {
+	const streams = await ffmpeg.probe(filePath);
+	const video = ffmpeg.pickVideo(streams);
+	const audio = ffmpeg.pickAudio(streams);
+	if (!video && !audio) throw new Error(`No video/audio streams found in file: ${filePath}`);
+
+	const parseFps = (str?: string): number => {
+		if (!str || str === '0/0') return 0;
+		const [n, d] = str.split('/').map(Number);
+		return d ? n / d : 0;
+	};
+
+	let fps = parseFps(video?.avg_frame_rate);
+	if (fps === 0) fps = parseFps(video?.r_frame_rate);
+	fps = Number(fps.toFixed(3));
+
+	let durationSec = Number(video?.duration);
+	if (!durationSec || durationSec === 0) {
+		const ts = Number(video?.duration_ts);
+		const tbStr = video?.time_base;
+		if (ts && tbStr) {
+			const [num, den] = tbStr.split('/').map(Number);
+			durationSec = ts * (num / den);
+		}
+	}
+	if (!durationSec && audio?.duration) durationSec = Number(audio.duration);
+
+	return {
+		width: video?.width || 0,
+		height: video?.height || 0,
+		fps,
+		durationInSeconds: durationSec || 0,
+		durationInTimcode: convertSecondsToTimecode(durationSec || 0, fps || 25),
+	};
+}
+
+// ── Main function ────────────────────────────────────────────────────────────
+
+export async function fileInfoFunc(_item: any, _description: any): Promise<string> {
+	sendToMW('statusbar', { text: `${_description.infoText ?? ''}: [File Info]` });
 
 	const extractType: string = _item.getInfo ?? 'frameFormat';
 	const inputValues: string[] = _item.import?.inputFile ?? [];
-
 	if (inputValues.length === 0) return '';
 
 	const input = inputValues[0];
-
-	// Определяем тип входящего значения
 	const ext = path.extname(input);
 	const isPlainString = ext === '' && !input.includes('/') && !input.includes('\\');
 	const fileType = isPlainString ? 'string' : getFileTypeByExt(input, _description.typeOfFile);
 
-	// Базовое имя для операций с текстом: для файлов — имя без расширения, для строк — сама строка
 	const baseName = isPlainString ? input : path.basename(input, ext);
 	const cleanName = removeEmoji(baseName);
 
 	let result = '';
 
 	switch (extractType) {
-		// ── Имя файла / текст ────────────────────────────────────────────────
 		case 'text in []':
 			result = textInSquare(cleanName);
 			break;
@@ -74,24 +113,22 @@ export async function fileInfoFunc(_item: any, _description: any) {
 			result = withoutBoth(cleanName);
 			break;
 
-		// ── Видео + картинка ─────────────────────────────────────────────────
 		case 'frameFormat':
 		case 'width':
 		case 'height': {
 			if (!['video', 'image'].includes(fileType)) return '';
-			const info = await getFullInfoFromVideoFile(input, _description);
+			const info = await getVideoInfo(input);
 			if (extractType === 'frameFormat') result = frameFormat(info.width, info.height);
 			else if (extractType === 'width') result = String(info.width);
 			else result = String(info.height);
 			break;
 		}
 
-		// ── Только видео ─────────────────────────────────────────────────────
 		case 'duration In Seconds':
 		case 'duration in Timecode':
 		case 'frame Rate': {
 			if (fileType !== 'video') return '';
-			const info = await getFullInfoFromVideoFile(input, _description);
+			const info = await getVideoInfo(input);
 			if (extractType === 'duration In Seconds') result = String(info.durationInSeconds);
 			else if (extractType === 'duration in Timecode') result = info.durationInTimcode;
 			else result = String(info.fps);

@@ -19,17 +19,11 @@
 					"tooltip": "Путь до папки с файлами или футажами. Это может быть путь до папка внутри папки IN, или если не указан - выбрать любую папку на диске",
 					"multiSelect": false,
 					"allowDuplicates": false,
-					"options": [
-						"#folders",
-						"Custom Folder..."
-					],
+					"options": ["#folders", "Custom Folder..."],
 					"value": []
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"path",
-					"folders"
-				],
+				"acceptedTypes": ["path", "folders"],
 				"required": true,
 				"outputType": "array"
 			},
@@ -39,20 +33,14 @@
 				"controlProps": {
 					"label": "searchType",
 					"tooltip": "Тип файла, который нужно найти в указанной папке. только один",
-					"options": [
-						"#typeOfFile",
-						"folders"
-					],
+					"options": ["#typeOfFile", "folders", "#historyValue(targetPath)"],
 					"multiSelect": false,
 					"allowDuplicates": false,
 					"value": []
 				},
 				"isInput": false,
 				"outputType": "array",
-				"acceptedTypes": [
-					"#typeOfFile",
-					"folders"
-				],
+				"acceptedTypes": ["#typeOfFile", "folders"],
 				"required": true
 			},
 			{

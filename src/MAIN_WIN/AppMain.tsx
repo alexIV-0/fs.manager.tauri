@@ -122,6 +122,11 @@ export default function AppMain() {
 		// дальше MAX_PARALLEL и runProcessing-интервалы читают из кэша.
 		appSettings_client.getState().load();
 
+		// Загружаем Tauri-backed сторы из JSON-файлов (fileTypes.json, programPaths.json).
+		// localStorage остаётся как быстрый кэш при старте; Tauri — source of truth.
+		typeOfFile_store.getState().loadFromTauri();
+		programPathPattern_store.getState().loadFromTauri();
+
 		if (mainFolderArr.length == 0) {
 			setMainFolderId(null);
 			return;

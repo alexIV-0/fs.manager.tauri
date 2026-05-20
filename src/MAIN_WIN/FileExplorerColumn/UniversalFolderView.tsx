@@ -12,6 +12,7 @@ import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { TopPanelLocal } from './TopPanelLocal';
 import { TopPanelGD } from './TopPanelGD';
 import { deleteItemWithTrimColumns } from '@/PROCESSING/function/utils/deleteIteWithTrimColumn';
+import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/function/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 
 interface UniversalFolderViewProps {
@@ -92,6 +93,61 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		const rangePaths = allPaths.slice(start, end + 1);
 		setMultiSelectedPaths(type, rangePaths, anchor);
 	};
+
+	// Cmd/Ctrl+C — копировать в буфер
+	useKeyboardShortcut({
+		key: 'c',
+		modifiers: { ctrlOrMeta: true },
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== type) return;
+			e.preventDefault();
+			const { multiSelectedPaths } = state.instances[type];
+			const paths =
+				multiSelectedPaths.length > 0
+					? multiSelectedPaths
+					: state.lastSelectedItem
+						? [state.lastSelectedItem.item.path]
+						: [];
+			if (paths.length > 0) copyToClipboardFs(paths);
+		},
+	});
+
+	// Cmd/Ctrl+X — вырезать в буфер
+	useKeyboardShortcut({
+		key: 'x',
+		modifiers: { ctrlOrMeta: true },
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== type) return;
+			e.preventDefault();
+			const { multiSelectedPaths } = state.instances[type];
+			const paths =
+				multiSelectedPaths.length > 0
+					? multiSelectedPaths
+					: state.lastSelectedItem
+						? [state.lastSelectedItem.item.path]
+						: [];
+			if (paths.length > 0) cutToClipboardFs(paths);
+		},
+	});
+
+	// Cmd/Ctrl+V — вставить в последнюю открытую колонку
+	useKeyboardShortcut({
+		key: 'v',
+		modifiers: { ctrlOrMeta: true },
+		skipOnInput: true,
+		callback: async (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== type) return;
+			e.preventDefault();
+			const cols = state.instances[type].columns;
+			if (cols.length === 0) return;
+			await pasteFromClipboardFs(cols[cols.length - 1].path);
+		},
+	});
 
 	// Delete — удаление выделенного файла/папки
 	useKeyboardShortcut({

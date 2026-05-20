@@ -1,25 +1,26 @@
-import { isFile } from '../../electron/main/fileSistem/operation/isFile';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { getFullInfoFromVideoFile } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
-import { detectSceneCuts } from '../../electron/main/processing/ffmpeg/detectSceneCut';
-import { sendToMW } from '../_template/pluginSender';
+// timecode — возвращает таймкод из файла(ов) или вручную выставленное значение.
+// Поддерживает операции SET / MAX / MIN / SUMM / SCENE_TIMECODE.
+// Tauri-port: getFullInfoFromVideoFile/detectSceneCuts через helper.
+
 import path from 'path';
+import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-export async function getTimecodeFunc(_item: any, _description: any) {
-	let timeCodes: number[] = [];
+export async function getTimecodeFunc(_item: any, _description: any): Promise<(number | string)[]> {
+	let timeCodes: (number | string)[] = [];
 
 	const op = (Array.isArray(_item.operation) ? _item.operation[0] : _item.operation) ?? 'set';
 
-	if (op.toLowerCase() === 'scene timecode') {
-		for (const curItem of _item.import.inputFile) {
-			if (!isFile(curItem)) continue;
+	if (String(op).toLowerCase() === 'scene timecode') {
+		for (const curItem of _item.import.inputFile as string[]) {
+			if (!(await fs.existsFile(curItem))) continue;
 			const itemType = getFileTypeByExt(curItem, _description.typeOfFile);
 			if (!['video', 'audio'].includes(itemType)) continue;
-			sendToMW('statusbar', `${_description.infoText}: [get Scene Timecode]\n${path.basename(curItem)}`);
-			const scenes = await detectSceneCuts(curItem, _description);
-			const { durationInSeconds } = await getFullInfoFromVideoFile(curItem, _description);
+			sendToMW('statusbar', { text: `${_description.infoText}: [get Scene Timecode]\n${path.basename(curItem)}` });
+			const scenes = await ffmpeg.detectScenes(curItem);
+			const { durationInSeconds } = await ffmpeg.getInfo(curItem);
 			timeCodes = [...scenes, durationInSeconds];
 			break;
 		}
@@ -27,46 +28,35 @@ export async function getTimecodeFunc(_item: any, _description: any) {
 		return timeCodes;
 	}
 
-	for (let curItem of _item.import.inputFile) {
-		const checkIsFile = isFile(curItem);
-		sendToMW('statusbar', `${_description.infoText}: [get Timecode]\n${path.basename(curItem)}`);
+	for (const curItem of _item.import.inputFile as string[]) {
+		const checkIsFile = await fs.existsFile(curItem);
+		sendToMW('statusbar', { text: `${_description.infoText}: [get Timecode]\n${path.basename(String(curItem))}` });
 
 		if (checkIsFile) {
-			let itemType = getFileTypeByExt(curItem, _description.typeOfFile);
-			if (!['video', 'audio'].includes(itemType)) {
-				continue;
-			}
-		}
-		if (checkIsFile) {
-			const fileDur: number = (await getFullInfoFromVideoFile(curItem, _description)).durationInSeconds;
+			const itemType = getFileTypeByExt(curItem, _description.typeOfFile);
+			if (!['video', 'audio'].includes(itemType)) continue;
+			const fileDur = (await ffmpeg.getInfo(curItem)).durationInSeconds;
 			timeCodes.push(fileDur);
 		} else {
 			timeCodes.push(curItem);
 		}
 	}
 
-	switch (op.toLowerCase()) {
+	switch (String(op).toLowerCase()) {
 		case 'summ':
-			timeCodes = [timeCodes.reduce((acc, item) => acc + (Number(item) || 0), 0)];
+			timeCodes = [timeCodes.reduce<number>((acc, item) => acc + (Number(item) || 0), 0)];
 			break;
 		case 'min':
-			timeCodes = [Math.min(...timeCodes)];
+			timeCodes = [Math.min(...timeCodes.map((v) => Number(v) || 0))];
 			break;
 		case 'max':
-			timeCodes = [Math.max(...timeCodes)];
+			timeCodes = [Math.max(...timeCodes.map((v) => Number(v) || 0))];
 			break;
 		case 'set':
-			if (timeCodes.length == 0) {
-				timeCodes = [+_item.splitBy];
-			}
-			break;
-		// case 'random':
-		// 	_item.finalFile = [getRandomDurationInSec(setDuration, 25)];
-		// 	break;
-		default:
+			if (timeCodes.length === 0) timeCodes = [+_item.splitBy];
 			break;
 	}
-	sendToMW('log', { level: 'info', text: timeCodes });
 
+	sendToMW('log', { level: 'info', text: String(timeCodes) });
 	return timeCodes;
 }

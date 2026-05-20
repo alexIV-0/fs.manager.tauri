@@ -38,6 +38,7 @@ pub struct CopyMoveOptions {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreviewResizeOpts {
     pub width: f64,
     pub height: f64,
@@ -189,23 +190,28 @@ pub fn get_file_info(path: String) -> Result<FileInfo, String> {
 }
 
 #[tauri::command]
-pub fn get_file_type_by_extname(ext: String) -> String {
+pub fn get_file_type_by_extname(
+    ext: String,
+    state: tauri::State<std::sync::Mutex<super::settings_commands::AppSettingsState>>,
+) -> String {
     let ext_lower = ext.to_lowercase().trim_start_matches('.').to_string();
-    
-    match ext_lower.as_str() {
-        "jpg" | "jpeg" | "png" | "tiff" | "tga" | "pdf" | "gif" | "pgf" | "bmp" | "webp" | "svg" => "image",
-        "avi" | "mov" | "mp4" | "mpeg" | "mpg" | "m2v" | "m4v" | "ts" | "mxf" | "wmv" | "mkv" | "webm" => "video",
-        "wav" | "mp3" | "aac" | "m4a" | "flac" | "ogg" | "aiff" | "aif" | "opus" | "wma" => "audio",
-        "txt" | "json" | "md" | "log" | "yaml" | "yml" | "xml" | "ini" | "toml" | "env" => "text",
-        "vtt" | "lrc" | "srt" => "title",
-        "ai" | "eps" => "ai",
-        "psd" | "psb" => "psd",
-        "aep" => "aep",
-        "moho" => "moho",
-        "xlsx" | "tsv" | "csv" => "xlsx",
-        _ => "files",
+
+    if let Ok(guard) = state.lock() {
+        if let Some(arr) = guard.file_types.as_array() {
+            for entry in arr {
+                let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(paths) = entry.get("path").and_then(|v| v.as_array()) {
+                    for p in paths {
+                        if p.as_str() == Some(ext_lower.as_str()) {
+                            return name.to_string();
+                        }
+                    }
+                }
+            }
+        }
     }
-    .to_string()
+
+    "files".to_string()
 }
 
 // ==================== FILE OPERATIONS ====================
@@ -545,14 +551,64 @@ fn base64_encode(data: &[u8]) -> String {
 #[tauri::command]
 pub fn write_file(file_path: String, content: String) -> Result<serde_json::Value, String> {
     let path = Path::new(&file_path);
-    
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    
+
     fs::write(path, content).map_err(|e| e.to_string())?;
-    
+
     Ok(serde_json::json!({ "success": true }))
+}
+
+/// Записывает бинарный файл из base64-строки.
+/// Используется плагинами для сохранения скачанных через fetch результатов
+/// (видео, аудио, изображения). Создаёт родительские директории при необходимости.
+#[tauri::command]
+pub fn write_binary_file(file_path: String, data_b64: String) -> Result<u64, String> {
+    let path = Path::new(&file_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let bytes = base64_decode(&data_b64).map_err(|e| format!("base64 decode: {}", e))?;
+    fs::write(path, &bytes).map_err(|e| e.to_string())?;
+    Ok(bytes.len() as u64)
+}
+
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    // Стандартный alphabet RFC 4648. Игнорируем whitespace и '=' padding.
+    const TABLE: [i8; 128] = {
+        let mut t = [-1i8; 128];
+        let alpha = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut i = 0;
+        while i < 64 {
+            t[alpha[i] as usize] = i as i8;
+            i += 1;
+        }
+        t
+    };
+
+    let mut out: Vec<u8> = Vec::with_capacity(s.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in s.as_bytes() {
+        if b == b'=' || b == b'\n' || b == b'\r' || b == b' ' || b == b'\t' {
+            continue;
+        }
+        let v = if (b as usize) < 128 { TABLE[b as usize] } else { -1 };
+        if v < 0 {
+            return Err(format!("invalid character: {:?}", b as char));
+        }
+        buf = (buf << 6) | (v as u32);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
 }
 
 // ==================== PATH VALIDATION ====================
@@ -818,10 +874,34 @@ pub fn get_user_data_path(app: tauri::AppHandle) -> Result<String, String> {
     let path = app.path()
         .app_data_dir()
         .map_err(|e| format!("Cannot get app data dir: {}", e))?;
-    
+
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    
+
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Путь к исходникам плагинов (`plugins-dev/` в корне репо) — для PluginBuilderWin.
+/// В dev режиме CWD = корень проекта; для prod — поднимаемся вверх от `src-tauri`,
+/// чтобы добраться до родительской папки с plugins-dev. Если ни тот, ни тот вариант
+/// не подходит — вернёт ошибку.
+#[tauri::command]
+pub fn get_plugins_dev_path() -> Result<String, String> {
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+
+    // Кандидаты: <cwd>/plugins-dev, <cwd>/../plugins-dev (когда CWD=src-tauri в dev).
+    let candidates = [
+        cwd.join("plugins-dev"),
+        cwd.parent().map(|p| p.join("plugins-dev")).unwrap_or_default(),
+    ];
+    for c in &candidates {
+        if c.is_dir() {
+            return Ok(c.to_string_lossy().to_string());
+        }
+    }
+    Err(format!(
+        "plugins-dev folder not found. Looked in: {:?}",
+        candidates,
+    ))
 }
 
 // ==================== FONTS ====================

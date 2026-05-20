@@ -115,6 +115,9 @@ export function CustomSettinsElement({
 		}
 	}, [store.patternStore, id]);
 
+	// Дефолтные элементы: нельзя удалять и переименовывать (path/color — можно).
+	const isDefault = store.patternStore.find((el) => el.id === id)?.isDefault === true;
+
 	// ИСПРАВЛЕНИЕ: Убираем problematic useEffect с newOptions
 	// Вместо этого передаем options напрямую в Autocomplete
 
@@ -173,7 +176,11 @@ export function CustomSettinsElement({
 				<GripVertical strokeWidth={1.2} size={20} />
 			</IconButton>
 
-			<MyTypography innerText={name} onChange={(e) => store.updatePatternElementName(id, e)} />
+			<MyTypography
+				innerText={name}
+				readOnly={isDefault}
+				onChange={isDefault ? undefined : (e) => store.updatePatternElementName(id, e)}
+			/>
 
 			<MyAutocomplete
 				multiSelect={multiSelect}
@@ -186,9 +193,11 @@ export function CustomSettinsElement({
 
 			{color && <MyPopoverColor color={color} onChange={handleColorChange} onOpenChange={handleColorPickerOpenChange} />}
 
-			<IconButton onClick={handleDelete}>
-				<Trash2 strokeWidth={0.5} />
-			</IconButton>
+			{!isDefault && (
+				<IconButton onClick={handleDelete}>
+					<Trash2 strokeWidth={0.5} />
+				</IconButton>
+			)}
 		</ListItem>
 	);
 }

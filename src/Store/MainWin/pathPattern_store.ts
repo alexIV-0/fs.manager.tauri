@@ -42,6 +42,10 @@ export type PatternElement = {
 	path: string[];
 	color?: string | null;
 	inactivePath?: string[];
+	/** Дефолтный элемент — пользователь не может его удалить или переименовать.
+	 * Path и цвет редактировать можно. Помечается автоматически: см. createPathPatternStore
+	 * (мёрджит локальные записи с defaults по `name`). */
+	isDefault?: boolean;
 };
 
 export type PatternStore = {
@@ -77,16 +81,53 @@ export const createPathPatternStore = (storageKey: string, defaultTypes: Pattern
 			console.warn(`Failed to load ${storageKey} from localStorage:`, e);
 		}
 
+		const defaultNamesSet = new Set(defaultTypes.map((d) => d.name));
+
 		// Инициализация с defaultTypes
 		if (!initialState || initialState.length === 0) {
 			initialState = defaultTypes.map((item) => ({
 				...item,
 				inactivePath: item.inactivePath || [],
+				isDefault: true,
 			}));
 			try {
 				saveToLocalStorage(storageKey, initialState);
 			} catch (e) {
 				console.warn(`Failed to save ${storageKey} to localStorage:`, e);
+			}
+		} else {
+			// Merge defaults поверх localStorage:
+			// 1) Поднять флаг isDefault на записях, которые есть в defaultTypes (по name).
+			//    Нужно для миграции: раньше флага не было, и сейчас бы он не появился.
+			// 2) Добавить недостающие из defaults в конец — для эволюции дефолтов
+			//    (новые типы вроде 'ai' появляются у уже существующих пользователей).
+			let mutated = false;
+			initialState = initialState.map((it) => {
+				if (defaultNamesSet.has(it.name) && !it.isDefault) {
+					mutated = true;
+					return { ...it, isDefault: true };
+				}
+				return it;
+			});
+
+			const existingNames = new Set(initialState.map((it) => it.name));
+			const missing = defaultTypes.filter((d) => !existingNames.has(d.name));
+			if (missing.length > 0) {
+				initialState = [
+					...initialState,
+					...missing.map((item) => ({
+						...item,
+						inactivePath: item.inactivePath || [],
+						isDefault: true,
+					})),
+				];
+				mutated = true;
+			}
+
+			if (mutated) {
+				try {
+					saveToLocalStorage(storageKey, initialState);
+				} catch {}
 			}
 		}
 
@@ -115,9 +156,13 @@ export const createPathPatternStore = (storageKey: string, defaultTypes: Pattern
 
 			updatePatternElementName: (id: string, name: string) => {
 				set((state) => {
-					const updatedElements = state.patternStore.map((element) =>
-						element.id === id ? { ...element, name } : element,
-					);
+					const updatedElements = state.patternStore.map((element) => {
+						if (element.id !== id) return element;
+						// Дефолтные элементы нельзя переименовывать — иначе их связь
+						// с дефолтами/colorTypes/programmPath ломается.
+						if (element.isDefault) return element;
+						return { ...element, name };
+					});
 					saveToLocalStorage(storageKey, updatedElements);
 					return { patternStore: updatedElements };
 				});
@@ -145,9 +190,7 @@ export const createPathPatternStore = (storageKey: string, defaultTypes: Pattern
 
 			updatePatternElementColor: (id: string, color: string) => {
 				set((state) => {
-					const updatedElements = state.patternStore.map((element) =>
-						element.id === id ? { ...element, color } : element,
-					);
+					const updatedElements = state.patternStore.map((element) => (element.id === id ? { ...element, color } : element));
 					saveToLocalStorage(storageKey, updatedElements);
 					return { patternStore: updatedElements };
 				});
@@ -155,6 +198,9 @@ export const createPathPatternStore = (storageKey: string, defaultTypes: Pattern
 
 			removePatternElement: (id: string) => {
 				set((state) => {
+					const target = state.patternStore.find((el) => el.id === id);
+					// Дефолтные элементы нельзя удалять.
+					if (target?.isDefault) return state;
 					const updatedElements = state.patternStore.filter((element) => id !== element.id);
 					saveToLocalStorage(storageKey, updatedElements);
 					return { patternStore: updatedElements };
@@ -175,9 +221,12 @@ export const createPathPatternStore = (storageKey: string, defaultTypes: Pattern
 			},
 
 			restoreDefault: () => {
+				// При сбросе на дефолты возвращаем флаг isDefault — без него защита
+				// удаления/переименования не работала после сброса.
 				const defaultWithInactive = defaultTypes.map((item) => ({
 					...item,
 					inactivePath: item.inactivePath || [],
+					isDefault: true,
 				}));
 				set({ patternStore: defaultWithInactive });
 				saveToLocalStorage(storageKey, defaultWithInactive);
@@ -294,7 +343,7 @@ const defaultNodeType: PatternElement[] = [
 	{ color: '#ff2d9dff', id: 'moho', name: 'moho', path: [], inactivePath: [] },
 	{ color: '#2d84ffff', id: 'ai', name: 'ai', path: [], inactivePath: [] },
 	{ color: '#6900c5ff', id: 'ffprobe', name: 'ffprobe', path: [], inactivePath: [] },
-	{ color: '#7d51a3ff', id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
+	// { color: '#7d51a3ff', id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
 ];
 
 const programmsPathDefault: PatternElement[] = [
@@ -307,15 +356,185 @@ const programmsPathDefault: PatternElement[] = [
 const folderPathDefault: PatternElement[] = [{ color: null, id: 'whisper', name: 'whisper', path: [], inactivePath: [] }];
 
 // ========================
+// TAURI-BACKED STORE FACTORY
+// ========================
+// Используется для сторов, которые должны персистироваться в JSON-файлах через Tauri
+// (а не только в localStorage). localStorage остаётся как быстрый кэш при старте.
+//
+// Вызов loadFromTauri() происходит из AppMain.tsx после инициализации Tauri API.
+
+type TauriPatternStore = PatternStore & {
+	loadFromTauri: () => Promise<void>;
+};
+
+const createTauriPatternStore = (localKey: string, getCmd: string, setCmd: string, defaultTypes: PatternElement[] = [], domain?: PatternDomain) => {
+	const defaultNamesSet = new Set(defaultTypes.map((d) => d.name));
+	const markDefaults = (items: PatternElement[]): PatternElement[] =>
+		items.map((it) => (defaultNamesSet.has(it.name) && !it.isDefault ? { ...it, isDefault: true } : it));
+
+	let initialState: PatternElement[] = [];
+	try {
+		initialState = loadFromLocalStorage(localKey);
+	} catch {}
+	if (!initialState || initialState.length === 0) {
+		initialState = defaultTypes.map((item) => ({
+			...item,
+			inactivePath: item.inactivePath || [],
+			isDefault: true,
+		}));
+		try {
+			saveToLocalStorage(localKey, initialState);
+		} catch {}
+	} else {
+		// миграция: поднимаем флаг isDefault на записях с именем из defaults
+		initialState = markDefaults(initialState);
+	}
+
+	const tauriSave = (elements: PatternElement[]) => {
+		saveToLocalStorage(localKey, elements);
+		if (typeof window !== 'undefined' && (window as any).electronAPI) {
+			(window as any).electronAPI.invoke(setCmd, elements).catch((e: unknown) => console.warn(`[TauriStore:${localKey}] save failed:`, e));
+		}
+	};
+
+	const store = create<TauriPatternStore>()((set, get) => ({
+		patternStore: initialState,
+
+		loadFromTauri: async () => {
+			try {
+				const data = (await (window as any).electronAPI.invoke(getCmd)) as PatternElement[];
+				if (Array.isArray(data) && data.length > 0) {
+					const withInactive = data.map((item: PatternElement) => ({ ...item, inactivePath: item.inactivePath || [] }));
+					const tagged = markDefaults(withInactive);
+					set({ patternStore: tagged });
+					saveToLocalStorage(localKey, tagged);
+				}
+			} catch (e) {
+				console.warn(`[TauriStore:${localKey}] loadFromTauri failed:`, e);
+			}
+		},
+
+		addPatternElement: (name, path, color) => {
+			const newElement: PatternElement = { id: nanoid(5), name, path, color: color ?? null, inactivePath: [] };
+			set((state) => {
+				const updated = [...state.patternStore, newElement];
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+			if (domain) patternDomainRegistry[domain]?.onAdd?.(get());
+		},
+
+		updatePatternElementName: (id, name) => {
+			set((state) => {
+				const updated = state.patternStore.map((el) => {
+					if (el.id !== id) return el;
+					if (el.isDefault) return el; // дефолтные нельзя переименовать
+					return { ...el, name };
+				});
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+		},
+
+		updatePatternElementPath: (id, path) => {
+			let updatedElement: PatternElement | undefined;
+			set((state) => {
+				const updated = state.patternStore.map((el) => {
+					if (el.id === id) {
+						updatedElement = { ...el, path };
+						return updatedElement;
+					}
+					return el;
+				});
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+			if (domain && updatedElement) patternDomainRegistry[domain]?.onChange?.(updatedElement.path, get());
+		},
+
+		updatePatternElementColor: (id, color) => {
+			set((state) => {
+				const updated = state.patternStore.map((el) => (el.id === id ? { ...el, color } : el));
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+		},
+
+		removePatternElement: (id) => {
+			set((state) => {
+				const target = state.patternStore.find((el) => el.id === id);
+				if (target?.isDefault) return state; // дефолтные нельзя удалить
+				const updated = state.patternStore.filter((el) => el.id !== id);
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+			if (domain) patternDomainRegistry[domain]?.onRemove?.(get());
+		},
+
+		movePatternElement: (dragIndex, hoverIndex) => {
+			set((state) => {
+				const elements = [...state.patternStore];
+				const [removed] = elements.splice(dragIndex, 1);
+				elements.splice(hoverIndex, 0, removed);
+				tauriSave(elements);
+				return { patternStore: elements };
+			});
+		},
+
+		restoreDefault: () => {
+			// Возвращаем флаг isDefault при сбросе — иначе после сброса защита
+			// удаления/переименования теряется.
+			const defaults = defaultTypes.map((item) => ({
+				...item,
+				inactivePath: item.inactivePath || [],
+				isDefault: true,
+			}));
+			set({ patternStore: defaults });
+			tauriSave(defaults);
+		},
+
+		movePluginToInactive: (pluginName) => {
+			set((state) => {
+				const updated = state.patternStore.map((el) => {
+					if (el.path.includes(pluginName)) {
+						return { ...el, path: el.path.filter((n) => n !== pluginName), inactivePath: [...(el.inactivePath || []), pluginName] };
+					}
+					return el;
+				});
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+		},
+
+		restorePluginFromInactive: (pluginName) => {
+			set((state) => {
+				const updated = state.patternStore.map((el) => {
+					if (el.inactivePath?.includes(pluginName)) {
+						return { ...el, path: [...el.path, pluginName], inactivePath: el.inactivePath.filter((n) => n !== pluginName) };
+					}
+					return el;
+				});
+				tauriSave(updated);
+				return { patternStore: updated };
+			});
+		},
+	}));
+
+	return store;
+};
+
+// ========================
 // STORE EXPORTS
 // ========================
 
 export const pathPattern_store = createPathPatternStore('pathPattern');
 export const folderPath_store = createPathPatternStore('dopMaterialFolderPath', folderPathDefault, 'programPath');
-export const programPathPattern_store = createPathPatternStore('programPathPattern', programmsPathDefault);
-export const typeOfFile_store = createPathPatternStore('typeOfFile', defaultFileTypes, 'fileType');
 export const typeOfdata_store = createPathPatternStore('typeOfData', defaultTypeData, 'dataType');
 export const typeOfNodes_store = createPathPatternStore('typeOfNodes', defaultNodeType, 'nodeType');
+
+// Tauri-backed сторы: данные живут в JSON-файлах в app_data_dir
+export const typeOfFile_store = createTauriPatternStore('typeOfFile', 'file-types:get', 'file-types:set', defaultFileTypes, 'fileType');
+export const programPathPattern_store = createTauriPatternStore('programPathPattern', 'program-paths:get', 'program-paths:set', programmsPathDefault);
 
 // Функции для прямого вызова из plugin_store
 export const movePluginToInactiveInAllStores = (pluginName: string) => {
@@ -374,10 +593,7 @@ export const addPluginToPatternByColor = (colorType: string, pluginName: string)
 			state.patternStore = updatedElements;
 			saveToLocalStorage('typeOfNodes', updatedElements);
 
-			console.log(
-				`[PatternStore] ✅ Successfully added! New path:`,
-				updatedElements.find((p) => p.id === targetPattern!.id)?.path,
-			);
+			console.log(`[PatternStore] ✅ Successfully added! New path:`, updatedElements.find((p) => p.id === targetPattern!.id)?.path);
 		} else {
 			console.log(`[PatternStore] ⚠️ Plugin already exists in ${targetPattern.name}`);
 		}

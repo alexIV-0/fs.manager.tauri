@@ -12,3 +12,4 @@ pub mod ae_commands;
 pub mod settings_commands;
 pub mod docs_commands;
 pub mod plugin_protocol;
+pub mod http_commands;

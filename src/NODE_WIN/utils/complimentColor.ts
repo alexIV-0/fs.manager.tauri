@@ -36,7 +36,16 @@ function hslToRgb(h: number, s: number, l: number) {
 	return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
 }
 
-export function complimentColor(bgColor: string, white: string = 'white', black: string = 'black') {
+export function complimentColor(
+	bgColor: string | null | undefined,
+	white: string = 'white',
+	black: string = 'black',
+): string {
+	// colorTypes_store может ещё не загрузиться при первом рендере NodeHeader —
+	// тогда bgColor приходит null/undefined и .startsWith ломает весь tree (Tab2
+	// в PluginBuilder именно так замораживал окно).
+	if (!bgColor || typeof bgColor !== 'string') return white;
+
 	let rgbValues;
 	// Обработка RGB и RGBA
 	if (bgColor.startsWith('rgb')) {

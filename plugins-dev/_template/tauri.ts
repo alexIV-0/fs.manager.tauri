@@ -1,0 +1,671 @@
+// Helper для плагинов в Tauri WebView.
+// Оборачивает window.electronAPI.invoke в типизированные асинхронные API.
+//
+// Использование в плагине:
+//   import { fs, ffmpeg, exec, ae, paths } from '../_template/tauri';
+//   const info = await ffmpeg.probe(filePath);
+//   if (!(await fs.exists(dest))) await fs.copy(src, dest);
+//
+// При сборке (build-plugin.js) этот файл встраивается в бандл плагина (bundle: true),
+// никаких внешних зависимостей не появляется.
+
+// ─── Низкоуровневый invoke ───────────────────────────────────────────────────
+
+type InvokeFn = (cmd: string, ...args: any[]) => Promise<any>;
+const api = (): { invoke: InvokeFn } => (window as any).electronAPI;
+
+// ─── fs: файловые операции через Tauri IPC ───────────────────────────────────
+
+export interface Stat {
+	size: number;
+	mtimeMs: number;
+	atimeMs: number;
+	ctimeMs: number;
+	birthtimeMs: number;
+	isFile: boolean;
+	isDir: boolean;
+	isSymlink: boolean;
+}
+
+export interface FileInfo {
+	path: string;
+	name: string;
+	size: number;
+	isDir: boolean;
+	isFile: boolean;
+	modified?: number;
+	created?: number;
+	extension: string;
+}
+
+export interface CopyMoveOptions {
+	overwrite?: boolean;
+	useHashCheck?: boolean;
+}
+
+export interface SearchPattern {
+	type: 'files' | 'folders';
+	ext: string[];
+}
+
+export const fs = {
+	/** true если путь существует (файл или папка). Не бросает и не шумит в логи —
+	 * использует Rust-команду path_exists, которая возвращает bool. */
+	exists(p: string): Promise<boolean> {
+		return api().invoke('path_exists', p);
+	},
+
+	/** Проверка что путь существует И это файл. */
+	async existsFile(p: string): Promise<boolean> {
+		if (!(await api().invoke('path_exists', p))) return false;
+		try {
+			const s = await api().invoke('get_stat', p);
+			return Boolean(s?.isFile);
+		} catch {
+			return false;
+		}
+	},
+
+	/** Проверка что путь существует И это папка. */
+	async existsFolder(p: string): Promise<boolean> {
+		if (!(await api().invoke('path_exists', p))) return false;
+		try {
+			const s = await api().invoke('get_stat', p);
+			return Boolean(s?.isDir);
+		} catch {
+			return false;
+		}
+	},
+
+	read(p: string): Promise<string> {
+		return api().invoke('readFileSync', p);
+	},
+
+	write(p: string, content: string): Promise<any> {
+		return api().invoke('writeFile', p, content);
+	},
+
+	copy(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
+		return api().invoke('copyItem', src, dst, opts);
+	},
+
+	move(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
+		return api().invoke('moveItem', src, dst, opts);
+	},
+
+	/** Удаляет файл или папку (рекурсивно). Возвращает true если что-то было удалено. */
+	remove(p: string): Promise<boolean> {
+		return api().invoke('deleteItem', p);
+	},
+
+	/** Создаёт папку (рекурсивно). Если уже есть — ничего не делает. */
+	mkdir(p: string): Promise<void> {
+		return api().invoke('testAndCreateFolder', p);
+	},
+
+	stat(p: string): Promise<Stat> {
+		return api().invoke('get_stat', p);
+	},
+
+	info(p: string): Promise<FileInfo> {
+		return api().invoke('getFileInfo', p);
+	},
+
+	/** Возвращает true если source.mtime > dest.mtime. Используется для overwriteOldest. */
+	async isSourceNewer(src: string, dst: string): Promise<boolean> {
+		try {
+			const [s, d] = await Promise.all([fs.stat(src), fs.stat(dst)]);
+			return s.mtimeMs > d.mtimeMs;
+		} catch {
+			return true; // если что-то пошло не так — считаем что нужно копировать
+		}
+	},
+
+	/** Возвращает { files: string[], folders: string[] } — имена в папке.
+	 * Rust-команда поддерживает только ключи 'files' и 'folders'; кастомные типы
+	 * (video, image...) фильтруйте сами по ext через fs.filesByExt. */
+	someFromFolder(folder: string, search?: SearchPattern[]): Promise<{ files: string[]; folders: string[] }> {
+		return api().invoke('getSomeFromFolder', folder, search);
+	},
+
+	/** Рекурсивный поиск по фильтру. Аналогичные ограничения по ключам. */
+	recursiveFind(folder: string, search?: SearchPattern[]): Promise<{ files: string[]; folders: string[] }> {
+		return api().invoke('recursiveFindFiles', folder, search);
+	},
+
+	/** Возвращает имена файлов в папке, отфильтрованные по расширениям.
+	 * Если exts пустой массив — без фильтрации. */
+	async filesByExt(folder: string, exts: string[], recursive = false): Promise<string[]> {
+		const search: SearchPattern[] = [{ type: 'files', ext: [] }];
+		const result = recursive ? await fs.recursiveFind(folder, search) : await fs.someFromFolder(folder, search);
+		const files = result.files ?? [];
+		if (!exts || exts.length === 0) return files;
+		const set = new Set(exts.map((e) => e.toLowerCase().replace(/^\./, '')));
+		return files.filter((name) => {
+			const dot = name.lastIndexOf('.');
+			const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+			return set.has(ext);
+		});
+	},
+
+	/** Возвращает имена подпапок. */
+	async folders(folder: string, recursive = false): Promise<string[]> {
+		const search: SearchPattern[] = [{ type: 'folders', ext: [] }];
+		const result = recursive ? await fs.recursiveFind(folder, search) : await fs.someFromFolder(folder, search);
+		return result.folders ?? [];
+	},
+
+	hash(p: string, algo: 'sha256' | 'sha1' | 'md5' = 'sha256'): Promise<string> {
+		return api().invoke('hash_file', p, algo);
+	},
+
+	/** Превращает локальный путь в URL для нативного fetch (asset://...).
+	 * Используется в http-плагинах для FormData.append('file', blob).
+	 * convertFileSrc — это синхронная утилита из @tauri-apps/api/core, но мы
+	 * импортируем её через global, чтобы не тянуть npm-зависимость в плагины. */
+	toFetchUrl(p: string): string {
+		const win = window as any;
+		// В Tauri runtime есть глобальный helper convertFileSrc; в renderer проекта
+		// уже используется через '@tauri-apps/api/core', и Vite-bundle делает
+		// его доступным как window.__TAURI__.core.convertFileSrc (через preload).
+		const conv = win.__TAURI__?.core?.convertFileSrc || win.__TAURI_INTERNALS__?.convertFileSrc;
+		if (typeof conv === 'function') return conv(p);
+		// Fallback: asset:// URL руками (rule-of-thumb из tauri-runtime).
+		return `asset://localhost/${encodeURIComponent(p)}`;
+	},
+
+	/** Пишет ArrayBuffer / Uint8Array в файл через Rust (base64 IPC). */
+	async writeBytes(p: string, bytes: ArrayBuffer | Uint8Array): Promise<number> {
+		const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+		// Эффективное btoa: разбиваем на куски, иначе на больших файлах падает
+		// stack-limit. 32k символов на chunk — безопасно.
+		let binary = '';
+		const chunk = 0x8000;
+		for (let i = 0; i < u8.length; i += chunk) {
+			binary += String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + chunk)));
+		}
+		const b64 = btoa(binary);
+		const written = (await api().invoke('write_binary_file', p, b64)) as number;
+		return written;
+	},
+};
+
+// ─── HTTP utilities (для AI-плагинов) ────────────────────────────────────────
+// Все запросы выполняются в Rust через reqwest → нет CORS-ограничений WebView.
+
+export interface HttpResponse {
+	status: number;
+	ok: boolean;
+	body: string;
+}
+
+export interface UploadFile {
+	field: string;
+	path: string;
+	mime?: string;
+	filename?: string;
+}
+
+export interface UploadField {
+	field: string;
+	value: string;
+}
+
+export const http = {
+	/** GET/POST/... запрос с опциональным строковым телом.
+	 * Возвращает { status, ok, body }. Не бросает при 4xx/5xx. */
+	fetch(
+		url: string,
+		opts: { method?: string; headers?: [string, string][]; body?: string } = {},
+	): Promise<HttpResponse> {
+		return api().invoke('http_fetch', {
+			url,
+			method: opts.method,
+			headers: opts.headers,
+			body: opts.body,
+		});
+	},
+
+	/** Multipart/form-data upload с локальными файлами (читаются в Rust).
+	 * files: [{ field, path, mime?, filename? }], fields: [{ field, value }]. */
+	upload(
+		url: string,
+		opts: { files?: UploadFile[]; fields?: UploadField[]; headers?: [string, string][] } = {},
+	): Promise<HttpResponse> {
+		return api().invoke('http_upload', {
+			url,
+			files: opts.files,
+			fields: opts.fields,
+			headers: opts.headers,
+		});
+	},
+
+	/** Скачивает URL в локальный файл. Возвращает количество байт. */
+	download(
+		url: string,
+		dest: string,
+		opts: { headers?: [string, string][] } = {},
+	): Promise<number> {
+		return api().invoke('http_download', {
+			url,
+			dest,
+			headers: opts.headers,
+		});
+	},
+};
+
+// ─── ffmpeg / ffprobe ────────────────────────────────────────────────────────
+
+export interface FfprobeStream {
+	codec_type: 'video' | 'audio' | 'subtitle' | string;
+	codec_name?: string;
+	profile?: string;
+	level?: number;
+	pix_fmt?: string;
+	width?: number;
+	height?: number;
+	r_frame_rate?: string;
+	avg_frame_rate?: string;
+	time_base?: string;
+	duration?: string;
+	duration_ts?: number;
+	sample_aspect_ratio?: string;
+	display_aspect_ratio?: string;
+	color_range?: string;
+	color_space?: string;
+	color_primaries?: string;
+	color_transfer?: string;
+	sample_rate?: string;
+	channels?: number;
+	channel_layout?: string;
+	bit_rate?: string;
+	[k: string]: any;
+}
+
+export interface FfmpegExecOptions {
+	durationSec?: number;
+	nodeId?: string;
+	statusText?: string;
+}
+
+export interface FfmpegExecResult {
+	exit_code: number;
+	stdout: string;
+	stderr: string;
+	killed: boolean;
+}
+
+/** Полный info-объект о медиафайле — совместим со старым getFullInfoFromVideoFile. */
+export interface VideoFileInfo {
+	durationInSeconds: number;
+	durationInTimcode: string;
+	fps: number;
+	avg_frame_rate?: string;
+	r_frame_rate?: string;
+	time_base?: string;
+	width: number;
+	height: number;
+	codec_name: string;
+	profile?: string;
+	level?: number;
+	pix_fmt?: string;
+	color_range?: string;
+	color_space?: string;
+	color_primaries?: string;
+	color_transfer?: string;
+	sar?: string;
+	dar?: string;
+	hasAudio: boolean;
+	hasVideo: boolean;
+	audioCodec?: string;
+	audioSampleRate?: number;
+	audioChannels?: number;
+	audioChannelLayout?: string;
+	audioBitrate?: number;
+}
+
+function secondsToTimecode(seconds: number, fps?: number): string {
+	const hours = Math.floor(seconds / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	const secs = Math.floor(seconds % 60);
+	const fr = fps !== undefined ? Math.round((seconds % 1) * fps) : Math.round((seconds % 1) * 1000);
+	const tc = [hours, minutes, secs].map((v) => String(v).padStart(2, '0')).join(':');
+	return fps === undefined ? `${tc},${String(fr).padStart(3, '0')}` : `${tc}:${String(fr).padStart(2, '0')}`;
+}
+
+export const ffmpeg = {
+	/** Запускает ffprobe и возвращает массив streams. */
+	async probe(filePath: string): Promise<FfprobeStream[]> {
+		const jsonStr = (await api().invoke('ffprobe_get_info', filePath)) as string;
+		return JSON.parse(jsonStr).streams ?? [];
+	},
+
+	/** Удобные хелперы — извлекают video/audio stream из probe-результата. */
+	pickVideo(streams: FfprobeStream[]): FfprobeStream | undefined {
+		return streams.find((s) => s.codec_type === 'video');
+	},
+
+	pickAudio(streams: FfprobeStream[]): FfprobeStream | undefined {
+		return streams.find((s) => s.codec_type === 'audio');
+	},
+
+	/** Высокоуровневая инфа о медиафайле — совместимо со старым getFullInfoFromVideoFile. */
+	async getInfo(filePath: string): Promise<VideoFileInfo> {
+		const streams = await ffmpeg.probe(filePath);
+		const video = ffmpeg.pickVideo(streams);
+		const audio = ffmpeg.pickAudio(streams);
+		if (!video && !audio) throw new Error(`No video/audio streams found in file: ${filePath}`);
+
+		const parseFps = (str?: string): number => {
+			if (!str || str === '0/0') return 0;
+			const [n, d] = str.split('/').map(Number);
+			return d ? n / d : 0;
+		};
+
+		let fps = parseFps(video?.avg_frame_rate);
+		if (fps === 0) fps = parseFps(video?.r_frame_rate);
+		fps = Number(fps.toFixed(3));
+
+		let durationSec = Number(video?.duration);
+		if (!durationSec || durationSec === 0) {
+			const ts = Number(video?.duration_ts);
+			const tbStr = video?.time_base;
+			if (ts && tbStr) {
+				const [num, den] = tbStr.split('/').map(Number);
+				durationSec = ts * (num / den);
+			}
+		}
+		if (!durationSec && audio?.duration) durationSec = Number(audio.duration);
+
+		return {
+			durationInSeconds: durationSec || 0,
+			durationInTimcode: secondsToTimecode(durationSec || 0, fps || 25),
+			fps,
+			avg_frame_rate: video?.avg_frame_rate,
+			r_frame_rate: video?.r_frame_rate,
+			time_base: video?.time_base,
+			width: video?.width || 0,
+			height: video?.height || 0,
+			codec_name: video?.codec_name || '',
+			profile: video?.profile,
+			level: video?.level,
+			pix_fmt: video?.pix_fmt,
+			color_range: video?.color_range,
+			color_space: video?.color_space,
+			color_primaries: video?.color_primaries,
+			color_transfer: video?.color_transfer,
+			sar: video?.sample_aspect_ratio,
+			dar: video?.display_aspect_ratio,
+			hasAudio: !!audio,
+			hasVideo: !!video,
+			audioCodec: audio?.codec_name,
+			audioSampleRate: audio?.sample_rate ? Number(audio.sample_rate) : undefined,
+			audioChannels: audio?.channels,
+			audioChannelLayout: audio?.channel_layout,
+			audioBitrate: audio?.bit_rate ? Number(audio.bit_rate) : undefined,
+		};
+	},
+
+	/** Запускает ffmpeg с переданными аргументами. Прогресс эмитится в окно logWindow. */
+	exec(args: string[], opts: FfmpegExecOptions = {}): Promise<FfmpegExecResult> {
+		return api().invoke('ffmpeg_exec_with_progress', {
+			args,
+			durationSec: opts.durationSec,
+			nodeId: opts.nodeId,
+			statusText: opts.statusText,
+		});
+	},
+
+	/** Удобный обёртчик для legacy-формы { command: string[], duration?, text?, nodeId? }.
+	 *  Эквивалент Electron spawnFFmpegCommand. Бросает при ненулевом exit_code. */
+	async run(
+		command: { command: string[]; duration?: number; text?: string; nodeId?: string },
+	): Promise<FfmpegExecResult> {
+		const result = await ffmpeg.exec(command.command, {
+			durationSec: command.duration,
+			nodeId: command.nodeId,
+			statusText: command.text,
+		});
+		if (result.exit_code !== 0) {
+			const tail = result.stderr.split('\n').filter((l) => l.trim()).slice(-10).join('\n');
+			throw new Error(`ffmpeg exited with code ${result.exit_code}\n${tail}`);
+		}
+		return result;
+	},
+
+	/** Снимает кадр из видеофайла и возвращает base64 data URL (image/png). */
+	thumbnail(filePath: string, timestampSec?: number): Promise<string> {
+		return api().invoke('ffmpeg_get_video_thumbnail', filePath, timestampSec);
+	},
+
+	/** Путь к бинарнику ffmpeg (из настроек или системный поиск). */
+	getFfmpegPath(): Promise<string> {
+		return api().invoke('ffmpeg_get_path');
+	},
+
+	getFfprobePath(): Promise<string> {
+		return api().invoke('ffprobe_get_path');
+	},
+
+	/** Детект границ сцен через ffmpeg `select=scene` + Otsu. Возвращает массив таймштампов. */
+	async detectScenes(filePath: string): Promise<number[]> {
+		const result = await ffmpeg.exec(
+			['-v', 'info', '-vsync', '0', '-i', filePath, '-vf', "select='gt(scene,0.01)',metadata=print:file=-:key=lavfi.scene_score", '-f', 'null', '-'],
+			{ statusText: `[detectScenes] ${filePath}` },
+		);
+		// metadata=print:file=- пишет в stdout (в нашем Rust-spawn'е stdout захватывается).
+		return parseSceneTimestamps(result.stdout);
+	},
+
+	/** Детект чёрных кадров через blackframe-фильтр. Возвращает массив таймштампов. */
+	async detectBlackFrames(filePath: string, amount = 98): Promise<number[]> {
+		const result = await ffmpeg.exec(
+			['-i', filePath, '-vf', `blackframe=amount=${amount}`, '-an', '-f', 'null', '-'],
+			{ statusText: `[detectBlackFrames] ${filePath}` },
+		);
+		const matches = [...result.stderr.matchAll(/t:([\d.]+)/g)];
+		const timestamps = [...new Set(matches.map((m) => parseFloat(m[1])))];
+		timestamps.unshift(0);
+		return timestamps;
+	},
+};
+
+// ── Internal: scene-cut parser (Otsu + threshold) ────────────────────────────
+
+function parseSceneTimestamps(stdout: string): number[] {
+	type Cand = { time: number; score: number };
+	const lines = stdout.split(/\r?\n/);
+	const cands: Cand[] = [];
+	for (let i = 0; i < lines.length - 1; i++) {
+		const tm = lines[i].match(/pts_time:([\d.]+)/);
+		if (!tm) continue;
+		const sm = lines[i + 1]?.match(/lavfi\.scene_score=([\d.]+)/);
+		if (!sm) continue;
+		cands.push({ time: parseFloat(tm[1]), score: parseFloat(sm[1]) });
+	}
+	if (cands.length === 0) return [0];
+
+	const threshold = otsuThreshold(cands.map((c) => c.score));
+	const filtered = cands.filter((c) => c.score >= threshold).map((c) => c.time);
+	filtered.unshift(0);
+	return [...new Set(filtered)].sort((a, b) => a - b);
+}
+
+function otsuThreshold(scores: number[]): number {
+	if (scores.length < 2) return 0.3;
+	const bins = 200;
+	const hist = new Array(bins).fill(0);
+	for (const s of scores) hist[Math.min(Math.floor(s * bins), bins - 1)]++;
+	const total = scores.length;
+	let sum = 0;
+	for (let i = 0; i < bins; i++) sum += i * hist[i];
+	let sumB = 0, wB = 0, maxVar = 0, threshold = 0.3;
+	for (let i = 0; i < bins; i++) {
+		wB += hist[i];
+		if (wB === 0 || wB === total) continue;
+		const wF = total - wB;
+		sumB += i * hist[i];
+		const mB = sumB / wB;
+		const mF = (sum - sumB) / wF;
+		const variance = wB * wF * (mB - mF) ** 2;
+		if (variance > maxVar) {
+			maxVar = variance;
+			threshold = i / bins;
+		}
+	}
+	return threshold;
+}
+
+// ─── exec: произвольная внешняя команда ──────────────────────────────────────
+
+export interface ExecOptions {
+	cwd?: string;
+	env?: Record<string, string>;
+}
+
+export interface ExecResult {
+	stdout: string;
+	stderr: string;
+	exit_code: number;
+	killed: boolean;
+}
+
+export function exec(cmd: string, args: string[] = [], opts: ExecOptions = {}): Promise<ExecResult> {
+	return api().invoke('exec_command', {
+		cmd,
+		args,
+		cwd: opts.cwd,
+		env: opts.env ? Object.entries(opts.env) : undefined,
+	});
+}
+
+// ─── After Effects ───────────────────────────────────────────────────────────
+
+export interface AEResult {
+	success: boolean;
+	data?: any;
+	error?: string;
+}
+
+export interface RunScriptInAEArgs {
+	aePath: string;
+	scriptPath: string;
+	inObj: Record<string, any>;
+	tempDir?: string;
+	keepTempFiles?: boolean;
+	timeoutSec?: number;
+}
+
+export const ae = {
+	/** Запускает AE и выполняет JSX-скрипт. Rust подставляет inObj в `var inObj = {}`
+	 * и оборачивает первый вызов `funcName(inObj)` обвязкой для записи результата
+	 * в JSON. Возвращает { success, data?, error? }. */
+	runScript(args: RunScriptInAEArgs): Promise<AEResult> {
+		// Tauri-команда `run_script_in_ae(args: RunScriptInAEArgs)` ожидает payload
+		// с полем `args` (snake_case ключи внутри).
+		return api().invoke('run_script_in_ae', {
+			args: {
+				ae_path: args.aePath,
+				script_path: args.scriptPath,
+				in_obj: args.inObj,
+				temp_dir: args.tempDir,
+				keep_temp_files: args.keepTempFiles,
+				timeout_sec: args.timeoutSec,
+			},
+		});
+	},
+
+	/** Просто запускает AE с .jsx-файлом без ожидания результата. */
+	launchWithScript(aePath: string, scriptPath: string): Promise<void> {
+		return api().invoke('launch_ae_with_script', aePath, scriptPath);
+	},
+};
+
+// ─── Paths / formatNameByPattern (Rust-side, для $YYYY $DD и т.п. ── но JS аналог
+// в плагинах часто гораздо умнее, потому что знает description.localFolder/projectName).
+
+export const paths = {
+	/** Папка пользовательских настроек приложения. */
+	optionsFolder(): Promise<string> {
+		return api().invoke('getOptionsFolder');
+	},
+
+	join(segments: string[]): Promise<string> {
+		return api().invoke('path_join', segments);
+	},
+
+	/** Системная temp-папка (через Rust os_tmpdir). */
+	tmpdir(): Promise<string> {
+		return api().invoke('os_tmpdir');
+	},
+};
+
+// ─── Шрифты (системный список через Rust fontsGetList) ───────────────────────
+
+export interface SystemFont {
+	name: string;
+	path: string;
+	loadable: boolean;
+}
+
+export const fonts = {
+	list(): Promise<SystemFont[]> {
+		return api().invoke('fontsGetList');
+	},
+
+	/** Поиск шрифта по нормализованному имени (без -/_/пробелов, case-insensitive).
+	 * Возвращает первый match или null. */
+	async find(fontName: string): Promise<SystemFont | null> {
+		const normalize = (s: string) => s.toLowerCase().replace(/[-_ ]/g, '');
+		const target = normalize(fontName);
+		const all = await fonts.list();
+		return all.find((f) => normalize(f.name) === target) ?? null;
+	},
+};
+
+// ─── Logging / statusbar (через processItem-овский ctx.send) ──────────────────
+// Эти эмиты — fallback, если плагин не получил ctx; обычно лучше использовать
+// `ctx.send('log', ...)` который ему передаёт processItem. Но в legacy-плагинах
+// часто sendToMW вызывается напрямую — этот path и обслуживается ниже.
+
+export const log = {
+	info(text: string): Promise<void> {
+		return api().invoke('sendLog', 'info', text);
+	},
+	warn(text: string): Promise<void> {
+		return api().invoke('sendLog', 'warn', text);
+	},
+	error(text: string): Promise<void> {
+		return api().invoke('sendLog', 'error', text);
+	},
+};
+
+export const statusBar = {
+	set(text: string): Promise<void> {
+		return api().invoke('setStatusBar', text);
+	},
+};
+
+// ─── sendToMW: прямой broadcast в UI через Rust IPC ──────────────────────────
+// Раньше требовался runtime-инжект через onLoad(api), но loader.ts его не дёргал
+// и события терялись. Сейчас sendToMW сразу проксирует на Tauri-команды, которые
+// эмитят `processing-event` — main_win и node_win получают через onProcessingEvent.
+
+export function sendToMW(type: string, payload: any): void {
+	if (type === 'statusbar') {
+		const text = typeof payload === 'string' ? payload : payload?.text ?? '';
+		api().invoke('setStatusBar', String(text)).catch(() => {});
+	} else if (type === 'log') {
+		const level = (payload?.level as 'info' | 'warn' | 'error' | 'debug') ?? 'info';
+		const text = typeof payload === 'string' ? payload : payload?.text ?? payload?.message ?? '';
+		api().invoke('sendLog', level, String(text)).catch(() => {});
+	}
+	// Прочие типы пока игнорируем — добавим по мере необходимости.
+}
+
+// Сохраняем onLoad как no-op для обратной совместимости с экспортами плагинов:
+// каждый плагин делает `export { onLoad } from '../_template/tauri'` — без этого
+// при сборке появится unresolved import.
+export function onLoad(_apiCtx: any): void {
+	// Старый интерфейс injection'а больше не нужен — sendToMW работает через IPC.
+}

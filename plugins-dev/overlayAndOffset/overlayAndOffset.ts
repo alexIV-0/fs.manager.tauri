@@ -1,14 +1,14 @@
+// overlayAndOffset — наложение FG на BG c унифицированной нормализацией FG.
+// Tauri-port: execFFmpegCommand → ffmpeg.run (массив args, без shell-escape);
+// getFullInfoFromVideoFile → ffmpeg.getInfo; fs/path → helper.
+
 import path from 'path';
-import fs from 'fs';
-import { getFullInfoFromVideoFile, FullVideoInfo } from '../../electron/main/processing/ffmpeg/getFullInfoFromVideoFile';
-import { execFFmpegCommand } from '../../electron/main/processing/ffmpeg/execFFmpegCommand';
+import { fs, ffmpeg, sendToMW, VideoFileInfo } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
-import { sendToMW } from '../_template/pluginSender';
 
-export { onLoad } from '../_template/pluginSender';
+export { onLoad } from '../_template/tauri';
 
-// ── Типы настроек (совпадают с OverlayEdit/types.ts в renderer) ──────────────
+// ── Типы (зеркало OverlayEdit/types.ts) ──────────────────────────────────────
 
 interface OverlayFormatSettings {
 	bgWidth: number;
@@ -19,14 +19,11 @@ interface OverlayFormatSettings {
 	scaleH: number;
 	rotation: number;
 }
-
 interface OverlaySettings {
 	landscape: OverlayFormatSettings;
 	portrait: OverlayFormatSettings;
 	square: OverlayFormatSettings;
 }
-
-// ── Классификация pixel format ───────────────────────────────────────────────
 
 function isYuvaFormat(pix_fmt?: string): boolean {
 	return !!pix_fmt && pix_fmt.startsWith('yuva');
@@ -34,7 +31,7 @@ function isYuvaFormat(pix_fmt?: string): boolean {
 
 function isRgbAlphaFormat(pix_fmt?: string): boolean {
 	if (!pix_fmt) return false;
-	if (pix_fmt.startsWith('gbrap')) return true; // GBRAP, GBRAP10/12/16 (CineForm и т.п.)
+	if (pix_fmt.startsWith('gbrap')) return true;
 	return ['rgba', 'argb', 'bgra', 'abgr', 'rgba64be', 'rgba64le'].includes(pix_fmt);
 }
 
@@ -42,40 +39,14 @@ function hasAlphaChannel(pix_fmt?: string): boolean {
 	return isYuvaFormat(pix_fmt) || isRgbAlphaFormat(pix_fmt);
 }
 
-// ── Унифицированная нормализация FG перед наложением ─────────────────────────
-// Стратегия: привести FG к 8-bit rgba с предсказуемой цветовой меткой (bt709)
-// независимо от исходного кодека (ProRes 4444, HAP Alpha, PNG, VP9-alpha и др.)
-// — иначе swscale падает на yuva*p10/12le + smpte432/trc=reserved и т.п.
-//
-// Порядок фильтров КРИТИЧЕН: setparams ВСЕГДА первым. Иначе любой format=
-// до него триггерит swscale с исходными «дырявыми» метаданными
-// (prim:smpte432 + trc:reserved у ProRes 4444) — и swscale падает с
-// "Unsupported input (Error number -129)".
-function buildFgNormalizationFilter(info: FullVideoInfo): string {
+// Унифицированная нормализация FG (setparams ВСЕГДА первым, см. оригинальный плагин).
+function buildFgNormalizationFilter(info: VideoFileInfo): string {
 	const pix = info.pix_fmt || '';
-	// setparams правит ТОЛЬКО метаданные цвета (AVFrame side-data),
-	// пиксели и альфу не трогает. Должен идти ПЕРВЫМ — до любого format=,
-	// чтобы swscale на следующем шаге увидел уже нормализованные метки.
 	const setparams = 'setparams=color_trc=bt709:color_primaries=bt709:colorspace=bt709';
-
-	if (isYuvaFormat(pix)) {
-		// ProRes 4444 (yuva444p10/12le), VP9-alpha (yuva420p), CineForm yuva и т.п.
-		// Промежуточный yuva420p понижает битность до 8 (без потери альфы) и
-		// надёжнее проходит через swscale при экзотических primaries.
-		return `${setparams},format=yuva420p,format=rgba`;
-	}
-
-	if (isRgbAlphaFormat(pix)) {
-		// HAP Alpha, PNG, QuickTime PNG, GBRAP/GBRAP10/12/16 — уже RGB-семейство,
-		// конверсия в rgba дешёвая, но setparams оставляем для согласования с BG.
-		return `${setparams},format=rgba`;
-	}
-
-	// FG без альфы (обычный mp4/h264) — оверлей будет непрозрачным прямоугольником.
+	if (isYuvaFormat(pix)) return `${setparams},format=yuva420p,format=rgba`;
+	if (isRgbAlphaFormat(pix)) return `${setparams},format=rgba`;
 	return `${setparams},format=rgba`;
 }
-
-// ── Определяем тип формата по соотношению сторон реального BG ─────────────────
 
 function getFormatType(width: number, height: number): keyof OverlaySettings {
 	if (width > height) return 'landscape';
@@ -83,7 +54,7 @@ function getFormatType(width: number, height: number): keyof OverlaySettings {
 	return 'square';
 }
 
-// ── Обработка одной пары BG + FG ──────────────────────────────────────────────
+// ── Pipeline для одной пары BG+FG ────────────────────────────────────────────
 
 async function processSinglePair(
 	bgFile: string,
@@ -92,24 +63,22 @@ async function processSinglePair(
 	opts: { fgAudio: boolean; bgAudio: boolean; offsetBG: boolean },
 	targetPath: string,
 	_description: any,
+	nodeId?: string,
 ): Promise<string> {
 	const label = `${_description.infoText}: [overlay]`;
 
-	sendToMW('statusbar', `${label} analyze\n${path.basename(bgFile)}`);
-	const bgInfo = await getFullInfoFromVideoFile(bgFile, _description);
+	sendToMW('statusbar', { text: `${label} analyze\n${path.basename(bgFile)}` });
+	const bgInfo = await ffmpeg.getInfo(bgFile);
 
-	sendToMW('statusbar', `${label} analyze\n${path.basename(fgFile)}`);
-	const fgInfo = await getFullInfoFromVideoFile(fgFile, _description);
+	sendToMW('statusbar', { text: `${label} analyze\n${path.basename(fgFile)}` });
+	const fgInfo = await ffmpeg.getInfo(fgFile);
 
-	// Выбираем нужный пресет по реальным размерам BG
 	const formatType = getFormatType(bgInfo.width, bgInfo.height);
 	const fmt = overlaySettings[formatType];
 
-	// Масштабный коэффициент: реальный BG → настроечный BG (defaultSize)
 	const scaleFactorX = bgInfo.width / fmt.bgWidth;
 	const scaleFactorY = bgInfo.height / fmt.bgHeight;
 
-	// Целевые размеры и позиция FG в пикселях реального BG
 	const fgW = Math.round(fmt.scaleW * scaleFactorX);
 	const fgH = Math.round(fmt.scaleH * scaleFactorY);
 	const fgX = Math.round(fmt.posX * scaleFactorX);
@@ -117,23 +86,15 @@ async function processSinglePair(
 
 	const bgW = bgInfo.width;
 	const bgH = bgInfo.height;
-
-	// Длительность — берём BG (или FG если BG картинка / длительность 0)
 	const finalDuration = bgInfo.durationInSeconds > 0 ? bgInfo.durationInSeconds : fgInfo.durationInSeconds;
 
-	// ── Строим video filter ────────────────────────────────────────────────────
-
 	const fgScaleFilter = `scale=${fgW}:${fgH}`;
-
-	// Поворот (если ненулевой)
 	let rotateFilter = '';
 	if (fmt.rotation !== 0) {
 		const rotRad = (fmt.rotation * Math.PI) / 180;
 		rotateFilter = `,rotate=${rotRad.toFixed(6)}:ow='rotw(${rotRad.toFixed(6)})':oh='roth(${rotRad.toFixed(6)})'`;
 	}
 
-	// Унифицированная нормализация FG: учитывает кодек/pix_fmt/цветовые метки,
-	// см. buildFgNormalizationFilter выше.
 	const fgColorFilter = `${buildFgNormalizationFilter(fgInfo)},`;
 
 	sendToMW('log', {
@@ -148,8 +109,6 @@ async function processSinglePair(
 	});
 
 	let videoFilter: string;
-
-	// Offset логика: когда FG перекрывает весь BG и нужно сдвинуть BG
 	const needsOffset = opts.offsetBG && (fgW >= bgW || fgH >= bgH);
 
 	if (needsOffset) {
@@ -179,91 +138,70 @@ async function processSinglePair(
 		const padX = bgShiftX <= 0 ? -bgShiftX / 2 : 0;
 		const croppedW = bgW - Math.abs(bgShiftX) / 2;
 
-		videoFilter = [
-			`[0:v]crop=w=${croppedW}:h=${croppedH}:x=${cropX}:y=${cropY},`,
-			`pad=w=${bgW}:h=${bgH}:x=${padX}:y=${padY}:color=black[bg];`,
-			`[1:v]${fgColorFilter}${fgScaleFilter}${rotateFilter}[fg];`,
-			`[bg][fg]overlay=${fgX + padX}:${fgY + padY},format=yuv420p[v]`,
-		].join('');
+		videoFilter =
+			`[0:v]crop=w=${croppedW}:h=${croppedH}:x=${cropX}:y=${cropY},` +
+			`pad=w=${bgW}:h=${bgH}:x=${padX}:y=${padY}:color=black[bg];` +
+			`[1:v]${fgColorFilter}${fgScaleFilter}${rotateFilter}[fg];` +
+			`[bg][fg]overlay=${fgX + padX}:${fgY + padY},format=yuv420p[v]`;
 	} else {
 		videoFilter = `[1:v]${fgColorFilter}${fgScaleFilter}${rotateFilter}[fg];[0:v][fg]overlay=${fgX}:${fgY},format=yuv420p[v]`;
 	}
 
-	// ── Аудио ─────────────────────────────────────────────────────────────────
-
+	// Аудио
 	const useBgAudio = opts.bgAudio && bgInfo.hasAudio;
 	const useFgAudio = opts.fgAudio && fgInfo.hasAudio;
 
-	let audioFilter = '';
-	let audioMapStr: string;
+	let audioFilterComplex = '';
+	const audioMap: string[] = [];
 
 	if (useBgAudio && useFgAudio) {
-		audioFilter = ';[0:a][1:a]amix=inputs=2[a]';
-		audioMapStr = `-map "[a]"`;
+		audioFilterComplex = ';[0:a][1:a]amix=inputs=2[a]';
+		audioMap.push('-map', '[a]');
 	} else if (useFgAudio) {
-		audioMapStr = `-map 1:a`;
+		audioMap.push('-map', '1:a');
 	} else if (useBgAudio) {
-		audioMapStr = `-map 0:a`;
+		audioMap.push('-map', '0:a');
 	} else {
-		audioMapStr = `-an`;
+		audioMap.push('-an');
 	}
 
-	// ── Финальная команда ─────────────────────────────────────────────────────
+	await fs.mkdir(path.dirname(targetPath));
 
-	testAndCreateFolder(path.dirname(targetPath));
-
-	const ffmpegBin = (_description.programmPath.ffmpeg[0] as string).trim();
-	const overwriteFlag = fs.existsSync(targetPath) ? '-y' : '';
-
-	const cmdParts = [
-		overwriteFlag,
-		`-i "${bgFile}"`,
-		`-i "${fgFile}"`,
-		`-filter_complex "${videoFilter}${audioFilter}"`,
-		`-map "[v]"`,
-		audioMapStr,
-		`-t ${finalDuration}`,
-		`-c:v libx264 -preset faster -crf 22`,
-		`"${targetPath}"`,
-	].filter(Boolean);
-
-	const cmd = `"${ffmpegBin}" ${cmdParts.join(' ')}`;
-
-	sendToMW('log', { text: `ffmpeg path: ${ffmpegBin}\nexec command: ${cmd}` });
-	sendToMW('statusbar', `${label} render → ${path.basename(targetPath)}`);
-
-	const { stderr } = await execFFmpegCommand(cmd).catch((err: any) => {
-		const errText = [err?.stderr, err?.error?.message].filter(Boolean).join('\n');
-		sendToMW('log', { level: 'error', text: `[overlay] ffmpeg error:\n${errText}` });
-		throw new Error(errText || 'ffmpeg exec failed');
+	sendToMW('statusbar', { text: `${label} render → ${path.basename(targetPath)}` });
+	await ffmpeg.run({
+		text: `${label} ${path.basename(targetPath)}`,
+		duration: finalDuration || 10,
+		nodeId,
+		command: [
+			'-y',
+			'-i', bgFile,
+			'-i', fgFile,
+			'-filter_complex', `${videoFilter}${audioFilterComplex}`,
+			'-map', '[v]',
+			...audioMap,
+			'-t', String(finalDuration),
+			'-c:v', 'libx264', '-preset', 'faster', '-crf', '22',
+			targetPath,
+		],
 	});
-
-	if (stderr) {
-		sendToMW('log', { level: 'info', text: `[overlay] ffmpeg stderr:\n${stderr}` });
-	}
 
 	return targetPath;
 }
 
-// ── Публичная функция плагина ─────────────────────────────────────────────────
+// ── Plugin entry ─────────────────────────────────────────────────────────────
 
-export async function overlayAndOffsetFunc(_item: any, _description: any) {
+export async function overlayAndOffsetFunc(_item: any, _description: any): Promise<string[]> {
 	const finalFiles: string[] = [];
-
-	// ── 1. Входные файлы ──────────────────────────────────────────────────────
 
 	const bgFiles: string[] = (_item.import?.inputBG ?? []).filter(Boolean);
 	const fgFiles: string[] = (_item.import?.inputFG ?? []).filter(Boolean);
-
 	if (bgFiles.length === 0 || fgFiles.length === 0) {
-		sendToMW('statusbar', `${_description.infoText}: [overlay] no input files, skipping`);
+		sendToMW('statusbar', { text: `${_description.infoText}: [overlay] no input files, skipping` });
 		return finalFiles;
 	}
 
-	// ── 2. Настройки наложения ────────────────────────────────────────────────
-
 	if (!_item.overlaySettings) {
-		sendToMW('statusbar', `${_description.infoText}: [overlay] ERROR: overlaySettings not configured`);
+		sendToMW('statusbar', { text: `${_description.infoText}: [overlay] ERROR: overlaySettings not configured` });
 		return finalFiles;
 	}
 
@@ -271,47 +209,40 @@ export async function overlayAndOffsetFunc(_item: any, _description: any) {
 	try {
 		overlaySettings = JSON.parse(_item.overlaySettings) as OverlaySettings;
 	} catch {
-		sendToMW('statusbar', `${_description.infoText}: [overlay] ERROR: failed to parse overlaySettings`);
+		sendToMW('statusbar', { text: `${_description.infoText}: [overlay] ERROR: failed to parse overlaySettings` });
 		return finalFiles;
 	}
 
-	// ── 3. Опции аудио / offset ───────────────────────────────────────────────
-
 	const opts = {
 		fgAudio: _item.originalSoundFG === true,
-		bgAudio: _item.originalSoundBG !== false, // true по умолчанию
+		bgAudio: _item.originalSoundBG !== false,
 		offsetBG: _item.offsetBG === true,
 	};
 
-	// ── 4. Целевой путь ───────────────────────────────────────────────────────
-
-	const curPath: string[] = _item.targetPath?.length === 0 ? ['$clearName (overlay $random(3))'] : [...(_item.targetPath ?? [])];
-
-	if (_item.import?.targetPath) {
+	const curPath: string[] =
+		(_item.targetPath?.length ?? 0) === 0 ? ['$clearName (overlay $random(3))'] : [...(_item.targetPath ?? [])];
+	if (_item.import?.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
 		curPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
 	}
 
-	// ── 5. Итерируем по парам BG + FG ─────────────────────────────────────────
-
 	const totalPairs = Math.max(bgFiles.length, fgFiles.length);
-
 	for (let i = 0; i < totalPairs; i++) {
 		const bgFile = bgFiles[Math.min(i, bgFiles.length - 1)];
 		const fgFile = fgFiles[Math.min(i, fgFiles.length - 1)];
 
-		sendToMW('statusbar', `${_description.infoText}: [overlay] pair ${i + 1}/${totalPairs}`);
+		sendToMW('statusbar', { text: `${_description.infoText}: [overlay] pair ${i + 1}/${totalPairs}` });
 
 		const basePath = createPathForFileByPattern(curPath, _description, bgFile);
 		const dirPath = path.dirname(basePath);
 		const fName = path.basename(basePath, path.extname(basePath));
 		const outFile = path.join(dirPath, `${fName}.mp4`);
-		testAndCreateFolder(dirPath);
 
-		const result = await processSinglePair(bgFile, fgFile, overlaySettings, opts, outFile, _description);
+		const result = await processSinglePair(bgFile, fgFile, overlaySettings, opts, outFile, _description, _item.id);
 		finalFiles.push(result);
 	}
-	sendToMW('log', { level: 'info', text: `Result:\n${finalFiles}` });
+
+	sendToMW('log', { level: 'info', text: `Result:\n${finalFiles.join('\n')}` });
 	return finalFiles;
 }

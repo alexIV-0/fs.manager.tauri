@@ -16,6 +16,7 @@ use commands::{
     ae_commands::*,
     settings_commands::*,
     docs_commands::*,
+    http_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
@@ -204,6 +205,7 @@ pub fn run() {
             read_file_sync,
             read_media_preview,
             write_file,
+            write_binary_file,
             check_file_path,
             check_folder_path,
             get_some_from_folder,
@@ -211,6 +213,8 @@ pub fn run() {
             recursive_find_files,
             format_name_by_pattern,
             get_user_data_path,
+            get_plugins_dev_path,
+            getPluginsDevPath,
             fonts_get_list,
             fonts_load_one,
             // CamelCase wrappers (frontend compatible)
@@ -357,12 +361,21 @@ pub fn run() {
             color_types_rescan,
             color_types_add,
             color_types_remove,
+            // File Types & Program Paths
+            file_types_get,
+            file_types_set,
+            program_paths_get,
+            program_paths_set,
             // Cleanup & DB
             cleanup_auto_delete,
             db_register_found,
             // Docs
             docs_list,
             docs_read,
+            // HTTP (Rust-side, no CORS)
+            http_fetch,
+            http_upload,
+            http_download,
             // Plugins
             plugin_manager_init,
             plugin_manager_load_plugin,

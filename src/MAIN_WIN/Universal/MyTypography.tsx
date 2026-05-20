@@ -5,13 +5,16 @@ interface Props {
     innerText: string;
     onChange?: (newText: string) => void; // функция, вызываемая при сохранении
     sx?: any;
+    /** Если true — режим редактирования не включается даже по double-click. */
+    readOnly?: boolean;
 }
 
-function MyTypography({ innerText, onChange, sx }: Props) {
+function MyTypography({ innerText, onChange, sx, readOnly = false }: Props) {
     const [isEditing, setIsEditing] = useState(false);
     const [value, setValue] = useState(innerText);
 
     const handleDoubleClick = () => {
+        if (readOnly) return;
         setIsEditing(true);
     };
 

@@ -21,10 +21,7 @@
 				},
 				"isInput": true,
 				"isOutput": true,
-				"acceptedTypes": [
-					"video",
-					"audio"
-				],
+				"acceptedTypes": ["video", "audio"],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -34,17 +31,13 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - файл будет сохранен в ту же папку с рандомным именем",
-					"options": [
-						"#filePattern"
-					],
+					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"path"
-				],
+				"acceptedTypes": ["path"],
 				"required": false,
 				"outputType": "path"
 			},
@@ -57,9 +50,7 @@
 					"value": 0
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"timecode"
-				],
+				"acceptedTypes": ["timecode"],
 				"required": false,
 				"outputType": "string"
 			},

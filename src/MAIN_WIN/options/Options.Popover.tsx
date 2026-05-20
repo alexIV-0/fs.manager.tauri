@@ -1,7 +1,7 @@
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
-import { Box, Modal, Tab, Tabs } from '@mui/material';
-import { File, FolderCog, Plug, Settings, Waypoints } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Box, Button, Modal, Tab, Tabs } from '@mui/material';
+import { File, FolderCog, Plug, Save, Settings, Waypoints } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { PluginSortableList } from './plugin/PluginSortableList';
 import TabMain from './tabs/TabMain';
 import TabNodes from './tabs/TabNodes';
@@ -87,20 +87,20 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 	const [tabIndex, setTabIndex] = useState(0);
 	const [version, setVersion] = useState('');
 
-	// Черновик настроек для TabMain. При открытии модалки инициализируется
-	// текущим состоянием стора, при закрытии кликом вне — пишется в файл,
-	// при Esc — просто отбрасывается.
 	const settings = appSettings_client((s) => s.settings);
 	const setFull = appSettings_client((s) => s.setFull);
 	const loaded = appSettings_client((s) => s.loaded);
 	const load = appSettings_client((s) => s.load);
 	const [draft, setDraft] = useState<AppSettings>(settings);
+	// Ref всегда содержит свежий draft — исключает stale-closure при асинхронном сохранении.
+	const draftRef = useRef(draft);
+	draftRef.current = draft;
 
 	useEffect(() => {
 		if (!loaded) load();
 	}, [loaded, load]);
 
-	// Каждый раз при открытии модалки — синхронизируем черновик с актуальным стором.
+	// При открытии модалки синхронизируем черновик с актуальным стором.
 	useEffect(() => {
 		if (open) setDraft(settings);
 	}, [open, settings]);
@@ -116,18 +116,18 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 		setTabIndex(newValue);
 	};
 
-	// MUI Modal вызывает onClose с reason: 'backdropClick' | 'escapeKeyDown'.
-	// backdropClick (или явный close-button через handleClose) — commit черновика.
-	// escapeKeyDown — отбрасываем, ничего не сохраняем.
-	const handleModalClose = async (_event: object, reason: 'backdropClick' | 'escapeKeyDown') => {
-		if (reason !== 'escapeKeyDown') {
-			try {
-				await setFull(draft);
-			} catch (e) {
-				console.warn('[Options] failed to save settings on close:', e);
-			}
+	const commitAndClose = async () => {
+		try {
+			await setFull(draftRef.current);
+		} catch (e) {
+			console.warn('[Options] failed to save settings on close:', e);
 		}
 		handleClose();
+	};
+
+	// Сохраняем при любом закрытии модалки (включая Esc).
+	const handleModalClose = (_event: object, _reason: string) => {
+		void commitAndClose();
 	};
 
 	return (
@@ -149,7 +149,7 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 						v{version}
 					</Box>
 				)}
-				<Box sx={{ flexShrink: 0 }}>
+				<Box sx={{ flexShrink: 0, position: 'relative' }}>
 					<Tabs
 						value={tabIndex}
 						onChange={handleChange}
@@ -170,6 +170,25 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 						<Tab disableRipple label='Nodes' id='tab-3' aria-controls='tabpanel-3' icon={<Waypoints strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label='Plugins' id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
 					</Tabs>
+					<Button
+						variant='contained'
+						size='small'
+						startIcon={<Save size={14} />}
+						onClick={commitAndClose}
+						sx={{
+							position: 'absolute',
+							right: 12,
+							top: '50%',
+							transform: 'translateY(-50%)',
+							textTransform: 'none',
+							fontSize: '0.8rem',
+							py: 0.5,
+							bgcolor: cyanColor(60),
+							'&:hover': { bgcolor: cyanColor(75) },
+						}}
+					>
+						Сохранить
+					</Button>
 				</Box>
 
 				<Box sx={{ flexGrow: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

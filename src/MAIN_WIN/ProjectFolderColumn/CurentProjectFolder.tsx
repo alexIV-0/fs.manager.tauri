@@ -22,6 +22,7 @@ export function CurentProjectFolder() {
 	} | null>(null);
 
 	const [dragIntent, setDragIntent] = useState<'move' | 'copy' | null>(null);
+	const [multiDragCount, setMultiDragCount] = useState(1);
 	const [isResizingHeight, setIsResizingHeight] = useState(false);
 
 	const gray80 = greyColor(80);
@@ -80,6 +81,10 @@ export function CurentProjectFolder() {
 		const isShiftPressed = activatorEvent instanceof MouseEvent || activatorEvent instanceof PointerEvent ? activatorEvent.shiftKey : false;
 
 		const intent = isShiftPressed ? 'copy' : 'move';
+		const multiSelected = useColumnView_Store.getState().instances[dragData.source].multiSelectedPaths;
+		const count = multiSelected.length > 0 && multiSelected.includes(dragData.path) ? multiSelected.length : 1;
+
+		setMultiDragCount(count);
 		setDragIntent(intent);
 		setActiveItem({
 			name: dragData.name,
@@ -120,7 +125,20 @@ export function CurentProjectFolder() {
 				console.warn('[DnD] dropData missing — drop ignored', over);
 				return;
 			}
-			await handleFileOperation(dragData, dropData, isCopy);
+
+			const storeState = useColumnView_Store.getState();
+			const multiSelected = storeState.instances[dragData.source].multiSelectedPaths;
+			const isDraggingMultiSelected = multiSelected.length > 0 && multiSelected.includes(dragData.path);
+
+			if (isDraggingMultiSelected) {
+				for (const srcPath of multiSelected) {
+					const name = srcPath.split(/[\\/]/).pop() ?? '';
+					await handleFileOperation({ ...dragData, path: srcPath, name }, dropData, isCopy);
+				}
+				storeState.clearMultiSelection(dragData.source);
+			} else {
+				await handleFileOperation(dragData, dropData, isCopy);
+			}
 		} finally {
 			resetDragState();
 		}
@@ -129,6 +147,7 @@ export function CurentProjectFolder() {
 	const resetDragState = () => {
 		setActiveItem(null);
 		setDragIntent(null);
+		setMultiDragCount(1);
 	};
 
 	const handleFileOperation = async (
@@ -268,6 +287,31 @@ export function CurentProjectFolder() {
 								}}
 							>
 								<Plus size={20} strokeWidth={3} />
+							</Box>
+						)}
+						{multiDragCount > 1 && (
+							<Box
+								sx={{
+									position: 'absolute',
+									top: 0,
+									left: 0,
+									minWidth: 20,
+									height: 20,
+									px: 0.5,
+									borderRadius: '10px',
+									backgroundColor: '#1976d2',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									zIndex: 2147483647,
+									transform: 'translate(-40%, -40%)',
+									fontSize: 11,
+									fontWeight: 700,
+									color: 'white',
+									lineHeight: 1,
+								}}
+							>
+								{multiDragCount}
 							</Box>
 						)}
 
