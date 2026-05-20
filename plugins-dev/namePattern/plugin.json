@@ -1,0 +1,10 @@
+{
+	"id": "namePattern",
+	"name": "Name Pattern",
+	"description": "Provides formatNameByPattern and $-variable definitions for all processing plugins",
+	"version": "1.0.0",
+	"apiVersion": 1,
+	"type": ["system", "provider"],
+	"main": "namePattern.js",
+	"external": []
+}

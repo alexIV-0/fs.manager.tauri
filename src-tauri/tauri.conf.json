@@ -34,6 +34,12 @@
 			}
 		}
 	},
+	"plugins": {
+		"updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFMjI2QzE3RkM3NEY3RDIKUldUUzkzVDhGMndpenBtdVkzQStmVkF1cjE5dGt1aFkzaVVWWUcycnFaZTBTUzl3MjJDcm94VWIK",
+			"endpoints": ["https://github.com/alexIV-0/fs.manager.tauri/releases/latest/download/latest.json"]
+		}
+	},
 	"bundle": {
 		"active": true,
 		"targets": "all",

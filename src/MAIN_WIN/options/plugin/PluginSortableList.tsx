@@ -17,6 +17,7 @@ import { Plus } from 'lucide-react';
 
 import { MyStyledSearch } from '@/MAIN_WIN/Universal/MyStyledSearch';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
+import { AppUpdaterAccordion } from './AppUpdaterAccordion';
 import { useStore } from 'zustand';
 
 import { PluginSortableGroup } from './PluginSortableGroup';
@@ -164,6 +165,11 @@ export const PluginSortableList: React.FC = () => {
 				overflow: 'hidden',
 			}}
 		>
+			{/* App updater accordion — above plugin search */}
+			<Box sx={{ px: 2, pt: 2, flexShrink: 0 }}>
+				<AppUpdaterAccordion />
+			</Box>
+
 			{/* Шапка с поиском и добавлением */}
 			<Box
 				sx={{
