@@ -66,7 +66,8 @@ export const AppUpdaterAccordion: React.FC = () => {
 			if (!modRef.current) {
 				modRef.current = await loadPlugin('updater', PLUGIN_VERSION);
 			}
-			const data = await modRef.current.fetchReleases(OWNER, REPO);
+			const mod = modRef.current!;
+			const data = await mod.fetchReleases(OWNER, REPO);
 			setReleases(data);
 		} catch (e: any) {
 			setError(e?.message ?? 'Failed to fetch releases');

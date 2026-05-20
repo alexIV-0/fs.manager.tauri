@@ -18,12 +18,10 @@
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
 		"allowSyntheticDefaultImports": true,
-		"ignoreDeprecations": "6.0",
-		"baseUrl": ".",
 		"paths": {
-			"@/*": ["src/*"],
-			"@plugin-api/fs-promises": ["src/PluginAPI/fs-promises.ts"],
-			"@plugin-api/*": ["src/PluginAPI/*.ts"]
+			"@/*": ["./src/*"],
+			"@plugin-api/fs-promises": ["./src/PluginAPI/fs-promises.ts"],
+			"@plugin-api/*": ["./src/PluginAPI/*.ts"]
 		}
 	},
 	"include": ["src"],
