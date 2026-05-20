@@ -1,7 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/nicknisi/dotfiles/master/tmux/conf/tmux.conf",
 	"productName": "fsManager",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"identifier": "com.fsmanager.tauri.alexiv",
 	"build": {
 		"beforeDevCommand": "yarn dev",
