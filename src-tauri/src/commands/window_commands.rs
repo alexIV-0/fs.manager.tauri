@@ -4,6 +4,56 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
+// macOS-специфика: между NSWindow content area и WKWebView viewport есть постоянное
+// расхождение по высоте — WebView оставляет 28px сверху (предположительно safe-area
+// под titlebar). Tauri's set_size задаёт NSWindow content, а JS видит WebView viewport.
+// Поэтому при ресайзе под видео мы добавляем 28px к высоте, а при сохранении bounds
+// — вычитаем 28px (сохраняем viewport-размер, не NSWindow-размер).
+#[cfg(target_os = "macos")]
+pub const WEBVIEW_TOP_INSET: f64 = 28.0;
+#[cfg(not(target_os = "macos"))]
+pub const WEBVIEW_TOP_INSET: f64 = 0.0;
+
+// На macOS используем NSWindow.setContentAspectRatio: — нативное OS-level ограничение
+// пропорций при ручном ресайзе. Без него `set_size` из обработчика Resized во время
+// живого drag'а либо игнорируется OS, либо вызывает мерцание.
+#[cfg(target_os = "macos")]
+mod ns_window_aspect {
+    use std::ffi::c_void;
+    use std::os::raw::c_char;
+
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug)]
+    pub struct CGSize {
+        pub width: f64,
+        pub height: f64,
+    }
+
+    extern "C" {
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+
+    /// Устанавливает соотношение сторон контента окна (width:height).
+    /// OS ограничивает пользовательский ресайз этой пропорцией.
+    /// Передать `CGSize { width: 0.0, height: 0.0 }` чтобы снять ограничение.
+    pub unsafe fn set_content_aspect_ratio(ns_window: *mut c_void, ratio: CGSize) {
+        if ns_window.is_null() {
+            return;
+        }
+        let sel = sel_registerName(b"setContentAspectRatio:\0".as_ptr() as *const c_char);
+        if sel.is_null() {
+            return;
+        }
+        // objc_msgSend в реальности — variadic, но Rust требует фиксированных сигнатур.
+        // Транмутируем к нужной сигнатуре; ABI (System V/AAPCS) корректно передаст CGSize.
+        let msg: extern "C" fn(*mut c_void, *mut c_void, CGSize) =
+            std::mem::transmute(objc_msgSend as *const ());
+        msg(ns_window, sel, ratio);
+    }
+
+}
+
 // Хранилище для последних данных окна Node
 pub struct NodeWindowState {
     pub last_data: Option<String>,
@@ -126,6 +176,26 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
     .build()
     .map_err(|e| e.to_string())?;
 
+    // Edit-меню для нового окна: без него macOS не маршрутизирует Cmd+C/V.
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::{Menu, Submenu, PredefinedMenuItem};
+        let _ = (|| -> Result<(), tauri::Error> {
+            let edit = Submenu::with_items(&app, "Edit", true, &[
+                &PredefinedMenuItem::undo(&app, None)?,
+                &PredefinedMenuItem::redo(&app, None)?,
+                &PredefinedMenuItem::separator(&app)?,
+                &PredefinedMenuItem::cut(&app, None)?,
+                &PredefinedMenuItem::copy(&app, None)?,
+                &PredefinedMenuItem::paste(&app, None)?,
+                &PredefinedMenuItem::select_all(&app, None)?,
+            ])?;
+            let menu = Menu::with_items(&app, &[&edit])?;
+            window.set_menu(menu)?;
+            Ok(())
+        })();
+    }
+
     // Отправляем данные после загрузки
     let data_clone = data.clone();
     let app_clone = app.clone();
@@ -182,24 +252,57 @@ pub async fn send_data_to_node_window(app: tauri::AppHandle, data: serde_json::V
 }
 
 // ==================== PREVIEW WINDOW ====================
+//
+// Логика портирована из electron/main/index.ts + electron/main/previewBounds.ts.
+// Ключевая идея — bounds-per-file-type:
+//   * Для каждого типа (video/image/audio/text/...) свой сохранённый размер и позиция.
+//   * Когда открываем preview и для типа уже есть сохранённый размер — НЕ ТРОГАЕМ его,
+//     preview_resize применит только aspect-constraint.
+//   * Когда тип меняется и сохранённых bounds нет — preview_resize подгоняет под видео
+//     и центрирует (один раз).
+//   * Любой resize/move сохраняет bounds под текущим типом и ставит lock=true.
 
 #[tauri::command]
 pub async fn preview_open(
     app: tauri::AppHandle,
     data: String,
     state: tauri::State<'_, Mutex<PreviewWindowState>>,
+    bounds_state: tauri::State<'_, Mutex<crate::commands::preview_bounds::PreviewBoundsState>>,
 ) -> Result<(), String> {
-    let parsed: PreviewOpenData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-    println!("[Preview] Opening: {}", parsed.file_path);
+    use crate::commands::preview_bounds as pb;
 
-    // Сохраняем data для handshake-перезапроса (если окно пересоздаётся или подписка ещё не готова)
+    let parsed: PreviewOpenData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    println!("[Preview] Opening: {} (type={})", parsed.file_path, parsed.file_type);
+
+    let next_type = pb::normalize_type(&parsed.file_type);
+
+    // Сохраняем data для handshake-перезапроса.
     {
         let mut st = state.lock().map_err(|e| e.to_string())?;
         st.last_data = Some(data.clone());
     }
 
-    // Проверяем существует ли уже окно
+    // Окно уже существует — обновляем контент. preview_resize позже подберёт
+    // правильный размер/позицию по orientation-bucket'у новой записи.
     if let Some(existing_win) = app.get_webview_window("previewWin") {
+        let prev_path = {
+            let bs = bounds_state.lock().map_err(|e| e.to_string())?;
+            bs.current_file_path.clone()
+        };
+
+        // Тот же файл — Space-toggle: закрываем окно.
+        if prev_path.as_deref() == Some(parsed.file_path.as_str()) {
+            let _ = existing_win.close();
+            return Ok(());
+        }
+
+        {
+            let mut bs = bounds_state.lock().map_err(|e| e.to_string())?;
+            bs.current_file_path = Some(parsed.file_path.clone());
+            bs.current_type = next_type.clone();
+            bs.should_center = false; // окно уже на экране — не центрируем
+        }
+
         existing_win.show().map_err(|e| e.to_string())?;
         existing_win.set_focus().map_err(|e| e.to_string())?;
         existing_win
@@ -208,19 +311,41 @@ pub async fn preview_open(
         return Ok(());
     }
 
-    // Создаём новое окно
-    let window = WebviewWindowBuilder::new(
+    // Окна нет — создаём. Initial size берём из любого сохранённого bounds для
+    // этого типа (любой ориентации) — чтобы минимизировать визуальный flicker
+    // перед тем как preview_resize выставит точный размер под актуальную
+    // ориентацию видео.
+    let any_saved = pb::any_bounds_for_type(&app, &next_type);
+    let (init_w, init_h) = any_saved
+        .as_ref()
+        .map(|b| (b.width, b.height))
+        .unwrap_or((800.0, 600.0));
+
+    {
+        let mut bs = bounds_state.lock().map_err(|e| e.to_string())?;
+        bs.current_type = next_type.clone();
+        bs.current_file_path = Some(parsed.file_path.clone());
+        bs.should_center = any_saved.is_none();
+    }
+
+    let mut builder = WebviewWindowBuilder::new(
         &app,
         "previewWin",
         WebviewUrl::App("previewWin.html".into()),
     )
     .title("fsManager — Preview")
-    .inner_size(800.0, 600.0)
-    .visible(true)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .inner_size(init_w, init_h)
+    .visible(true);
 
-    // Отправляем данные после загрузки окна
+    if let Some(b) = &any_saved {
+        if let (Some(x), Some(y)) = (b.x, b.y) {
+            builder = builder.position(x, y);
+        }
+    }
+
+    let window = builder.build().map_err(|e| e.to_string())?;
+
+    // Отправляем данные после загрузки окна.
     let data_clone = data.clone();
     let app_clone = app.clone();
     window.once("tauri://loaded", move |_event| {
@@ -229,65 +354,95 @@ pub async fn preview_open(
         }
     });
 
-    // Listener для сохранения пропорций при ручном ресайзе.
-    // Вычисляем какая ось изменилась меньше и корректируем вторую.
-    let app_for_resize = app.clone();
+    // Resize/Move handler: сохраняем bounds под текущим типом и ставим lock.
+    // Это работает и для пользовательского ресайза, и для нашего setContentSize —
+    // в обоих случаях после первого вызова бунды зафиксированы.
+    let app_for_save = app.clone();
     window.on_window_event(move |event| {
-        let tauri::WindowEvent::Resized(new_phys) = event else { return };
-
-        let preview_state = app_for_resize.state::<Mutex<PreviewWindowState>>();
-        let (ratio, last_corrected) = {
-            let Ok(st) = preview_state.lock() else { return };
-            (st.aspect_ratio, st.last_corrected)
-        };
-
-        let Some(ratio) = ratio else { return };
-
-        // Если этот Resized породили мы сами — пропускаем, сбрасываем метку
-        if let Some((lw, lh)) = last_corrected {
-            if lw == new_phys.width && lh == new_phys.height {
-                if let Ok(mut st) = preview_state.lock() {
-                    st.last_corrected = None;
+        match event {
+            tauri::WindowEvent::Resized(s) => {
+                // DEBUG: смотрим что реально применилось — это physical inner size окна
+                if let Some(win) = app_for_save.get_webview_window("previewWin") {
+                    let outer = win.outer_size().ok();
+                    let inner = win.inner_size().ok();
+                    let aspect = inner.as_ref().map(|i| i.width as f64 / i.height.max(1) as f64);
+                    println!(
+                        "[previewWin Resized] event.physical={}x{} | inner={:?} outer={:?} aspect={:?}",
+                        s.width, s.height, inner, outer, aspect
+                    );
                 }
-                return;
+                save_current_bounds(&app_for_save);
             }
+            tauri::WindowEvent::Moved(_) => {
+                save_current_bounds(&app_for_save);
+            }
+            _ => {}
         }
+    });
 
-        // Вычисляем вариант A (фиксируем ширину → меняем высоту)
-        // и вариант B (фиксируем высоту → меняем ширину), выбираем тот где коррекция меньше.
-        let new_wf = new_phys.width as f64;
-        let new_hf = new_phys.height as f64;
-
-        let h_from_w = new_wf / ratio;
-        let w_from_h = new_hf * ratio;
-
-        let delta_h = (new_hf - h_from_w).abs();
-        let delta_w = (new_wf - w_from_h).abs();
-
-        let (corrected_w, corrected_h) = if delta_h <= delta_w {
-            (new_phys.width, h_from_w.round() as u32)
-        } else {
-            (w_from_h.round() as u32, new_phys.height)
-        };
-
-        // Уже правильные пропорции — ничего не делаем
-        if corrected_w == new_phys.width && corrected_h == new_phys.height {
-            return;
+    // Close handler: сбрасываем state preview_bounds, чтобы следующий preview_open
+    // пересоздал окно с восстановленными bounds.
+    let app_for_close = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            let bs = app_for_close.state::<Mutex<pb::PreviewBoundsState>>();
+            let _ = bs.lock().map(|mut guard| {
+                guard.current_file_path = None;
+                guard.bounds_locked = false;
+                guard.should_center = false;
+                // current_type оставляем — пригодится для следующего открытия
+            });
         }
-
-        // Запоминаем наш исправленный размер чтобы не зациклиться
-        if let Ok(mut st) = preview_state.lock() {
-            st.last_corrected = Some((corrected_w, corrected_h));
-        }
-
-        let Some(win) = app_for_resize.get_webview_window("previewWin") else { return };
-        let _ = win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: corrected_w,
-            height: corrected_h,
-        }));
     });
 
     Ok(())
+}
+
+/// Снимает bounds окна (inner size + outer position в logical px) и сохраняет
+/// под ключом "{type}_{orientation}" — для каждой ориентации свои размеры.
+fn save_current_bounds(app: &tauri::AppHandle) {
+    use crate::commands::preview_bounds as pb;
+
+    let Some(win) = app.get_webview_window("previewWin") else { return };
+    let Ok(inner) = win.inner_size() else { return };
+    let pos = win.outer_position().ok();
+    let scale = win.scale_factor().unwrap_or(1.0);
+
+    let logical_w = inner.width as f64 / scale;
+    let nswindow_logical_h = inner.height as f64 / scale;
+    // Сохраняем размер VIEWPORT (а не NSWindow content). preview_resize при
+    // восстановлении добавит обратно WEBVIEW_TOP_INSET.
+    let logical_h = nswindow_logical_h - WEBVIEW_TOP_INSET;
+
+    if logical_w < 1.0 || logical_h < 1.0 {
+        return;
+    }
+
+    let aspect = logical_w / logical_h;
+
+    let bounds = pb::PreviewBounds {
+        width: logical_w,
+        height: logical_h,
+        x: pos.map(|p| p.x as f64 / scale),
+        y: pos.map(|p| p.y as f64 / scale),
+    };
+
+    let current_type = {
+        let bs = app.state::<Mutex<pb::PreviewBoundsState>>();
+        let result = bs.lock().ok().map(|g| g.current_type.clone());
+        match result {
+            Some(t) => t,
+            None => return,
+        }
+    };
+
+    let key = pb::make_key(&current_type, aspect);
+    let _ = pb::save_bounds(app, &key, bounds);
+
+    {
+        let bs = app.state::<Mutex<pb::PreviewBoundsState>>();
+        let _ = bs.lock().map(|mut g| { g.bounds_locked = true; });
+    }
 }
 
 /// Стаб: определяет наличие альфа-канала в видео. Реальная реализация требует ffprobe.
@@ -311,59 +466,128 @@ pub fn preview_delete_temp(_file_path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Подгонка окна под видео + установка aspect-constraint.
+///
+/// Логика (доработка Electron'овской):
+///   * Bounds сохраняются под ключом "{type}_{orientation}" — отдельно vertical/
+///     horizontal/square. Это решает проблему letterbox'а при переключении между
+///     9:16 и 16:9 видео — каждая ориентация имеет свои сохранённые размеры.
+///   * Если для текущей ориентации есть сохранённые bounds — применяем их.
+///     Иначе ресайзим под native-размеры видео.
+///   * Aspect-constraint (для пользовательского drag-ресайза) ставим всегда.
 #[tauri::command]
 pub async fn preview_resize(
     app: tauri::AppHandle,
     opts: crate::commands::fs_commands::PreviewResizeOpts,
-    state: tauri::State<'_, Mutex<PreviewWindowState>>,
+    _state: tauri::State<'_, Mutex<PreviewWindowState>>,
+    bounds_state: tauri::State<'_, Mutex<crate::commands::preview_bounds::PreviewBoundsState>>,
 ) -> Result<(), String> {
-    // Сохраняем aspect ratio для resize-listener'а окна
-    if let Some(ratio) = opts.aspect_ratio {
-        if let Ok(mut st) = state.lock() {
-            st.aspect_ratio = Some(ratio);
-            st.last_corrected = None;
+    use crate::commands::preview_bounds as pb;
+
+    let Some(preview_win) = app.get_webview_window("previewWin") else {
+        return Ok(());
+    };
+
+    let new_aspect = opts.width / opts.height.max(1.0);
+    let current_type = {
+        let bs = bounds_state.lock().map_err(|e| e.to_string())?;
+        bs.current_type.clone()
+    };
+    let key = pb::make_key(&current_type, new_aspect);
+    let (saved, has_saved) = pb::bounds_for_type(&app, &key);
+
+    // Используем сохранённые bounds если есть и их aspect близко к новому,
+    // иначе — native размеры видео.
+    let (target_w, target_h) = if has_saved {
+        let saved_aspect = saved.width / saved.height.max(1.0);
+        if (saved_aspect - new_aspect).abs() / new_aspect < 0.05 {
+            (saved.width, saved.height)
+        } else {
+            // Сохранённое не подходит — берём native (не должно случаться благодаря
+            // ориентационному bucket'у, но защита на случай tolerance).
+            (opts.width, opts.height)
+        }
+    } else {
+        (opts.width, opts.height)
+    };
+
+    let scale = preview_win.scale_factor().unwrap_or(1.0);
+    let before_inner = preview_win.inner_size().ok();
+    let before_outer = preview_win.outer_size().ok();
+
+    println!(
+        "[preview_resize] type={} aspect={:.3} key={} has_saved={} → target={}x{} pos={:?} | scale={}",
+        current_type, new_aspect, key, has_saved, target_w, target_h,
+        (saved.x, saved.y), scale
+    );
+    let titlebar_logical = match (before_outer.as_ref(), before_inner.as_ref()) {
+        (Some(o), Some(i)) => Some((o.height as f64 - i.height as f64) / scale),
+        _ => None,
+    };
+    println!(
+        "[preview_resize] BEFORE set_size: inner={:?} outer={:?} | titlebar_logical={:?}",
+        before_inner, before_outer, titlebar_logical
+    );
+
+    // 1) Размер окна.
+    // target_w/target_h — это желаемый размер WKWebView VIEWPORT (что увидит JS как
+    // window.innerWidth/innerHeight). Из-за safe-area WebView на macOS — NSWindow
+    // content area должна быть на WEBVIEW_TOP_INSET больше по высоте, чтобы viewport
+    // получился ровно target_h.
+    let nswindow_h = target_h + WEBVIEW_TOP_INSET;
+    preview_win
+        .set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: target_w,
+            height: nswindow_h,
+        }))
+        .map_err(|e| e.to_string())?;
+
+    // tao на macOS делает setContentSize асинхронно. Дождёмся для логирования.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let after_inner = preview_win.inner_size().ok();
+    println!(
+        "[preview_resize] AFTER set_size({}, {}): inner={:?} | expected webview viewport={}x{}",
+        target_w, nswindow_h, after_inner, target_w, target_h
+    );
+
+    // 2) Позиция — только если есть сохранённая для этой ориентации.
+    if let (Some(x), Some(y)) = (saved.x, saved.y) {
+        let _ = preview_win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+            x,
+            y,
+        }));
+    }
+
+    // 3) Aspect-constraint (всегда) — только macOS-нативный, через FFI.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(ratio) = opts.aspect_ratio {
+            if ratio > 0.0 {
+                if let Ok(ns_window) = preview_win.ns_window() {
+                    let ns = ns_window as *mut _;
+                    let ratio_size = ns_window_aspect::CGSize {
+                        width: opts.width,
+                        height: opts.height,
+                    };
+                    unsafe {
+                        ns_window_aspect::set_content_aspect_ratio(ns, ratio_size);
+                    }
+                }
+            }
         }
     }
 
-    if let Some(preview_win) = app.get_webview_window("previewWin") {
-        // JS передаёт CSS-пиксели (логические). Используем LogicalSize, чтобы
-        // Tauri корректно масштабировал под Retina/HiDPI дисплеи.
-        let new_w = opts.width;
-        let new_h = opts.height;
-
-        // Получаем текущий центр окна в физических пикселях для корректировки позиции.
-        let scale = preview_win.scale_factor().unwrap_or(1.0);
-        let cur_outer = preview_win.outer_size().ok();
-        let cur_pos = preview_win.outer_position().ok();
-
-        // Запоминаем физический размер к которому мы сейчас приведём окно,
-        // чтобы resize-listener не перекоррировал наш же вызов.
-        let phys_w = (new_w * scale).round() as u32;
-        let phys_h = (new_h * scale).round() as u32;
-        if let Ok(mut st) = state.lock() {
-            st.last_corrected = Some((phys_w, phys_h));
-        }
-
-        preview_win
-            .set_size(tauri::Size::Logical(tauri::LogicalSize {
-                width: new_w,
-                height: new_h,
-            }))
-            .map_err(|e| e.to_string())?;
-
-        // Корректировка позиции: оставляем тот же центр окна, иначе при изменении
-        // размера окно "съезжает" по верхне-левому углу.
-        if let (Some(size), Some(pos)) = (cur_outer, cur_pos) {
-            let new_w_phys = phys_w as i32;
-            let new_h_phys = phys_h as i32;
-            let dx = (size.width as i32 - new_w_phys) / 2;
-            let dy = (size.height as i32 - new_h_phys) / 2;
-            let _ = preview_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                x: pos.x + dx,
-                y: pos.y + dy,
-            }));
-        }
+    // 4) Центрируем один раз если нет сохранённой позиции и стоит флаг.
+    let should_center = {
+        let bs = bounds_state.lock().map_err(|e| e.to_string())?;
+        bs.should_center && !has_saved
+    };
+    if should_center {
+        let _ = preview_win.center();
+        let _ = bounds_state.lock().map(|mut bs| { bs.should_center = false; });
     }
+
     Ok(())
 }
 
@@ -760,6 +984,7 @@ pub fn log_window_emit_abort_queued(
 pub fn log_window_emit_item_end(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
+    db_state: tauri::State<Mutex<super::db_analytics::DbState>>,
     payload: serde_json::Value,
 ) -> Result<(), String> {
     if let Ok(mut st) = state.lock() {
@@ -777,6 +1002,17 @@ pub fn log_window_emit_item_end(
             }
         }
     }
+
+    if let Some(item_id) = payload.get("itemId").and_then(|v| v.as_str()) {
+        let status    = payload.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let cost      = payload.get("totalCost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let ended_at  = payload.get("endTime").and_then(|v| v.as_str()).unwrap_or("");
+        let duration  = payload.get("duration").and_then(|v| v.as_str()).unwrap_or("00:00:00");
+        if let Ok(db) = db_state.lock() {
+            super::db_analytics::write_analytics(&app, item_id, status, cost, ended_at, duration, &db);
+        }
+    }
+
     app.emit("log-window:item-end", &payload).map_err(|e| e.to_string())
 }
 

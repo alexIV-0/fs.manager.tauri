@@ -309,6 +309,10 @@ pub fn hash_file(path: String, algo: Option<String>) -> Result<String, String> {
 #[tauri::command]
 pub fn test_and_create_folders(paths: Vec<String>) -> Result<Vec<String>, String> {
     for p in &paths {
+        let pb = std::path::Path::new(p);
+        if !pb.is_absolute() {
+            return Err(format!("[test_and_create_folders] path is not absolute: {}", p));
+        }
         fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
     Ok(paths)
@@ -318,6 +322,9 @@ pub fn test_and_create_folders(paths: Vec<String>) -> Result<Vec<String>, String
 /// Аналог Electron'овского ensureAndReadDir.
 #[tauri::command]
 pub fn ensure_and_read_dir(path: String) -> Result<serde_json::Value, String> {
+    if !std::path::Path::new(&path).is_absolute() {
+        return Err(format!("[ensure_and_read_dir] path is not absolute: {}", path));
+    }
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     let mut folders: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();

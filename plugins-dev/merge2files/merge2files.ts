@@ -3,8 +3,8 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -19,8 +19,7 @@ export async function merge2filesFunc(_item: any, _description: any): Promise<st
 		return finalFile;
 	}
 
-	let curPath: string[] =
-		_item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
+	let curPath: string[] = _item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
 	if (_item.import.targetPath?.length > 0) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -78,26 +77,50 @@ export async function merge2filesFunc(_item: any, _description: any): Promise<st
 				if (mixAudio && infoVA.hasAudio) {
 					if (speedFilter) {
 						ffmpegArgs = [
-							'-filter_complex', `${speedFilter};[0:a][1:a]amix=inputs=2[a]`,
-							'-map', '[v]', '-map', '[a]',
-							'-c:v', 'libx264', '-c:a', 'aac',
-							'-t', String(duration),
+							'-filter_complex',
+							`${speedFilter};[0:a][1:a]amix=inputs=2[a]`,
+							'-map',
+							'[v]',
+							'-map',
+							'[a]',
+							'-c:v',
+							'libx264',
+							'-c:a',
+							'aac',
+							'-t',
+							String(duration),
 						];
 					} else {
 						ffmpegArgs = [
-							'-filter_complex', '[0:a][1:a]amix=inputs=2[a]',
-							'-map', '0:v', '-map', '[a]',
-							'-c:v', 'copy', '-c:a', 'aac',
-							'-t', String(duration),
+							'-filter_complex',
+							'[0:a][1:a]amix=inputs=2[a]',
+							'-map',
+							'0:v',
+							'-map',
+							'[a]',
+							'-c:v',
+							'copy',
+							'-c:a',
+							'aac',
+							'-t',
+							String(duration),
 						];
 					}
 				} else {
 					if (speedFilter) {
 						ffmpegArgs = [
-							'-filter_complex', speedFilter,
-							'-map', '[v]', '-map', '1:a',
-							'-c:v', 'libx264', '-c:a', 'aac',
-							'-t', String(duration),
+							'-filter_complex',
+							speedFilter,
+							'-map',
+							'[v]',
+							'-map',
+							'1:a',
+							'-c:v',
+							'libx264',
+							'-c:a',
+							'aac',
+							'-t',
+							String(duration),
 						];
 					} else {
 						ffmpegArgs = ['-c:v', 'copy', '-c:a', 'aac', '-map', '0:v', '-map', '1:a', '-t', String(duration)];

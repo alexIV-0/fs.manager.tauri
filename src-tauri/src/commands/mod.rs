@@ -1,8 +1,10 @@
+pub mod db_analytics;
 pub mod fs_commands;
 pub mod window_commands;
 pub mod watch_commands;
 pub mod processing_commands;
 pub mod plugin_commands;
+pub mod preview_bounds;
 pub mod dialog_commands_camel;
 pub mod camelcase_wrappers;
 pub mod window_state;

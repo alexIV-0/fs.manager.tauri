@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 
 export { onLoad } from '../_template/tauri';
 

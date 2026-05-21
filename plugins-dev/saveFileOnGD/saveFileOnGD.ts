@@ -5,8 +5,8 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -29,19 +29,14 @@ async function copyVideoWithMetadata(fileFrom: string, fileTo: string, descripti
 		if (v?.duration) durationSec = Number(v.duration);
 	} catch {}
 
-	const result = await ffmpeg.exec(
-		['-y', '-i', fileFrom, '-metadata', `description=${jsonStr}`, '-c', 'copy', fileTo],
-		{
-			durationSec,
-			nodeId,
-			statusText: `${description.infoText}: [copy file with add metadata] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
-		},
-	);
+	const result = await ffmpeg.exec(['-y', '-i', fileFrom, '-metadata', `description=${jsonStr}`, '-c', 'copy', fileTo], {
+		durationSec,
+		nodeId,
+		statusText: `${description.infoText}: [copy file with add metadata] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
+	});
 
 	if (result.exit_code !== 0) {
-		throw new Error(
-			`[saveFileOnGD] ffmpeg copy-with-metadata failed (exit ${result.exit_code}): ${result.stderr.slice(-400)}`,
-		);
+		throw new Error(`[saveFileOnGD] ffmpeg copy-with-metadata failed (exit ${result.exit_code}): ${result.stderr.slice(-400)}`);
 	}
 }
 
@@ -50,8 +45,7 @@ export async function saveFileOnGDFunc(_item: any, _description: any): Promise<s
 
 	const fileType = getFileTypeByExt(_item.import.inputFile[0], _description.typeOfFile);
 
-	let curPath: string[] =
-		_item.path.length === 0 ? ['[$id]_$findTime-$clearName ($random(3))'] : [..._item.path];
+	let curPath: string[] = _item.path.length === 0 ? ['[$id]_$findTime-$clearName ($random(3))'] : [..._item.path];
 	if (_item.import.path) {
 		curPath.unshift(..._item.import.path);
 	} else {

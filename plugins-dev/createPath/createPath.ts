@@ -1,4 +1,4 @@
-import { formatNameByPattern } from '../../electron/main/fileSistem/formatNameByPattern';
+import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 import path from 'path';
 import { sendToMW } from '../_template/pluginSender';
 

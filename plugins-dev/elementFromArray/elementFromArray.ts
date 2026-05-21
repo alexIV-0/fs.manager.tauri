@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, sendToMW } from '../_template/tauri';
-import { getRandomInt } from '../../electron/main/utilits/getRandomInt';
+import { getRandomInt } from '../../src/Utils/getRandomInt';
 
 export { onLoad } from '../_template/tauri';
 
@@ -48,8 +48,7 @@ export async function elementFromArrayFunc(_item: any, _description: any): Promi
 	const mode: string = _item.ddm ?? 'First';
 
 	const importedText: any[] = _item.import?.textInFName ?? [];
-	const rawText: string =
-		importedText.length > 0 ? String(importedText[0] ?? '') : String(_item.textInFName ?? '');
+	const rawText: string = importedText.length > 0 ? String(importedText[0] ?? '') : String(_item.textInFName ?? '');
 	const searchText = await resolveSearchText(rawText);
 	const words = splitWords(searchText);
 

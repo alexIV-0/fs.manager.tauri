@@ -26,6 +26,10 @@ export interface PluginItem {
 	exists: boolean;
 	uiData?: PluginUINode[];
 
+	// Стоимость
+	cost?: string;
+	costUnit?: string;
+
 	// Мета-информация
 	lastSeen?: string;
 }
@@ -142,6 +146,7 @@ export interface PluginListStore {
 
 	setLoading: (loading: boolean) => void;
 	setError: (error: string | null) => void;
+	setPluginCost: (id: string, version: string, cost: string, costUnit: string) => Promise<void>;
 }
 
 export const plugin_Store = create<PluginListStore>((set, get) => ({
@@ -601,6 +606,15 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 
 	setError: (error) => {
 		set({ error });
+	},
+
+	setPluginCost: async (id, version, cost, costUnit) => {
+		await window.electronAPI.invoke('plugins:set-cost', id, version, cost, costUnit);
+		set((state) => ({
+			plugins: state.plugins.map((p) =>
+				p.id === id && p.version === version ? { ...p, cost, costUnit } : p,
+			),
+		}));
 	},
 }));
 

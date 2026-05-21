@@ -12,6 +12,7 @@ import {
 import { AlertCircle, CheckCircle, ChevronDown, Download, RefreshCw } from 'lucide-react';
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
 import { loadPlugin } from '@/PluginAPI/loader';
+import { getVersion } from '@tauri-apps/api/app';
 
 interface GithubAsset {
 	name: string;
@@ -38,7 +39,7 @@ interface UpdaterMod {
 }
 
 const OWNER = 'alexIV-0';
-const REPO = 'fs.manager.tauri';
+const REPO = 'fs.manager.releases';
 const PLUGIN_VERSION = '1.0.0';
 
 export const AppUpdaterAccordion: React.FC = () => {
@@ -53,10 +54,7 @@ export const AppUpdaterAccordion: React.FC = () => {
 	const modRef = useRef<UpdaterMod | null>(null);
 
 	useEffect(() => {
-		window.electronAPI
-			.invoke<string>('app:getVersion')
-			.then(setCurrentVersion)
-			.catch(() => {});
+		getVersion().then(setCurrentVersion).catch(() => {});
 	}, []);
 
 	const loadReleases = useCallback(async () => {

@@ -5,15 +5,14 @@
 
 import path from 'path';
 import { fs, ae, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
 export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 	let finalFile: any[] = [];
 
-	let curPath: string[] =
-		_item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 	if (_item.import.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {

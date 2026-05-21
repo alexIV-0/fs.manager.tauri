@@ -7,6 +7,7 @@ interface DraggableFileItemProps {
 	name: string;
 	path: string;
 	isSelected: boolean;
+	isActiveSelection?: boolean;
 	isMultiSelected?: boolean;
 	onSelect: () => void;
 	onMultiSelectToggle?: () => void;
@@ -15,7 +16,7 @@ interface DraggableFileItemProps {
 	columnIndex?: number;
 }
 
-export const DraggableFileItem = memo(function DraggableFileItem({ name, path, isSelected, isMultiSelected, onSelect, onMultiSelectToggle, onMultiSelectRange, source, columnIndex }: DraggableFileItemProps) {
+export const DraggableFileItem = memo(function DraggableFileItem({ name, path, isSelected, isActiveSelection, isMultiSelected, onSelect, onMultiSelectToggle, onMultiSelectRange, source, columnIndex }: DraggableFileItemProps) {
 	const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
 		id: `file-${path}`,
 		data: {
@@ -39,6 +40,7 @@ export const DraggableFileItem = memo(function DraggableFileItem({ name, path, i
 				name={name}
 				path={path}
 				isSelected={isSelected}
+				isActiveSelection={isActiveSelection}
 				isMultiSelected={isMultiSelected}
 				onSelect={onSelect}
 				onMultiSelectToggle={onMultiSelectToggle}
@@ -50,5 +52,6 @@ export const DraggableFileItem = memo(function DraggableFileItem({ name, path, i
 	prev.name === next.name &&
 	prev.path === next.path &&
 	prev.isSelected === next.isSelected &&
+	prev.isActiveSelection === next.isActiveSelection &&
 	prev.isMultiSelected === next.isMultiSelected
 );

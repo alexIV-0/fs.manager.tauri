@@ -20,8 +20,11 @@ use commands::{
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
+use commands::db_analytics::DbState;
 use std::sync::Mutex;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::menu::{Menu, Submenu, PredefinedMenuItem};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -32,6 +35,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         // Кастомный `plugin://` протокол для динамической загрузки плагинов через import().
         // Resolver: app_data/plugins → resource/plugins → distr-plugins (dev).
         // На лету переписывает Node-импорты в плагинах на наши @plugin-api/* полифилы.
@@ -45,7 +49,9 @@ pub fn run() {
         .manage(Mutex::new(commands::window_commands::LogState::new()))
         .manage(Mutex::new(commands::window_commands::NodeWindowState::new()))
         .manage(Mutex::new(commands::window_commands::PreviewWindowState::new()))
+        .manage(Mutex::new(commands::preview_bounds::PreviewBoundsState::new()))
         .manage(Mutex::new(AppSettingsState::new()))
+        .manage(Mutex::new(DbState::new()))
         .setup(|app| {
             let app_handle = app.handle().clone();
             
@@ -135,15 +141,10 @@ pub fn run() {
             .disable_drag_drop_handler()
             .build()?;
 
-            if let Ok(Some(state)) = commands::window_state::load_window_state("previewWin".to_string(), app_handle.clone()) {
-                let _ = preview_win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                    width: state.width as u32,
-                    height: state.height as u32,
-                }));
-                if let (Some(x), Some(y)) = (state.x, state.y) {
-                    let _ = preview_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: x as i32, y: y as i32 }));
-                }
-            }
+            // Preview-окно использует bounds-per-file-type (см. preview_bounds.rs).
+            // Размер и позиция восстанавливаются при первом preview_open в зависимости
+            // от типа открываемого файла. Generic window_state для него не используем.
+            let _ = preview_win;
 
             // Log window
             let log_win = WebviewWindowBuilder::new(
@@ -171,8 +172,38 @@ pub fn run() {
             // (Tauri прекращает слать Resized/Moved события, дебаунс истекает).
             commands::window_state::register_autosave(&app_handle, "main");
             commands::window_state::register_autosave(&app_handle, "nodeWin");
-            commands::window_state::register_autosave(&app_handle, "previewWin");
+            // previewWin использует свой механизм (bounds-per-type) — см. preview_open
             commands::window_state::register_autosave(&app_handle, "logWindow");
+
+            // Edit-меню: без него macOS не маршрутизирует Cmd+C/V в WebView.
+            // Устанавливаем на уровне приложения И явно на каждое окно —
+            // вторичные окна Tauri v2 не всегда наследуют app-level меню.
+            #[cfg(target_os = "macos")]
+            {
+                let make_edit_menu = |h: &tauri::AppHandle| -> Result<Menu<tauri::Wry>, tauri::Error> {
+                    let edit = Submenu::with_items(h, "Edit", true, &[
+                        &PredefinedMenuItem::undo(h, None)?,
+                        &PredefinedMenuItem::redo(h, None)?,
+                        &PredefinedMenuItem::separator(h)?,
+                        &PredefinedMenuItem::cut(h, None)?,
+                        &PredefinedMenuItem::copy(h, None)?,
+                        &PredefinedMenuItem::paste(h, None)?,
+                        &PredefinedMenuItem::select_all(h, None)?,
+                    ])?;
+                    Menu::with_items(h, &[&edit])
+                };
+
+                let app_menu = make_edit_menu(&app_handle)?;
+                app.set_menu(app_menu)?;
+
+                // Явно на каждое окно (гарантия для вторичных окон)
+                for label in &["main", "nodeWin", "previewWin", "logWindow"] {
+                    if let Some(win) = app.get_webview_window(label) {
+                        let win_menu = make_edit_menu(&app_handle)?;
+                        let _ = win.set_menu(win_menu);
+                    }
+                }
+            }
 
             // Закрытие main-окна = выход из приложения
             let app_for_exit = app_handle.clone();

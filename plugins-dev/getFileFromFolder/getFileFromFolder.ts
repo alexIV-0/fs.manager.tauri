@@ -4,9 +4,9 @@
 
 import path from 'path';
 import { fs, sendToMW } from '../_template/tauri';
-import { formatNameByPattern } from '../../electron/main/fileSistem/formatNameByPattern';
-import { extractFromParentheses } from '../../electron/main/utilits/extractFromParentheses';
-import { getRandomInt } from '../../electron/main/utilits/getRandomInt';
+import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
+import { extractFromParentheses } from '../../src/Utils/extractFromParentheses';
+import { getRandomInt } from '../../src/Utils/getRandomInt';
 
 export { onLoad } from '../_template/tauri';
 
@@ -28,9 +28,7 @@ export async function getFileFromFolder(_item: any, _description: any): Promise<
 
 	// Если включён поиск по тегу из имени файла или случайной подпапке —
 	// сначала залезаем в подпапку.
-	const textInBrackets = extractFromParentheses(
-		path.basename(_description.curItem, path.extname(_description.curItem)),
-	);
+	const textInBrackets = extractFromParentheses(path.basename(_description.curItem, path.extname(_description.curItem)));
 	if ((textInBrackets.length > 0 && _item.searchInFolder) || _item.searchInRandomFolder) {
 		const folderArr = await fs.folders(pathByPattern);
 		if (_item.searchInFolder) {
@@ -48,9 +46,7 @@ export async function getFileFromFolder(_item: any, _description: any): Promise<
 	const recursive = Boolean(_item.recursiveSearch);
 
 	let allItems: string[] =
-		searchType === 'folders'
-			? await fs.folders(pathByPattern, recursive)
-			: await fs.filesByExt(pathByPattern, exts, recursive);
+		searchType === 'folders' ? await fs.folders(pathByPattern, recursive) : await fs.filesByExt(pathByPattern, exts, recursive);
 
 	// Полные пути (Rust возвращает только имена).
 	allItems = allItems.map((file) => (path.isAbsolute(file) ? file : path.join(pathByPattern, file)));

@@ -125,7 +125,19 @@ export class LogWindowManager {
 			projectName?: string;
 			steps?: Omit<StepInfo, 'status' | 'logs' | 'errorCount'>[];
 			dbItemId?: string;
+			status?: string;
 		}) => {
+			const existing = this.items.get(payload.itemId);
+			if (existing && existing.status === 'queued' && payload.status === 'running') {
+				existing.status = 'running';
+				this.send('log-window:item-start', existing);
+				console.log(`[logWindow] item-queued→running: itemId=${payload.itemId} dbItemId=${existing.dbItemId ?? 'MISSING'}`);
+				if (existing.dbItemId) getDbExporter().itemStart(existing.dbItemId);
+				return;
+			}
+			if (payload.status === 'running') {
+				console.log(`[logWindow] item-queued status=running but no queued group found for itemId=${payload.itemId} (items count: ${this.items.size})`);
+			}
 			this.itemQueued(
 				payload.itemId,
 				payload.itemName,
@@ -138,6 +150,72 @@ export class LogWindowManager {
 
 		ipcMain.handle('log-window:abort-queued', () => {
 			this.abortAllQueued();
+		});
+
+		ipcMain.handle('log-window:emit-item-end', (_, payload: {
+			itemId: string;
+			status: 'done' | 'error' | 'aborted';
+			totalCost?: number;
+		}) => {
+			const group = this.items.get(payload.itemId);
+			console.log(`[logWindow] emit-item-end: itemId=${payload.itemId} status=${payload.status} totalCost=${payload.totalCost} dbItemId=${group?.dbItemId ?? 'NOT FOUND'} groupExists=${!!group}`);
+			this.itemEnd(payload.itemId, payload.status, payload.totalCost);
+		});
+
+		ipcMain.handle('log-window:emit-node-update', (_, payload: {
+			itemId: string;
+			nodeId: string;
+			status: string;
+			startTime?: string;
+			endTime?: string;
+			finalCost?: number;
+			message?: string;
+		}) => {
+			const group = this.items.get(payload.itemId);
+			if (!group) return;
+
+			if (payload.status === 'running') {
+				const step = group.steps.find((s) => s.stepId === payload.nodeId);
+				if (step) {
+					step.status = 'running';
+					step.startTime = payload.startTime ?? new Date().toISOString();
+				}
+				this.send('log-window:node-update', { itemId: payload.itemId, nodeId: payload.nodeId, status: 'running', startTime: step?.startTime });
+				if (group.dbItemId) getDbExporter().nodeStart(group.dbItemId, payload.nodeId);
+			} else if (payload.status === 'done') {
+				const step = group.steps.find((s) => s.stepId === payload.nodeId);
+				if (step) {
+					step.status = 'done';
+					step.endTime = payload.endTime ?? new Date().toISOString();
+					step.finalCost = payload.finalCost !== undefined
+						? payload.finalCost
+						: computeFinalCost(step.cost, step.costUnit, step.startTime, step.endTime);
+				}
+				this.send('log-window:node-update', { itemId: payload.itemId, nodeId: payload.nodeId, status: 'done', endTime: step?.endTime, finalCost: step?.finalCost });
+				if (group.dbItemId && step) {
+					getDbExporter().nodeDone(group.dbItemId, payload.nodeId, step.finalCost, undefined, step.isTerminal ?? false).catch(() => {});
+				}
+			} else if (payload.status === 'error') {
+				this.nodeError(payload.itemId, payload.nodeId, payload.message ?? '');
+			}
+		});
+
+		ipcMain.handle('log-window:emit-item-log', (_, payload: {
+			level?: string;
+			message?: string;
+			meta?: any;
+			source?: 'main' | 'renderer';
+			itemId?: string;
+			stepId?: string;
+		}) => {
+			this.addItemLog(
+				payload.level ?? 'info',
+				payload.message ?? '',
+				payload.meta,
+				payload.source ?? 'renderer',
+				payload.itemId,
+				payload.stepId,
+			);
 		});
 	}
 
@@ -267,7 +345,7 @@ export class LogWindowManager {
 		}
 	}
 
-	itemEnd(itemId: string, status: 'done' | 'error' | 'aborted') {
+	itemEnd(itemId: string, status: 'done' | 'error' | 'aborted', totalCostOverride?: number) {
 		const group = this.items.get(itemId);
 		if (!group) return;
 		group.status = status;
@@ -280,7 +358,7 @@ export class LogWindowManager {
 				step.finalCost = computeFinalCost(step.cost, step.costUnit, step.startTime, step.endTime);
 			}
 		}
-		group.totalCost = group.steps.reduce((sum, s) => sum + (s.finalCost ?? 0), 0);
+		group.totalCost = totalCostOverride ?? group.steps.reduce((sum, s) => sum + (s.finalCost ?? 0), 0);
 		this.send('log-window:item-end', { itemId, status, endTime: group.endTime, totalCost: group.totalCost });
 
 		if (group.dbItemId) getDbExporter().itemEnd(group.dbItemId, status, group.totalCost);

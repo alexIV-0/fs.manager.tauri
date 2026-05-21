@@ -5,7 +5,6 @@ on:
     branches:
       - main
 
-# Пропускаем если коммит сделан самим GitHub Actions (bump version)
 concurrency:
   group: release
   cancel-in-progress: false
@@ -30,13 +29,10 @@ jobs:
       - name: Determine next patch version
         id: bump
         run: |
-          # Read current version from package.json
           CURRENT=$(node -e "console.log(require('./package.json').version)")
           echo "Current version: $CURRENT"
 
-          # Check if this exact version tag already exists
           if git rev-parse "v$CURRENT" >/dev/null 2>&1; then
-            # Auto-increment patch
             MAJOR=$(echo $CURRENT | cut -d. -f1)
             MINOR=$(echo $CURRENT | cut -d. -f2)
             PATCH=$(echo $CURRENT | cut -d. -f3)
@@ -49,7 +45,6 @@ jobs:
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
 
-          # Update package.json
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -57,7 +52,6 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, '\t') + '\n');
           "
 
-          # Update tauri.conf.json
           node -e "
             const fs = require('fs');
             const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
@@ -65,7 +59,6 @@ jobs:
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, '\t') + '\n');
           "
 
-          # Update Cargo.toml
           sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
 
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -88,11 +81,8 @@ jobs:
             args: --target x86_64-apple-darwin
             artifact-suffix: x86_64
           - platform: windows-latest
-            args: ''
+            args: --bundles nsis
             artifact-suffix: windows
-          - platform: ubuntu-22.04
-            args: ''
-            artifact-suffix: linux
 
     runs-on: ${{ matrix.platform }}
 
@@ -113,16 +103,6 @@ jobs:
             aarch64-apple-darwin
             x86_64-apple-darwin
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
       - name: Install frontend dependencies
         run: yarn install
 
@@ -133,11 +113,52 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ needs.bump-version.outputs.tag }}
-          releaseName: fsManager ${{ needs.bump-version.outputs.version }}
-          releaseBody: |
-            ## What's Changed
-            ${{ github.event.head_commit.message }}
-          releaseDraft: false
-          prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Collect macOS artifacts
+        if: matrix.platform == 'macos-latest'
+        run: |
+          mkdir artifacts
+          find src-tauri/target -name "*.dmg" -exec cp {} artifacts/ \;
+          find src-tauri/target -name "*.tar.gz" -exec cp {} artifacts/ \;
+
+      - name: Collect Windows artifacts
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts
+          Get-ChildItem -Recurse src-tauri\target\release\bundle -Include "*.exe" | Copy-Item -Destination artifacts\
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact-suffix }}
+          path: artifacts/
+          retention-days: 1
+
+  # ── Publish release to public releases repo ────────────────────────────────
+  publish:
+    needs: [bump-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List collected files
+        run: find artifacts -type f | sort
+
+      - name: Create release in public repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          TAG="${{ needs.bump-version.outputs.tag }}"
+          VERSION="${{ needs.bump-version.outputs.version }}"
+          FILES=$(find artifacts -type f | tr '\n' ' ')
+          gh release create "$TAG" \
+            --repo alexIV-0/fs.manager.releases \
+            --title "fsManager $VERSION" \
+            --notes "## fsManager $VERSION" \
+            $FILES

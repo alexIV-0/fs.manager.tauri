@@ -652,6 +652,14 @@ export const statusBar = {
 // эмитят `processing-event` — main_win и node_win получают через onProcessingEvent.
 
 export function sendToMW(type: string, payload: any): void {
+	// Если processItem выставил контекстный отправитель — используем его.
+	// Это гарантирует, что логи попадут в log_win с правильными itemId/stepId.
+	const tauriSend = (globalThis as any).__pluginSendToMW as ((t: string, p: any) => void) | undefined;
+	if (tauriSend) {
+		tauriSend(type, payload);
+		return;
+	}
+	// Fallback (вне processing-контекста): прямой IPC.
 	if (type === 'statusbar') {
 		const text = typeof payload === 'string' ? payload : payload?.text ?? '';
 		api().invoke('setStatusBar', String(text)).catch(() => {});
@@ -660,7 +668,6 @@ export function sendToMW(type: string, payload: any): void {
 		const text = typeof payload === 'string' ? payload : payload?.text ?? payload?.message ?? '';
 		api().invoke('sendLog', level, String(text)).catch(() => {});
 	}
-	// Прочие типы пока игнорируем — добавим по мере необходимости.
 }
 
 // Сохраняем onLoad как no-op для обратной совместимости с экспортами плагинов:

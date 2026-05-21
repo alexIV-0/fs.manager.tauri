@@ -17,7 +17,7 @@ import { joinPath } from '@/Utils/joinPath';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
-import { getSignal } from './function/utils/processingAbort';
+import { getSignal } from './utils/processingAbort';
 import { findFilesForSingleFolder } from './findFilesForSingleFolder';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';

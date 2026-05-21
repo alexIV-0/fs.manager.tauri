@@ -10,7 +10,8 @@ import { COLUMN_DEFAULT_WIDTH, useColumnView_Store } from '@/Store/MainWin/useCo
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useMenuItems } from '../hooks/useMenuItems';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
-import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/function/utils/fileSystemActions';
+import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 interface ColumnFolderViewProps {
 	columns: any[];
@@ -112,9 +113,101 @@ export function ColumnFolderView({
 	}, [sourceType]);
 
 	const addItemToColumn = useColumnView_Store((s) => s.addItemToColumn);
+	const lastActiveInstance = useColumnView_Store((s) => s.lastActiveInstance);
+	const lastSelectedColIndex = useColumnView_Store((s) => s.lastSelectedItem?.colIndex ?? -1);
+	const multiAnchorColIndex = useColumnView_Store((s) => s.instances[sourceType].multiSelectAnchor?.colIndex ?? -1);
 	const cbType = clipboardFs_store((s) => s.type);
 	const cbPaths = clipboardFs_store((s) => s.paths);
 	const hasClipboard = cbType !== null && cbPaths.length > 0;
+
+	// ── Tauri native drag-drop из Finder/Explorer ────────────────────────────
+	// HTML5 onDrop в WebView НЕ получает File.path (это было Electron-only).
+	// Tauri перехватывает файловые drops на нативном уровне и эмитит события
+	// `tauri://drag-drop` с реальными путями. По позиции дропа находим элемент
+	// и читаем колонку из data-source/data-col-index.
+	useEffect(() => {
+		const win = getCurrentWebviewWindow();
+		let unlisten: (() => void) | undefined;
+
+		const findColumnIndexAt = (x: number, y: number): number | null => {
+			// Tauri DragDrop positions are PhysicalPosition (device pixels).
+			// getBoundingClientRect returns logical (CSS) pixels.
+			// We try divided-by-DPR first, then raw (in case Tauri already sends logical).
+			const ratio = window.devicePixelRatio || 1;
+			const cols = document.querySelectorAll(`[id^="col-${sourceType}-"]`);
+			if (cols.length === 0) return null;
+
+			for (const divisor of [ratio, 1]) {
+				const lx = x / divisor;
+				const ly = y / divisor;
+				for (const col of cols) {
+					const r = col.getBoundingClientRect();
+					if (lx >= r.left && lx <= r.right && ly >= r.top && ly <= r.bottom) {
+						const m = col.id.match(/^col-[^-]+-(\d+)$/);
+						if (m) return Number(m[1]);
+					}
+				}
+			}
+			return null;
+		};
+
+		win.onDragDropEvent(async (event) => {
+			const payload = event.payload as any;
+			const type = payload?.type;
+			console.log(`[DragDrop:${sourceType}] event:`, type, payload);
+			if (type === 'enter' || type === 'over') {
+				const { x, y } = payload.position ?? {};
+				const idx = typeof x === 'number' && typeof y === 'number' ? findColumnIndexAt(x, y) : null;
+				setExternalDropIndex(idx);
+				return;
+			}
+			if (type === 'leave') {
+				setExternalDropIndex(null);
+				return;
+			}
+			if (type === 'drop') {
+				setExternalDropIndex(null);
+				const paths: string[] = Array.isArray(payload.paths) ? payload.paths : [];
+				if (paths.length === 0) return;
+				const { x, y } = payload.position ?? {};
+				const ratio = window.devicePixelRatio || 1;
+				const cols = document.querySelectorAll(`[id^="col-${sourceType}-"]`);
+				console.log(`[DragDrop:${sourceType} drop] pos:`, x, y, 'dpr:', ratio, 'cols found:', cols.length);
+				cols.forEach((c) => {
+					const r = c.getBoundingClientRect();
+					console.log('  col', c.id, 'rect:', r.left, r.top, r.right, r.bottom);
+				});
+				const idx = typeof x === 'number' && typeof y === 'number' ? findColumnIndexAt(x, y) : null;
+				console.log(`[DragDrop:${sourceType} drop] idx:`, idx, 'columns.length:', columns.length, 'paths:', paths);
+				if (idx === null || idx >= columns.length) return;
+
+				const col = columns[idx];
+				for (const filePath of paths) {
+					try {
+						const name = (await window.electronAPI.invoke('pathBasename', filePath)) as string;
+						const info: any = await window.electronAPI.invoke('getFileInfo', filePath).catch(() => null);
+						const destPath = (await window.electronAPI.invoke('pathJoin', col.path, name)) as string;
+
+						addItemToColumn(sourceType, idx, {
+							name,
+							path: destPath,
+							isDir: Boolean(info?.isDirectory),
+						});
+
+						await window.electronAPI.invoke('copyItem', filePath, destPath, { overwrite: false });
+					} catch (error) {
+						console.error('❌ Ошибка при копировании внешнего файла:', filePath, error);
+					}
+				}
+			}
+		}).then((u) => {
+			unlisten = u;
+		});
+
+		return () => {
+			unlisten?.();
+		};
+	}, [columns, sourceType, addItemToColumn]);
 
 	const emptyMenuItems = useMenuItems({
 		type: 'empty',
@@ -368,6 +461,10 @@ export function ColumnFolderView({
 														name={item.name}
 														path={item.path}
 														isSelected={col.selected === item.name}
+														isActiveSelection={
+															sourceType === lastActiveInstance &&
+															i === (multiSelectedPaths.length > 0 ? multiAnchorColIndex : lastSelectedColIndex)
+														}
 														isMultiSelected={multiSelectedPaths.includes(item.path)}
 														onSelect={() => selectItem(i, item)}
 														onMultiSelectToggle={() => onMultiSelectToggle?.(i, item)}
@@ -388,6 +485,10 @@ export function ColumnFolderView({
 														name={item.name}
 														path={item.path}
 														isSelected={col.selected === item.name}
+														isActiveSelection={
+															sourceType === lastActiveInstance &&
+															i === (multiSelectedPaths.length > 0 ? multiAnchorColIndex : lastSelectedColIndex)
+														}
 														isMultiSelected={multiSelectedPaths.includes(item.path)}
 														onSelect={() => selectItem(i, item)}
 														onMultiSelectToggle={() => onMultiSelectToggle?.(i, item)}

@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW, VideoFileInfo } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -174,13 +174,23 @@ async function processSinglePair(
 		nodeId,
 		command: [
 			'-y',
-			'-i', bgFile,
-			'-i', fgFile,
-			'-filter_complex', `${videoFilter}${audioFilterComplex}`,
-			'-map', '[v]',
+			'-i',
+			bgFile,
+			'-i',
+			fgFile,
+			'-filter_complex',
+			`${videoFilter}${audioFilterComplex}`,
+			'-map',
+			'[v]',
 			...audioMap,
-			'-t', String(finalDuration),
-			'-c:v', 'libx264', '-preset', 'faster', '-crf', '22',
+			'-t',
+			String(finalDuration),
+			'-c:v',
+			'libx264',
+			'-preset',
+			'faster',
+			'-crf',
+			'22',
 			targetPath,
 		],
 	});
@@ -219,8 +229,7 @@ export async function overlayAndOffsetFunc(_item: any, _description: any): Promi
 		offsetBG: _item.offsetBG === true,
 	};
 
-	const curPath: string[] =
-		(_item.targetPath?.length ?? 0) === 0 ? ['$clearName (overlay $random(3))'] : [...(_item.targetPath ?? [])];
+	const curPath: string[] = (_item.targetPath?.length ?? 0) === 0 ? ['$clearName (overlay $random(3))'] : [...(_item.targetPath ?? [])];
 	if (_item.import?.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {

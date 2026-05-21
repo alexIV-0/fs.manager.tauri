@@ -3,16 +3,42 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
-interface ChromakeySettings { enabled: boolean; color: string; similarity: number; blend: number; yuv: boolean }
-interface ColorkeySettings { enabled: boolean; color: string; similarity: number; blend: number }
-interface LumakeySettings { enabled: boolean; threshold: number; tolerance: number; softness: number }
-interface DespillSettings { enabled: boolean; color: string; mix: number; expand: number; brightness: number }
-interface EdgeSettings { erosion: number; dilation: number; blur: number }
+interface ChromakeySettings {
+	enabled: boolean;
+	color: string;
+	similarity: number;
+	blend: number;
+	yuv: boolean;
+}
+interface ColorkeySettings {
+	enabled: boolean;
+	color: string;
+	similarity: number;
+	blend: number;
+}
+interface LumakeySettings {
+	enabled: boolean;
+	threshold: number;
+	tolerance: number;
+	softness: number;
+}
+interface DespillSettings {
+	enabled: boolean;
+	color: string;
+	mix: number;
+	expand: number;
+	brightness: number;
+}
+interface EdgeSettings {
+	erosion: number;
+	dilation: number;
+	blur: number;
+}
 interface KeyingSettings {
 	chromakey: ChromakeySettings;
 	colorkey: ColorkeySettings;
@@ -116,15 +142,7 @@ async function processFile(
 			text: label,
 			duration: info.durationInSeconds || 10,
 			nodeId,
-			command: [
-				'-y', '-i', fileFrom,
-				'-vf', filterString,
-				'-c:v', 'hap',
-				'-format', 'hap_q',
-				'-compressor', 'snappy',
-				...audioArgs,
-				fileTo,
-			],
+			command: ['-y', '-i', fileFrom, '-vf', filterString, '-c:v', 'hap', '-format', 'hap_q', '-compressor', 'snappy', ...audioArgs, fileTo],
 		});
 	}
 	return fileTo;
@@ -155,8 +173,7 @@ export async function keyingFFmpegFunc(_item: any, _description: any): Promise<s
 	for (let i = 0; i < inputFiles.length; i++) {
 		const fileFrom = inputFiles[i];
 
-		let curPath: string[] =
-			_item.targetPath?.length === 0 ? ['$clearName ($random(3))'] : [...(_item.targetPath ?? [])];
+		let curPath: string[] = _item.targetPath?.length === 0 ? ['$clearName ($random(3))'] : [...(_item.targetPath ?? [])];
 		if (_item.import?.targetPath?.length) {
 			curPath.unshift(..._item.import.targetPath);
 		} else {

@@ -7,6 +7,7 @@ interface DraggableFolderItemProps {
 	name: string;
 	path: string;
 	isSelected: boolean;
+	isActiveSelection?: boolean;
 	isMultiSelected?: boolean;
 	onSelect: () => void;
 	onMultiSelectToggle?: () => void;
@@ -15,7 +16,7 @@ interface DraggableFolderItemProps {
 	columnIndex?: number;
 }
 
-export const DraggableFolderItem = memo(function DraggableFolderItem({ name, path, isSelected, isMultiSelected, onSelect, onMultiSelectToggle, onMultiSelectRange, source, columnIndex }: DraggableFolderItemProps) {
+export const DraggableFolderItem = memo(function DraggableFolderItem({ name, path, isSelected, isActiveSelection, isMultiSelected, onSelect, onMultiSelectToggle, onMultiSelectRange, source, columnIndex }: DraggableFolderItemProps) {
 	const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
 		id: `folder-${path}`,
 		data: {
@@ -28,7 +29,7 @@ export const DraggableFolderItem = memo(function DraggableFolderItem({ name, pat
 	});
 
 	const style = {
-		opacity: isDragging ? 0.4 : 1, // Полупрозрачный вместо полного скрытия
+		opacity: isDragging ? 0.4 : 1,
 		transition: 'opacity 0.2s ease',
 		cursor: isDragging ? 'grabbing' : 'grab',
 	};
@@ -39,6 +40,7 @@ export const DraggableFolderItem = memo(function DraggableFolderItem({ name, pat
 				name={name}
 				path={path}
 				isSelected={isSelected}
+				isActiveSelection={isActiveSelection}
 				isMultiSelected={isMultiSelected}
 				onSelect={onSelect}
 				onMultiSelectToggle={onMultiSelectToggle}
@@ -50,5 +52,6 @@ export const DraggableFolderItem = memo(function DraggableFolderItem({ name, pat
 	prev.name === next.name &&
 	prev.path === next.path &&
 	prev.isSelected === next.isSelected &&
+	prev.isActiveSelection === next.isActiveSelection &&
 	prev.isMultiSelected === next.isMultiSelected
 );

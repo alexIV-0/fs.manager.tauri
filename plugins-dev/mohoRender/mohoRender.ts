@@ -5,7 +5,7 @@
 
 import path from 'path';
 import { fs, exec, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -16,8 +16,15 @@ function extractExtension(format: string): string {
 
 function getMohoFormat(ext: string): string {
 	const map: Record<string, string> = {
-		mov: 'QT', mp4: 'MP4', m4v: 'MP4', avi: 'AVI',
-		jpeg: 'JPEG', jpg: 'JPEG', png: 'PNG', tga: 'TGA', bmp: 'BMP',
+		mov: 'QT',
+		mp4: 'MP4',
+		m4v: 'MP4',
+		avi: 'AVI',
+		jpeg: 'JPEG',
+		jpg: 'JPEG',
+		png: 'PNG',
+		tga: 'TGA',
+		bmp: 'BMP',
 	};
 	return map[ext.toLowerCase()] || ext.toUpperCase();
 }
@@ -25,8 +32,7 @@ function getMohoFormat(ext: string): string {
 export async function mohoRenderFunc(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
-	let curPath: string[] =
-		_item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 	if (_item.import?.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -40,8 +46,7 @@ export async function mohoRenderFunc(_item: any, _description: any): Promise<str
 	// Путь Moho — Windows-специфичный; в идеале брать из _description.programmPath.moho,
 	// но оригинал хардкодил Moho 14.
 	const mohoExe =
-		(Array.isArray(_description.programmPath?.moho) ? _description.programmPath.moho[0] : null) ||
-		'C:\\Program Files\\Moho 14\\Moho.exe';
+		(Array.isArray(_description.programmPath?.moho) ? _description.programmPath.moho[0] : null) || 'C:\\Program Files\\Moho 14\\Moho.exe';
 
 	for (const mohoProj of (_item.import?.inputFile || []) as string[]) {
 		const fileTo = createPathForFileByPattern(curPath, _description, mohoProj || '');
@@ -54,11 +59,16 @@ export async function mohoRenderFunc(_item: any, _description: any): Promise<str
 
 		try {
 			const args = [
-				'-render', mohoProj,
-				'-output', outputPath,
-				'-format', getMohoFormat(ext),
-				'-options', format,
-				'-multithread', 'yes',
+				'-render',
+				mohoProj,
+				'-output',
+				outputPath,
+				'-format',
+				getMohoFormat(ext),
+				'-options',
+				format,
+				'-multithread',
+				'yes',
 				'-verbose',
 			];
 

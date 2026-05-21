@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -18,8 +18,7 @@ export async function getPicFromFileByTime(_item: any, _description: any): Promi
 	const outputFormat = ALLOWED.includes(rawFormat) ? rawFormat : 'jpeg';
 	const qualityPic: number = _item.qualityPic || 2;
 
-	let curPath: string[] =
-		_item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName (pics $random(3))'];
+	let curPath: string[] = _item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName (pics $random(3))'];
 	if (_item.import.targetPath?.length > 0) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {

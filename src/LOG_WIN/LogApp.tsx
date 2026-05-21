@@ -288,6 +288,38 @@ function useElapsed(startIso: string, endIso?: string, active = true): string {
 	return elapsed(startIso, endIso);
 }
 
+// Суммирует реальное время выполнения шагов (pool wait не учитывается,
+// т.к. node:start отправляется только ПОСЛЕ acquirePool).
+function sumStepMs(steps: StepInfo[]): number {
+	const now = Date.now();
+	let total = 0;
+	for (const step of steps) {
+		if (!step.startTime) continue;
+		const start = new Date(step.startTime).getTime();
+		const end = step.endTime ? new Date(step.endTime).getTime() : now;
+		if (end > start) total += end - start;
+	}
+	return total;
+}
+
+function msToElapsed(ms: number): string {
+	const s = Math.floor(ms / 1000);
+	const m = Math.floor(s / 60);
+	const h = Math.floor(m / 60);
+	if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+	return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function useStepElapsed(steps: StepInfo[], active = true): string {
+	const [, setTick] = useState(0);
+	useEffect(() => {
+		if (!active) return;
+		const id = setInterval(() => setTick((v) => v + 1), 1000);
+		return () => clearInterval(id);
+	}, [active]);
+	return msToElapsed(sumStepMs(steps));
+}
+
 // ── ItemAccordion — item (уровень 3) ──────────────────────────────────────────
 
 interface ItemAccordionProps {
@@ -310,7 +342,7 @@ const ItemAccordion = React.memo(function ItemAccordion({
 	const isRunning = group.status === 'running';
 	const isQueued = group.status === 'queued';
 	const pct = progress(group.steps);
-	const time = useElapsed(group.startTime, group.endTime, isRunning || isQueued);
+	const time = useStepElapsed(group.steps, isRunning);
 
 	const hasError = group.errorCount > 0;
 	const borderColor = hasError

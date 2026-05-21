@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, http, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -12,17 +12,29 @@ const MAX_ATTEMPTS = 3;
 const POLL_INTERVAL_MS = 10000;
 
 let _userCancelled = false;
-function checkUserCancelled(): boolean { return _userCancelled; }
-function resetCancelFlag() { _userCancelled = false; }
+function checkUserCancelled(): boolean {
+	return _userCancelled;
+}
+function resetCancelFlag() {
+	_userCancelled = false;
+}
 
 function getMimeType(filename: string): string {
 	const ext = path.extname(filename).toLowerCase();
 	const map: Record<string, string> = {
-		'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
-		'.flac': 'audio/flac', '.m4a': 'audio/mp4',
-		'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-		'.webp': 'image/webp', '.gif': 'image/gif',
-		'.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+		'.mp3': 'audio/mpeg',
+		'.wav': 'audio/wav',
+		'.ogg': 'audio/ogg',
+		'.flac': 'audio/flac',
+		'.m4a': 'audio/mp4',
+		'.png': 'image/png',
+		'.jpg': 'image/jpeg',
+		'.jpeg': 'image/jpeg',
+		'.webp': 'image/webp',
+		'.gif': 'image/gif',
+		'.mp4': 'video/mp4',
+		'.webm': 'video/webm',
+		'.mov': 'video/quicktime',
 	};
 	return map[ext] ?? 'application/octet-stream';
 }
@@ -52,9 +64,7 @@ export async function AIcomfyUIFunc(_item: any, _description: any): Promise<any[
 	const jsonPath: string = typeof _item.jsonPath === 'string' ? _item.jsonPath.trim() : '';
 	if (!jsonPath) throw new Error('jsonPath is empty — укажи путь до workflow.json');
 
-	const workflowFilePath = path.isAbsolute(jsonPath)
-		? jsonPath
-		: path.join(_description.projectPathGD, ...jsonPath.split('/').filter(Boolean));
+	const workflowFilePath = path.isAbsolute(jsonPath) ? jsonPath : path.join(_description.projectPathGD, ...jsonPath.split('/').filter(Boolean));
 
 	if (!(await fs.existsFile(workflowFilePath))) {
 		throw new Error(`Workflow JSON не найден: ${workflowFilePath}`);

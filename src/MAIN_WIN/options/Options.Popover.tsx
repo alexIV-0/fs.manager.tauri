@@ -9,6 +9,7 @@ import TabPaths from './tabs/TabPaths';
 import TabTypes from './tabs/TabTypes';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import type { AppSettings } from '@/types/appSettings';
+import { getVersion } from '@tauri-apps/api/app';
 
 const modalStyle = {
 	position: 'absolute',
@@ -106,8 +107,7 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 	}, [open, settings]);
 
 	useEffect(() => {
-		window.electronAPI
-			.invoke<string>('app:getVersion')
+		getVersion()
 			.then(setVersion)
 			.catch(() => {});
 	}, []);
@@ -133,23 +133,24 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 	return (
 		<Modal open={open} onClose={handleModalClose}>
 			<Box sx={modalStyle}>
-				{version && (
-					<Box
-						sx={{
-							position: 'absolute',
-							top: 8,
-							right: 12,
-							opacity: 0.4,
-							fontSize: '0.72rem',
-							color: 'white',
-							pointerEvents: 'none',
-							userSelect: 'none',
-						}}
-					>
-						v{version}
-					</Box>
-				)}
 				<Box sx={{ flexShrink: 0, position: 'relative' }}>
+					{version && (
+						<Box
+							sx={{
+								position: 'absolute',
+								left: 12,
+								top: '18px',
+								transform: 'translateY(-50%)',
+								opacity: 0.35,
+								fontSize: '0.72rem',
+								color: 'white',
+								pointerEvents: 'none',
+								userSelect: 'none',
+							}}
+						>
+							v{version}
+						</Box>
+					)}
 					<Tabs
 						value={tabIndex}
 						onChange={handleChange}

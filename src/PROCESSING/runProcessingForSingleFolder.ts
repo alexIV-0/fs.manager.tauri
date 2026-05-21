@@ -13,7 +13,7 @@ import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { findFilesForSingleFolder } from './findFilesForSingleFolder';
 import { startProcessing } from './startProcessing';
-import { startProcessContext } from './function/utils/processingAbort';
+import { startProcessContext } from './utils/processingAbort';
 
 export async function runProcessingForSingleFolder(folderPath: string) {
 	const { clearWorkProjectState } = useWorkProject_Store.getState();

@@ -3,7 +3,7 @@
 
 import path from 'path';
 import { fs, http, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -35,6 +35,7 @@ export async function AIrevoicerFunc(_item: any, _description: any): Promise<str
 		style: _item.style ?? 0.0,
 		use_speaker_boost: _item.useSpeakerBoost === true,
 		timing_mode: 'ffmpeg',
+		tts_model: _item.voiceModel,
 	};
 
 	const localTargetPath: string[] = Array.isArray(_item.targetPath) ? _item.targetPath : [];

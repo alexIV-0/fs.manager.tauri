@@ -4,8 +4,8 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import {
 	ConvertSettings,
 	buildVideoFilterString,
@@ -124,16 +124,14 @@ export async function convertFileV2Func(_item: any, _description: any): Promise<
 
 	const ext = settings.outputExtension.toLowerCase();
 	const fileType = getFileTypeByExt('file.' + ext, _description.typeOfFile as Record<string, string[]>);
-	const outputMode: 'image' | 'audio' | 'video' =
-		fileType === 'image' ? 'image' : fileType === 'audio' ? 'audio' : 'video';
+	const outputMode: 'image' | 'audio' | 'video' = fileType === 'image' ? 'image' : fileType === 'audio' ? 'audio' : 'video';
 
 	const inputs: string[] = _item.import.convertSettings as string[];
 	let iteration = 1;
 
 	for (const fileFrom of inputs) {
 		// Build output path (copy the array to avoid mutating _item.targetPath)
-		let curPath: string[] =
-			_item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+		let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
 		if (_item.import.targetPath?.length) {
 			curPath.unshift(..._item.import.targetPath);
@@ -157,12 +155,12 @@ export async function convertFileV2Func(_item: any, _description: any): Promise<
 		const effSettings: ConvertSettings =
 			outputMode === 'video' && settings.video.frame.mode === 'original' && info.width && info.height
 				? {
-					...settings,
-					video: {
-						...settings.video,
-						frame: { ...settings.video.frame, mode: 'fixed', width: info.width, height: info.height },
-					},
-				}
+						...settings,
+						video: {
+							...settings.video,
+							frame: { ...settings.video.frame, mode: 'fixed', width: info.width, height: info.height },
+						},
+					}
 				: settings;
 
 		const ffmpegArgs = buildConvertFFmpegArgs(effSettings, outputMode);

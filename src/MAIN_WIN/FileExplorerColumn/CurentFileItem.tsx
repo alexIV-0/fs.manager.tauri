@@ -18,7 +18,7 @@ import {
 	pasteFromClipboardFs,
 	renameFile,
 	showInFinder,
-} from '@/PROCESSING/function/utils/fileSystemActions';
+} from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 
@@ -26,6 +26,7 @@ interface CurrentFileItemProps {
 	name: string;
 	path: string;
 	isSelected: boolean;
+	isActiveSelection?: boolean;
 	isMultiSelected?: boolean;
 	onSelect: () => void;
 	onMultiSelectToggle?: () => void;
@@ -37,6 +38,7 @@ export function CurrentFileItem({
 	name,
 	path,
 	isSelected,
+	isActiveSelection = true,
 	isMultiSelected,
 	onSelect,
 	onMultiSelectToggle,
@@ -146,10 +148,16 @@ export function CurrentFileItem({
 				disablePadding
 				ref={listItemRef}
 				data-item-path={path}
-				onContextMenu={(e) => handleContextMenu(e, onSelect)}
+				onContextMenu={(e) => handleContextMenu(e, isMultiSelected ? undefined : onSelect)}
 				sx={{
 					height: 34,
-					backgroundColor: isMultiSelected ? '#007bff33' : isSelected ? '#007bff4c' : 'transparent',
+					backgroundColor: isMultiSelected
+						? '#007bff33'
+						: isSelected
+							? isActiveSelection
+								? '#007bff4c'
+								: 'rgba(255,255,255,0.08)'
+							: 'transparent',
 					outline: isMultiSelected ? '1px solid #007bff66' : 'none',
 					'&:hover': { backgroundColor: isMultiSelected ? '#007bff44' : '#ffffff0b' },
 					transition: 'background-color 0.1s ease',

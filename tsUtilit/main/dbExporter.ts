@@ -155,6 +155,7 @@ export class DbExporter {
 
 	itemEnd(itemId: string, status: Extract<ItemStatus, 'done' | 'error' | 'aborted'>, totalCost: number) {
 		const r = this.items.get(itemId);
+		console.log(`[dbExporter] itemEnd called: itemId=${itemId} status=${status} totalCost=${totalCost} recordFound=${!!r}`);
 		if (!r) return;
 		r.status = status;
 		r.endedAt = new Date().toISOString();
@@ -248,12 +249,19 @@ export class DbExporter {
 
 	private async runTemplates(context: SaveContext): Promise<void> {
 		const settings = readAppSettings();
+		const allArchives = settings.storage?.localArchives ?? [];
+		console.log(`[dbExporter] runTemplates event=${context.event} localArchives count=${allArchives.length}`);
+		if (allArchives.length > 0) {
+			console.log(`[dbExporter] archives:`, JSON.stringify(allArchives));
+		}
+
 		const promises: Promise<void>[] = [];
 
 		for (const template of ALL_TEMPLATES) {
 			if (!template.canHandle(context)) continue;
 
 			const configs = template.getConfigs(settings.storage);
+			console.log(`[dbExporter] template="${template.id}" configs=${configs.length}`);
 			if (!configs.length) continue;
 
 			for (const config of configs) {
@@ -263,6 +271,7 @@ export class DbExporter {
 							(template as any)._config = config;
 							const transformed = template.transform(context.record);
 							await template.write(transformed, context, config);
+							console.log(`[dbExporter] template="${template.id}" write OK`);
 						} catch (error) {
 							const err = error instanceof Error ? error : new Error(String(error));
 							this.templateErrors.push({

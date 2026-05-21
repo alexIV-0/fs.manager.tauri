@@ -27,10 +27,15 @@ export const ByDayTemplate: ITemplate = {
 
   async write(data: unknown, _context: SaveContext, config: unknown): Promise<void> {
     const cfg = config as LocalArchiveEntry;
-    if (!cfg?.enabled || !cfg.path?.length) return;
+    console.log(`[byDay] write called: enabled=${cfg?.enabled} path=${JSON.stringify(cfg?.path)}`);
+    if (!cfg?.enabled || !cfg.path?.length) {
+      console.log(`[byDay] skipped: enabled=${cfg?.enabled} pathLen=${cfg?.path?.length}`);
+      return;
+    }
 
     const record = data as ItemRecord;
     const filePath = resolveStatsPath(cfg.path, record);
+    console.log(`[byDay] resolvedPath=${filePath} projectName=${record.projectName} registeredAt=${record.registeredAt}`);
     if (!filePath) return;
 
     const existing = readJsonFile<Record<string, PeriodStats>>(filePath) ?? {};

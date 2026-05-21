@@ -208,7 +208,10 @@ pub fn cleanup_auto_delete() -> Result<Value, String> {
 /// Возвращаем детерминированный ID на основе pathForDelete + findTime — так чтобы
 /// повторный вызов на тот же item дал тот же ID (как и должно быть при идемпотентной регистрации).
 #[tauri::command]
-pub fn db_register_found(payload: Value) -> Result<String, String> {
+pub fn db_register_found(
+    payload: Value,
+    db_state: tauri::State<Mutex<super::db_analytics::DbState>>,
+) -> Result<String, String> {
     let desc = payload.get("description").cloned().unwrap_or(Value::Null);
     let path_for_delete = desc
         .get("pathForDelete")
@@ -221,7 +224,6 @@ pub fn db_register_found(payload: Value) -> Result<String, String> {
     } else if !path_for_delete.is_empty() {
         path_for_delete.to_string()
     } else {
-        // Fallback: timestamp + short random
         format!(
             "{}-{}",
             chrono::Utc::now().timestamp_millis(),
@@ -229,6 +231,35 @@ pub fn db_register_found(payload: Value) -> Result<String, String> {
         )
     };
 
+    let contact: Vec<String> = desc.get("contact")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let tags: Vec<String> = desc.get("tags")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let record = super::db_analytics::DbItemRecord {
+        item_id:          id.clone(),
+        registered_at:    chrono::Utc::now().to_rfc3339(),
+        project_name:     desc.get("projectName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        main_folder_name: desc.get("mainFolderName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        project_path_gd:  desc.get("projectPathGD").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        contact,
+        description:      desc.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        tags,
+        year:             desc.get("year").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        find_time:        find_time.to_string(),
+        cur_item:         desc.get("curItem").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        size:             desc.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
+        is_folder:        desc.get("isFolder").and_then(|v| v.as_bool()).unwrap_or(false),
+    };
+
+    if let Ok(mut db) = db_state.lock() {
+        db.items.insert(id.clone(), record);
+    }
+    println!("[db_register_found] registered item_id={}", id);
     Ok(id)
 }
 
