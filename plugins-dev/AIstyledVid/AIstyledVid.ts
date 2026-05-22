@@ -3,7 +3,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, http, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -12,6 +12,24 @@ const UPLOAD_URL = `${BASE_URL}/api/job/add`;
 const STATUS_URL_BASE = `${BASE_URL}/api/job/`;
 const POLL_INTERVAL_MS = 5000;
 const TARGET_FPS = 16;
+const MAX_ATTEMPTS = 3;
+
+// Сервер шлёт: queued / в очереди / started / finish (+ страховочные синонимы).
+const DONE_STATUSES = new Set(['finish', 'finished', 'completed', 'complete', 'done', 'success', 'succeeded']);
+const FAIL_STATUSES = new Set(['failed', 'failure', 'error', 'errored', 'cancelled', 'canceled']);
+const PROGRESS_STATUSES = new Set([
+	'queued',
+	'pending',
+	'waiting',
+	'в очереди',
+	'started',
+	'starting',
+	'running',
+	'processing',
+	'in_progress',
+	'in-progress',
+	'progress',
+]);
 
 const FORMAT_RESOLUTION: Record<string, string> = {
 	vertical: '480x832',
@@ -48,8 +66,7 @@ export async function AIstyledVidFunc(_item: any, _description: any): Promise<st
 	const inputFiles: string[] = _item.import?.inputFile ?? [];
 	if (inputFiles.length === 0) throw new Error('inputFile is empty — подключи видео файл');
 
-	const configName: string =
-		(typeof _item.modelName === 'string' && _item.modelName.trim()) || 'default_video_generation_config';
+	const configName: string = (typeof _item.modelName === 'string' && _item.modelName.trim()) || 'default_video_generation_config';
 
 	const localTargetPath: string[] = Array.isArray(_item.targetPath) ? _item.targetPath : [];
 	let curPath = localTargetPath.length === 0 ? ['$clearName ($random(3))'] : [...localTargetPath];
@@ -66,10 +83,7 @@ export async function AIstyledVidFunc(_item: any, _description: any): Promise<st
 		const formatType = getFormatType(info.width, info.height);
 		const resolution = FORMAT_RESOLUTION[formatType];
 
-		const durationSec =
-			typeof _item.finalDuration === 'number' && _item.finalDuration > 0
-				? _item.finalDuration
-				: info.durationInSeconds;
+		const durationSec = typeof _item.finalDuration === 'number' && _item.finalDuration > 0 ? _item.finalDuration : info.durationInSeconds;
 		const videoLength = Math.round(durationSec * TARGET_FPS) + 1;
 
 		sendToMW('log', {
@@ -105,56 +119,74 @@ async function styleVideo(opts: {
 	videoLength: number;
 	targetDir: string;
 }): Promise<string | null> {
-	sendToMW('log', { text: `🚀 AIstyledVid uploading: ${path.basename(opts.videoFile)}` });
-	sendToMW('log', { text: `🌐 POST ${UPLOAD_URL}` });
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+		sendToMW('log', { text: `🚀 AIstyledVid attempt ${attempt}/${MAX_ATTEMPTS}: ${path.basename(opts.videoFile)}` });
+		sendToMW('log', { text: `🌐 POST ${UPLOAD_URL}` });
 
-	let jobId: string;
-	try {
-		const res = await http.upload(UPLOAD_URL, {
-			files: [{ field: 'video_file', path: opts.videoFile, mime: 'video/mp4', filename: path.basename(opts.videoFile) }],
-			fields: [
-				{ field: 'config_name', value: opts.configName },
-				{ field: 'config_overrides', value: JSON.stringify({ resolution: opts.resolution, video_length: opts.videoLength }) },
-			],
-		});
-
-		if (!res.ok) throw new Error(`Upload error ${res.status}: ${res.body}`);
-
-		let jobData: any;
+		let jobId: string;
 		try {
-			jobData = JSON.parse(res.body);
-		} catch {
-			throw new Error(`Invalid JSON from upload: ${res.body.slice(0, 200)}`);
+			const res = await http.upload(UPLOAD_URL, {
+				files: [{ field: 'video_file', path: opts.videoFile, mime: 'video/mp4', filename: path.basename(opts.videoFile) }],
+				fields: [
+					{ field: 'config_name', value: opts.configName },
+					{ field: 'config_overrides', value: JSON.stringify({ resolution: opts.resolution, video_length: opts.videoLength }) },
+				],
+			});
+
+			if (!res.ok) throw new Error(`Upload error ${res.status}: ${res.body.slice(0, 500)}`);
+
+			let jobData: any;
+			try {
+				jobData = JSON.parse(res.body);
+			} catch {
+				throw new Error(`Invalid JSON from upload: ${res.body.slice(0, 500)}`);
+			}
+
+			const extractedId = jobData?.job_id ?? jobData?.jobId ?? jobData?.id ?? jobData?.task_id ?? jobData?.taskId;
+			if (!extractedId) throw new Error(`No job_id in response: ${res.body.slice(0, 500)}`);
+			jobId = String(extractedId);
+			sendToMW('log', { text: `📦 Job accepted: ${jobId}` });
+		} catch (err: any) {
+			sendToMW('log', { text: `❌ Upload failed: ${err.message}` });
+			if (attempt < MAX_ATTEMPTS) {
+				sendToMW('log', { text: `🔁 Retrying upload...` });
+				continue;
+			}
+			return null;
 		}
 
-		if (!jobData.job_id) throw new Error(`No job_id in response: ${res.body}`);
-		jobId = jobData.job_id as string;
-		sendToMW('log', { text: `📦 Job accepted: ${jobId}` });
-	} catch (err: any) {
-		sendToMW('log', { text: `❌ Upload failed: ${err.message}` });
-		return null;
+		try {
+			const resultUrls = await pollJobStatus(jobId);
+			const latestUrl = getLatestUrl(resultUrls);
+			if (!latestUrl) throw new Error('Result file URL not found in job result');
+
+			const urlPath = (() => {
+				try {
+					return new URL(latestUrl).pathname;
+				} catch {
+					return latestUrl;
+				}
+			})();
+			const ext = path.extname(urlPath) || path.extname(opts.videoFile) || '.mp4';
+			const finalName = `AI_${path.basename(opts.videoFile, path.extname(opts.videoFile))}${ext}`;
+			const finalPath = path.join(opts.targetDir, finalName);
+
+			sendToMW('log', { text: `⬇️ Downloading: ${latestUrl}` });
+			await http.download(latestUrl, finalPath);
+			sendToMW('log', { text: `✅ Saved: ${finalPath}` });
+			return finalPath;
+		} catch (err: any) {
+			sendToMW('log', { text: `❌ Job [${jobId}] failed: ${err.message}` });
+			if (attempt < MAX_ATTEMPTS) {
+				sendToMW('log', { text: `🔁 Re-uploading for retry ${attempt + 1}/${MAX_ATTEMPTS}...` });
+				continue;
+			}
+			sendToMW('log', { text: `⏭ Skipped after ${MAX_ATTEMPTS} attempts` });
+			return null;
+		}
 	}
 
-	// Phase 2: poll until server confirms success or failure — no timeout, no retry limit.
-	// Transient network errors are swallowed; only explicit server errors stop the loop.
-	try {
-		const resultUrls = await pollJobStatus(jobId);
-		const latestUrl = getLatestUrl(resultUrls);
-		if (!latestUrl) throw new Error('Result file URL not found in job result');
-
-		const urlPath = (() => { try { return new URL(latestUrl).pathname; } catch { return latestUrl; } })();
-		const ext = path.extname(urlPath) || path.extname(opts.videoFile) || '.mp4';
-		const finalName = `AI_${path.basename(opts.videoFile, path.extname(opts.videoFile))}${ext}`;
-		const finalPath = path.join(opts.targetDir, finalName);
-
-		sendToMW('log', { text: `⬇️ Downloading: ${latestUrl}` });
-		await http.download(latestUrl, finalPath);
-		sendToMW('log', { text: `✅ Saved: ${finalPath}` });
-		return finalPath;
-	} catch (err: any) {
-		sendToMW('log', { text: `❌ Job [${jobId}] failed: ${err.message}` });
-		return null;
-	}
+	return null;
 }
 
 async function pollJobStatus(jobId: string): Promise<string[]> {
@@ -173,26 +205,39 @@ async function pollJobStatus(jobId: string): Promise<string[]> {
 			continue;
 		}
 
-		let statusData: { status: string; result?: any; error?: string };
-		try {
-			statusData = JSON.parse(res.body);
-		} catch {
-			sendToMW('log', { text: `⚠️ Failed to parse status response, retrying...` });
+		// 5xx и временные 4xx (например, 404 пока задача ещё не зарегистрирована) — продолжаем опрос.
+		if (!res.ok) {
+			sendToMW('log', { text: `⚠️ Status HTTP ${res.status} for [${jobId}], retrying... body: ${res.body.slice(0, 200)}` });
 			continue;
 		}
 
-		const status = statusData.status?.toLowerCase();
+		let statusData: any;
+		try {
+			statusData = JSON.parse(res.body);
+		} catch {
+			sendToMW('log', { text: `⚠️ Failed to parse status response, retrying... body: ${res.body.slice(0, 200)}` });
+			continue;
+		}
+
+		const rawStatus: string | undefined = statusData?.status ?? statusData?.state ?? statusData?.job_status;
+		const status = (rawStatus ?? '').toString().trim().toLowerCase();
+
 		if (status !== lastStatus) {
-			sendToMW('log', { text: `🔄 Job [${jobId}] status: ${status}` });
+			sendToMW('log', { text: `🔄 Job [${jobId}] status: ${status || '(empty)'}` });
 			lastStatus = status;
 		}
 
-		if (status === 'completed' || status === 'done' || status === 'success' || status === 'finished') {
-			if (!statusData.result) throw new Error('Result is empty after job completion');
-			return Array.isArray(statusData.result) ? statusData.result : [statusData.result];
+		if (DONE_STATUSES.has(status)) {
+			const result = statusData?.result ?? statusData?.results ?? statusData?.urls ?? statusData?.output;
+			if (!result) throw new Error(`Result is empty after job completion. Body: ${res.body.slice(0, 500)}`);
+			return Array.isArray(result) ? result : [result];
 		}
-		if (status === 'failed' || status === 'error') {
-			throw new Error(`Job failed: ${statusData.error || 'Unknown error'}`);
+		if (FAIL_STATUSES.has(status)) {
+			throw new Error(`Job failed: ${statusData?.error || statusData?.message || res.body.slice(0, 300)}`);
+		}
+		if (!status || (!PROGRESS_STATUSES.has(status) && !DONE_STATUSES.has(status))) {
+			// Незнакомый статус — не падаем, просто продолжаем ждать (вдруг сервер добавил новое состояние).
+			sendToMW('log', { text: `ℹ️ Unknown status "${status}" for [${jobId}], keep polling...` });
 		}
 	}
 }

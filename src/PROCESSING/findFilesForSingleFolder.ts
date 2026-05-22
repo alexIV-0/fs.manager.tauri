@@ -4,19 +4,14 @@ import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { folderPath_store, pathPattern_store, programPathPattern_store, typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { findItemAndCreateProps } from './findItemAndCreateProps';
-import { clearFileNameAndID } from './function/utils/clearFileNameAndID';
-import { createProcessQueue } from './function/utils/createProcessQueue';
-import { getDescription } from './function/utils/getDesription';
-import { getSignal } from './function/utils/processingAbort';
-import { sendFindItemToRegistrationProcessDatabase } from './function/utils/sendFindItemToRegistrationProcessDatabase';
+import { clearFileNameAndID } from './utils/clearFileNameAndID';
+import { createProcessQueue } from './utils/createProcessQueue';
+import { getDescription } from './utils/getDesription';
+import { getSignal } from './utils/processingAbort';
+import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemToRegistrationProcessDatabase';
 import { joinPath } from '@/Utils/joinPath';
 
-export async function findFilesForSingleFolder(
-	projectPathOnGD: string,
-	mainFolderPath: string,
-	year: string,
-	findDateName: string,
-) {
+export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
 	const signal = getSignal();
 
@@ -97,9 +92,7 @@ export async function findFilesForSingleFolder(
 	// внутри масок путей в плагинах. Подстановка выполняется в formatNameByPattern.
 	const pathAliasesRaw = pathPattern_store.getState().patternStore;
 	const pathAliases = Object.fromEntries(
-		pathAliasesRaw
-			.filter((t: any) => /^[A-Za-z0-9_]+$/.test(t.name))
-			.map((t: any) => [t.name, joinPath(...(t.path ?? []))]),
+		pathAliasesRaw.filter((t: any) => /^[A-Za-z0-9_]+$/.test(t.name)).map((t: any) => [t.name, joinPath(...(t.path ?? []))]),
 	);
 
 	const description = getDescription(nodesProps);
@@ -188,9 +181,7 @@ export async function findFilesForSingleFolder(
 		const findTime: string | undefined = objForProcessing.description?.findTime;
 		const queuedItemId: string =
 			objForProcessing.description?.dbItemId ??
-			(objForProcessing.description?.pathForDelete && findTime
-				? `${objForProcessing.description.pathForDelete}:${findTime}`
-				: undefined) ??
+			(objForProcessing.description?.pathForDelete && findTime ? `${objForProcessing.description.pathForDelete}:${findTime}` : undefined) ??
 			objForProcessing.description?.pathForDelete ??
 			objForProcessing.description?.id ??
 			String(Date.now());
@@ -198,13 +189,15 @@ export async function findFilesForSingleFolder(
 		const curItem: string = objForProcessing.description?.curItem ?? queuedItemId;
 		const displayName = findTime ? `[${findTime}] ${curItem}` : curItem;
 
-		window.electronAPI.invoke('log-window:item-queued', {
-			itemId: queuedItemId,
-			itemName: displayName,
-			mainFolderName: objForProcessing.description?.mainFolderName ?? '',
-			projectName: objForProcessing.description?.projectName ?? '',
-			steps: queuedSteps,
-			dbItemId: objForProcessing.description?.dbItemId,
-		}).catch(() => {});
+		window.electronAPI
+			.invoke('log-window:item-queued', {
+				itemId: queuedItemId,
+				itemName: displayName,
+				mainFolderName: objForProcessing.description?.mainFolderName ?? '',
+				projectName: objForProcessing.description?.projectName ?? '',
+				steps: queuedSteps,
+				dbItemId: objForProcessing.description?.dbItemId,
+			})
+			.catch(() => {});
 	}
 }

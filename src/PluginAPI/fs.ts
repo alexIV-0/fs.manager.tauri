@@ -61,7 +61,7 @@ export const existsSync = exists;
 // ─── Read text ───────────────────────────────────────────────────────────────
 
 interface ReadFileOptions {
-	encoding?: BufferEncoding | string;
+	encoding?: string;
 	flag?: string;
 }
 

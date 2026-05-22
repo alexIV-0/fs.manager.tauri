@@ -4,15 +4,27 @@
 
 import path from 'path';
 import { fs, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
 // Ключи плагинной инфраструктуры — не считаются динамическими addLink-входами.
 const KNOWN_ITEM_KEYS = new Set([
-	'id', 'nodeType', 'isTerminal', 'import',
-	'pluginId', 'pluginVersion', 'colorType', 'cost', 'costUnit', 'functionName',
-	'promptPath', 'targetPath', 'saveAsText', 'addLink', 'nodeLabel',
+	'id',
+	'nodeType',
+	'isTerminal',
+	'import',
+	'pluginId',
+	'pluginVersion',
+	'colorType',
+	'cost',
+	'costUnit',
+	'functionName',
+	'promptPath',
+	'targetPath',
+	'saveAsText',
+	'addLink',
+	'nodeLabel',
 ]);
 
 function escapeRegExp(str: string): string {
@@ -41,9 +53,7 @@ export async function promptUpdaterFunc(_item: any, _description: any): Promise<
 		}
 	} else if (_item.promptPath) {
 		const rawPath = _item.promptPath as string;
-		const resolvedPath = path.isAbsolute(rawPath)
-			? rawPath
-			: path.join(_description.projectPathGD ?? '', rawPath);
+		const resolvedPath = path.isAbsolute(rawPath) ? rawPath : path.join(_description.projectPathGD ?? '', rawPath);
 		if (await fs.existsFile(resolvedPath)) {
 			text = await fs.read(resolvedPath);
 		}
@@ -68,9 +78,7 @@ export async function promptUpdaterFunc(_item: any, _description: any): Promise<
 	const saveAsText: boolean = _item.saveAsText ?? false;
 
 	if (saveAsText) {
-		let curPath: string[] = (_item.targetPath?.length ?? 0) === 0
-			? ['$clearName ($random(3))']
-			: [..._item.targetPath];
+		let curPath: string[] = (_item.targetPath?.length ?? 0) === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
 		if (_item.import?.targetPath?.length > 0) {
 			curPath.unshift(..._item.import.targetPath);

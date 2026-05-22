@@ -18,7 +18,7 @@ import {
 	renameFolder,
 	showInFinder,
 	createFolder,
-} from '@/PROCESSING/function/utils/fileSystemActions';
+} from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 
@@ -26,6 +26,7 @@ interface CurentFolderItemProps {
 	name: string;
 	path: string;
 	isSelected: boolean;
+	isActiveSelection?: boolean;
 	isMultiSelected?: boolean;
 	rename?: boolean;
 	onSelect: () => void;
@@ -38,6 +39,7 @@ export function CurentFolderItem({
 	name,
 	path,
 	isSelected,
+	isActiveSelection = true,
 	isMultiSelected,
 	rename = true,
 	onSelect,
@@ -72,6 +74,7 @@ export function CurentFolderItem({
 	const { menuPosition, handleContextMenu, handleMenuClose, isMenuOpen } = useContextMenu(menuId);
 
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
+	const isCut = clipboardFs_store((s) => s.type === 'cut' && s.paths.includes(path));
 
 	const getMultiPaths = () => {
 		if (!isMultiSelected) return [path];
@@ -105,11 +108,17 @@ export function CurentFolderItem({
 				disablePadding
 				ref={listItemRef}
 				data-item-path={path}
-				onContextMenu={(e) => handleContextMenu(e, onSelect)}
+				onContextMenu={(e) => handleContextMenu(e, isMultiSelected ? undefined : onSelect)}
 				onMouseEnter={() => prefetchDir(path)}
 				sx={{
 					height: 34,
-					backgroundColor: isMultiSelected ? '#007bff33' : isSelected ? '#007bff4c' : 'transparent',
+					backgroundColor: isMultiSelected
+						? '#007bff33'
+						: isSelected
+							? isActiveSelection
+								? '#007bff4c'
+								: 'rgba(255,255,255,0.08)'
+							: 'transparent',
 					outline: isMultiSelected ? '1px solid #007bff66' : 'none',
 					'&:hover': { backgroundColor: isMultiSelected ? '#007bff44' : '#ffffff0b' },
 					transition: 'background-color 0.1s ease',
@@ -137,9 +146,9 @@ export function CurentFolderItem({
 					<Folder
 						size={24}
 						className='folder-icon'
-						fill={isSelected ? '#007bff' : grey}
-						color={isSelected ? '#007bff' : grey}
-						style={{ flexShrink: 0 }}
+						fill={isSelected && isActiveSelection ? '#007bff' : grey}
+						color={isSelected && isActiveSelection ? '#007bff' : grey}
+						style={{ flexShrink: 0, opacity: isCut ? 0.4 : 1, transition: 'opacity 0.2s ease' }}
 					/>
 
 					{isEditing && rename ? (
@@ -164,11 +173,12 @@ export function CurentFolderItem({
 								textOverflow: 'ellipsis',
 								fontWeight: isSelected ? 600 : 400,
 								fontSize: '1.2rem',
-								color: isSelected ? '#64afffff' : '#ffffffd9',
+								color: isSelected ? (isActiveSelection ? '#64afffff' : '#ffffffd9') : '#ffffffd9',
+								opacity: isCut ? 0.4 : 1,
 								cursor: 'pointer',
-								transition: 'color 0.2s ease',
+								transition: 'color 0.2s ease, opacity 0.2s ease',
 								'&:hover': {
-									color: isSelected ? '#91c8ffff' : '#ffffff',
+									color: isSelected && isActiveSelection ? '#91c8ffff' : '#ffffff',
 								},
 							}}
 						/>

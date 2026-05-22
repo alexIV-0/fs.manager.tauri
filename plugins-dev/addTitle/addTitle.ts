@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, fonts, paths, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { TitleSettings } from './types';
 import { parseSubtitles, detectFormat } from './parsers';
 import { adaptSettingsToVideo } from './settingsAdapter';
@@ -27,8 +27,7 @@ function platformFallbackFont(): string {
 export async function addTitle(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
-	let curPath: string[] =
-		_item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
+	let curPath: string[] = _item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
 	if (_item.import.targetPath?.length > 0) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -91,14 +90,7 @@ export async function addTitle(_item: any, _description: any): Promise<string[]>
 
 		const adapted = adaptSettingsToVideo(titleSettings, realWidth, realHeight);
 
-		const phrases = buildPhrases(
-			cues,
-			adapted.text.size,
-			adapted.videoWidth,
-			adapted.text.wrapWidth,
-			adapted.text.maxLines,
-			hasWords,
-		);
+		const phrases = buildPhrases(cues, adapted.text.size, adapted.videoWidth, adapted.text.wrapWidth, adapted.text.maxLines, hasWords);
 
 		sendToMW('log', {
 			text: `[addTitle] Built ${phrases.length} display phrases from ${cues.length} segments`,
@@ -128,16 +120,7 @@ export async function addTitle(_item: any, _description: any): Promise<string[]>
 				text: `${_description.infoText}: [add title] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 				duration: videoInfo.durationInSeconds || 10,
 				nodeId: _item.id,
-				command: [
-					'-y',
-					'-i', fileFrom,
-					'-vf', `ass=${assFile}`,
-					'-c:a', 'copy',
-					'-c:v', 'libx264',
-					'-preset', 'fast',
-					'-crf', '18',
-					fileTo,
-				],
+				command: ['-y', '-i', fileFrom, '-vf', `ass=${assFile}`, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', fileTo],
 			});
 			finalFile.push(fileTo);
 		} catch (e) {

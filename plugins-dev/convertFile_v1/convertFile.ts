@@ -2,7 +2,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -12,8 +12,7 @@ export async function convertFileFunc(_item: any, _description: any): Promise<st
 	const inputs: string[] = _item.import.inputFile;
 
 	for (const fileFrom of inputs) {
-		let curPath: string[] =
-			_item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+		let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
 		if (_item.import.targetPath?.length) {
 			curPath.unshift(..._item.import.targetPath);
@@ -30,9 +29,7 @@ export async function convertFileFunc(_item: any, _description: any): Promise<st
 		await fs.mkdir(dirTo);
 
 		const curDuration = (await ffmpeg.getInfo(fileFrom)).durationInSeconds;
-		const ffmpegArgs = _item.ffmpegCommand
-			? _item.ffmpegCommand.trim().split(/\s+/).filter(Boolean)
-			: [];
+		const ffmpegArgs = _item.ffmpegCommand ? _item.ffmpegCommand.trim().split(/\s+/).filter(Boolean) : [];
 
 		await ffmpeg.run({
 			text: `${_description.infoText}: [convert file ${iteration}/${inputs.length}]\n ${originalName} → ${newName}`,

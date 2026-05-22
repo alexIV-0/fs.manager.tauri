@@ -1,7 +1,7 @@
 // buildNodeDefinitions.ts
 import { mainSearch } from './mainSearch';
 import { description } from './description';
-import type { CollectedUINode } from '@/Utils/collectPluginUINodes';
+import type { CollectedUINode } from '@/Utils/loadAllUINodes';
 
 // Глобальная переменная для хранения нод
 let nodeDefinitionsCache: any[] | null = null;
@@ -35,7 +35,7 @@ export function buildNodeDefinitions(pluginNodes: CollectedUINode[] = []) {
 			component: (uiNode as any).component, // ← добавить
 			data: {
 				...uiNode.data,
-				// colorType уже обновлен в collectPluginUINodes
+				// colorType уже подменён в loadAllUINodes
 			},
 			// Дополнительные метаданные плагина
 			pluginId: uiNode.pluginId,

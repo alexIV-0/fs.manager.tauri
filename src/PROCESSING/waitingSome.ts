@@ -1,4 +1,4 @@
-import { getSignal } from './function/utils/processingAbort';
+import { getSignal } from './utils/processingAbort';
 
 export async function waitingSome(_time: number): Promise<void> {
 	const signal = getSignal();

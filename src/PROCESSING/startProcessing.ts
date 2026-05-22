@@ -1,7 +1,7 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
-import { getSignal } from './function/utils/processingAbort';
+import { getSignal } from './utils/processingAbort';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { processItem } from './processItem';

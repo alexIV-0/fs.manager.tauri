@@ -4,30 +4,49 @@
 
 import path from 'path';
 import { ffmpeg, sendToMW } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { convertSecondsToTimecode } from '../../electron/main/utilits/convertSecondsToTimecode';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { convertSecondsToTimecode } from '../../src/Utils/convertSecondsToTimecode';
 
 export { onLoad } from '../_template/tauri';
 
 // ── Filename helpers ─────────────────────────────────────────────────────────
 
 const removeEmoji = (str: string): string =>
-	str.replace(/\p{Extended_Pictographic}/gu, '').replace(/\s{2,}/g, ' ').trim();
+	str
+		.replace(/\p{Extended_Pictographic}/gu, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
 
 const textInSquare = (str: string): string =>
-	(str.match(/\[([^\]]*)\]/g) ?? []).map((m) => m.slice(1, -1).trim()).filter(Boolean).join(' ');
+	(str.match(/\[([^\]]*)\]/g) ?? [])
+		.map((m) => m.slice(1, -1).trim())
+		.filter(Boolean)
+		.join(' ');
 
 const textInRound = (str: string): string =>
-	(str.match(/\(([^)]*)\)/g) ?? []).map((m) => m.slice(1, -1).trim()).filter(Boolean).join(' ');
+	(str.match(/\(([^)]*)\)/g) ?? [])
+		.map((m) => m.slice(1, -1).trim())
+		.filter(Boolean)
+		.join(' ');
 
 const withoutRound = (str: string): string =>
-	str.replace(/\([^)]*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+	str
+		.replace(/\([^)]*\)/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
 
 const withoutSquare = (str: string): string =>
-	str.replace(/\[[^\]]*\]/g, '').replace(/\s{2,}/g, ' ').trim();
+	str
+		.replace(/\[[^\]]*\]/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
 
 const withoutBoth = (str: string): string =>
-	str.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').replace(/\s{2,}/g, ' ').trim();
+	str
+		.replace(/\([^)]*\)/g, '')
+		.replace(/\[[^\]]*\]/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
 
 const frameFormat = (w: number, h: number): string => (w > h ? 'horizontal' : h > w ? 'vertical' : 'square');
 

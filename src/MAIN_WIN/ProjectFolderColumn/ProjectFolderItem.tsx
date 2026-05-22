@@ -6,7 +6,6 @@ import { Settings } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
-import { collectPluginUINodes } from '@/Utils/collectPluginUINodes';
 import { joinPath } from '@/Utils/joinPath';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
@@ -68,12 +67,8 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
 		if (!activeMain) return;
 
-		// Plugin UI собирает MAIN_WIN — у него есть populated plugin_Store/typeOfNodes_store.
-		// NODE_WIN — отдельный renderer-процесс, эти сторы там пустые, поэтому передаём
-		// результат через localStorage. Сама функция теперь дешёвая (1 IPC + кэш в main + кэш в renderer).
-		const pluginUINodes = await collectPluginUINodes();
-		localStorage.setItem('pluginUINodes', JSON.stringify(pluginUINodes));
-
+		// UI-ноды плагинов окно нод теперь подтягивает само через Rust plugin manager
+		// (см. NODE_WIN/index.tsx → loadAllUINodes). Снапшот в localStorage больше не нужен.
 		const optionsPath = joinPath(activeMain.path, name);
 		window.electronAPI.invoke('open-node-window', optionsPath);
 	};

@@ -1,4 +1,4 @@
-import { collectFilesFromFolderFunc } from './function/main/collectFilesFromFolderFunc';
+import { collectFilesFromFolderFunc } from './utils/collectFilesFromFolderFunc';
 // import { copyFileFunc } from './function/main/copyFileFunc';
 // import { createPathFunc } from './function/main/createPathFunc';
 

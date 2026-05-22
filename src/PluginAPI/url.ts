@@ -20,6 +20,8 @@ export function pathToFileURL(p: string): URL {
 	return new URL('file://' + encoded);
 }
 
-export { URL, URLSearchParams };
+const _URL = URL;
+const _URLSearchParams = URLSearchParams;
+export { _URL as URL, _URLSearchParams as URLSearchParams };
 
-export default { fileURLToPath, pathToFileURL, URL, URLSearchParams };
+export default { fileURLToPath, pathToFileURL, URL: _URL, URLSearchParams: _URLSearchParams };

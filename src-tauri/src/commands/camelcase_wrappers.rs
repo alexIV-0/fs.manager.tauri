@@ -121,13 +121,6 @@ pub fn recursiveFindFiles(path: String, search: Option<super::fs_commands::Searc
     super::fs_commands::recursive_find_files(path, search)
 }
 
-// ==================== FORMAT ====================
-
-#[tauri::command]
-pub fn formatNameByPattern(args: super::fs_commands::FormatNameByPatternArgs) -> Result<String, String> {
-    super::fs_commands::format_name_by_pattern(args)
-}
-
 // ==================== USER DATA ====================
 
 #[tauri::command]
@@ -138,6 +131,16 @@ pub fn getOptionsFolder(app: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn getPluginsDevPath() -> Result<String, String> {
     super::fs_commands::get_plugins_dev_path()
+}
+
+#[tauri::command]
+pub fn getPlatformTarget() -> String {
+    super::fs_commands::get_platform_target()
+}
+
+#[tauri::command]
+pub fn getCpuCount() -> usize {
+    super::fs_commands::get_cpu_count()
 }
 
 // ==================== CHECK ====================
@@ -190,8 +193,9 @@ pub async fn previewResize(
     app: tauri::AppHandle,
     opts: super::fs_commands::PreviewResizeOpts,
     state: tauri::State<'_, std::sync::Mutex<super::window_commands::PreviewWindowState>>,
+    bounds_state: tauri::State<'_, std::sync::Mutex<super::preview_bounds::PreviewBoundsState>>,
 ) -> Result<(), String> {
-    super::window_commands::preview_resize(app, opts, state).await
+    super::window_commands::preview_resize(app, opts, state, bounds_state).await
 }
 
 #[tauri::command]
@@ -199,8 +203,9 @@ pub async fn previewOpen(
     app: tauri::AppHandle,
     data: String,
     state: tauri::State<'_, std::sync::Mutex<super::window_commands::PreviewWindowState>>,
+    bounds_state: tauri::State<'_, std::sync::Mutex<super::preview_bounds::PreviewBoundsState>>,
 ) -> Result<(), String> {
-    super::window_commands::preview_open(app, data, state).await
+    super::window_commands::preview_open(app, data, state, bounds_state).await
 }
 
 // ==================== WINDOW ====================

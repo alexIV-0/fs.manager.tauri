@@ -3,7 +3,7 @@
 
 import path from 'path';
 import { fs, http, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -73,11 +73,7 @@ export async function AIparserFunc(_item: any, _description: any): Promise<strin
 	return finalFile;
 }
 
-async function uploadVideoAndPoll(
-	videoFile: string,
-	prompt: string,
-	model: string,
-): Promise<{ result: any; costUsd: number | null }> {
+async function uploadVideoAndPoll(videoFile: string, prompt: string, model: string): Promise<{ result: any; costUsd: number | null }> {
 	sendToMW('log', { text: `🌐 POST ${UPLOAD_URL}` });
 
 	const res = await http.upload(UPLOAD_URL, {
@@ -142,11 +138,7 @@ async function parseVideoWithRetry(opts: {
 	return null;
 }
 
-async function parseVideoToStringWithRetry(opts: {
-	videoFile: string;
-	prompt: string;
-	model: string;
-}): Promise<string | null> {
+async function parseVideoToStringWithRetry(opts: { videoFile: string; prompt: string; model: string }): Promise<string | null> {
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
 			sendToMW('log', { text: `🚀 AIparser attempt ${attempt}/${MAX_ATTEMPTS}: ${path.basename(opts.videoFile)}` });
@@ -173,7 +165,10 @@ async function parseVideoToStringWithRetry(opts: {
 	return null;
 }
 
-interface JobStatusResult { result: any; costUsd: number | null }
+interface JobStatusResult {
+	result: any;
+	costUsd: number | null;
+}
 
 async function pollJobStatus(jobId: string): Promise<JobStatusResult> {
 	const statusUrl = `${STATUS_URL_BASE}${jobId}`;

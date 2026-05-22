@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { VideoPreview } from './components/VideoPreview';
 import { AudioPreview } from './components/AudioPreview';
 import { ImagePreview } from './components/ImagePreview';
 import { TextPreview } from './components/TextPreview';
+
+// В Tauri JS-вызов window.close() из соображений безопасности не работает
+// (он работает только для окон, открытых через window.open()).
+// Используем нативный API Tauri.
+const closeWindow = () => {
+	getCurrentWebviewWindow().close().catch(() => {});
+};
 
 export interface PreviewData {
 	filePath: string;
@@ -55,13 +63,26 @@ function PreviewApp() {
 
 		window.electronAPI.requestData();
 
+		// DEBUG: логируем размеры окна на старте и при каждом ресайзе
+		const logSize = (tag: string) => {
+			console.log(
+				`[PreviewApp ${tag}] innerW=${window.innerWidth} innerH=${window.innerHeight} ` +
+				`aspect=${(window.innerWidth / window.innerHeight).toFixed(4)} ` +
+				`dpr=${window.devicePixelRatio} ` +
+				`outerW=${window.outerWidth} outerH=${window.outerHeight}`
+			);
+		};
+		logSize('mount');
+		const onResize = () => logSize('resize');
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
 	}, []);
 
 	// Esc — закрыть окно, даже если фокус в Monaco-редакторе.
 	useKeyboardShortcut({
 		key: 'Escape',
 		skipOnInput: false,
-		callback: () => window.close(),
+		callback: () => closeWindow(),
 	});
 
 	useKeyboardShortcut({

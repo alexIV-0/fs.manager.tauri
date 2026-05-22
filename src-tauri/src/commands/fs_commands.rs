@@ -48,13 +48,6 @@ pub struct PreviewResizeOpts {
     pub extra_height: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct FormatNameByPatternArgs {
-    pub string: String,
-    pub description: Option<serde_json::Value>,
-    pub file: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 pub struct FontInfo {
     pub name: String,
@@ -309,6 +302,10 @@ pub fn hash_file(path: String, algo: Option<String>) -> Result<String, String> {
 #[tauri::command]
 pub fn test_and_create_folders(paths: Vec<String>) -> Result<Vec<String>, String> {
     for p in &paths {
+        let pb = std::path::Path::new(p);
+        if !pb.is_absolute() {
+            return Err(format!("[test_and_create_folders] path is not absolute: {}", p));
+        }
         fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
     Ok(paths)
@@ -318,6 +315,9 @@ pub fn test_and_create_folders(paths: Vec<String>) -> Result<Vec<String>, String
 /// Аналог Electron'овского ensureAndReadDir.
 #[tauri::command]
 pub fn ensure_and_read_dir(path: String) -> Result<serde_json::Value, String> {
+    if !std::path::Path::new(&path).is_absolute() {
+        return Err(format!("[ensure_and_read_dir] path is not absolute: {}", path));
+    }
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     let mut folders: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
@@ -613,34 +613,40 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 
 // ==================== PATH VALIDATION ====================
 
+/// Возвращает путь до файла или '' если файл не существует или является папкой.
+/// Совместимо с Electron: всегда возвращает строку, никогда не бросает ошибку.
 #[tauri::command]
-pub fn check_file_path(path: String, _name: Option<String>) -> Result<String, String> {
-    let p = Path::new(&path);
-    
-    if !p.exists() {
-        return Err(format!("Path does not exist: {}", path));
+pub fn check_file_path(path: String, name: Option<String>) -> Result<String, String> {
+    let check_path = if let Some(n) = name {
+        PathBuf::from(&path).join(n).to_string_lossy().to_string()
+    } else {
+        path
+    };
+    let p = Path::new(&check_path);
+    if !p.exists() || !p.is_file() {
+        return Ok(String::new());
     }
-    
-    if !p.is_file() {
-        return Err(format!("Path is not a file: {}", path));
-    }
-    
-    Ok(path)
+    Ok(check_path)
 }
 
+/// Возвращает путь до папки или '' если не существует.
+/// Если передан путь до файла — возвращает родительскую директорию.
+/// Совместимо с Electron: всегда возвращает строку, никогда не бросает ошибку.
 #[tauri::command]
-pub fn check_folder_path(path: String, _name: Option<String>) -> Result<String, String> {
-    let p = Path::new(&path);
-    
+pub fn check_folder_path(path: String, name: Option<String>) -> Result<String, String> {
+    let check_path = if let Some(n) = name {
+        PathBuf::from(&path).join(n).to_string_lossy().to_string()
+    } else {
+        path
+    };
+    let p = Path::new(&check_path);
     if !p.exists() {
-        return Err(format!("Path does not exist: {}", path));
+        return Ok(String::new());
     }
-    
-    if !p.is_dir() {
-        return Err(format!("Path is not a directory: {}", path));
+    if p.is_file() {
+        return Ok(p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default());
     }
-    
-    Ok(path)
+    Ok(check_path)
 }
 
 // ==================== SEARCH IN FOLDER ====================
@@ -705,24 +711,25 @@ pub fn get_some_from_folder(
         by_type.entry(entry.kind.clone()).or_default();
     }
 
-    let files_filter = want_files(&search);
-    let take_folders = want_folders(&search);
-
     for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
         let entry_path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        let is_file = entry_path.is_file();
+        let is_dir = entry_path.is_dir();
 
-        if entry_path.is_file() {
-            if let Some(f) = files_filter {
-                if ext_matches(&entry_path, &f.ext) {
-                    if let Some(arr) = by_type.get_mut("files") {
-                        arr.push(name);
+        for se in &search {
+            if se.kind == "folders" {
+                if is_dir {
+                    if let Some(arr) = by_type.get_mut("folders") {
+                        if !arr.contains(&name) {
+                            arr.push(name.clone());
+                        }
                     }
                 }
-            }
-        } else if entry_path.is_dir() && take_folders {
-            if let Some(arr) = by_type.get_mut("folders") {
-                arr.push(name);
+            } else if is_file && ext_matches(&entry_path, &se.ext) {
+                if let Some(arr) = by_type.get_mut(&se.kind) {
+                    arr.push(name.clone());
+                }
             }
         }
     }
@@ -832,41 +839,6 @@ pub fn recursive_find_files(
     Ok(serde_json::to_value(by_type).map_err(|e| e.to_string())?)
 }
 
-// ==================== FORMAT NAME BY PATTERN ====================
-
-#[tauri::command]
-pub fn format_name_by_pattern(args: FormatNameByPatternArgs) -> Result<String, String> {
-    // Упрощённая реализация - базовая подстановка паттернов
-    let mut result = args.string.clone();
-    
-    // Подстановка паттернов на основе описания
-    if let Some(desc) = args.description {
-        if let Some(val) = desc.get("clearName").and_then(|v| v.as_str()) {
-            result = result.replace("$clearName", val);
-        }
-        if let Some(val) = desc.get("curItemName").and_then(|v| v.as_str()) {
-            result = result.replace("$curItemName", val);
-        }
-        if let Some(val) = desc.get("projectName").and_then(|v| v.as_str()) {
-            result = result.replace("$projectName", val);
-        }
-        if let Some(val) = desc.get("id").and_then(|v| v.as_str()) {
-            result = result.replace("$id", val);
-        }
-    }
-
-    // Подстановка временных паттернов
-    let now = chrono::Local::now();
-    result = result.replace("$YYYY", &now.format("%Y").to_string());
-    result = result.replace("$MM", &now.format("%m").to_string());
-    result = result.replace("$DD", &now.format("%d").to_string());
-    result = result.replace("$HH", &now.format("%H").to_string());
-    result = result.replace("$mm", &now.format("%M").to_string());
-    result = result.replace("$ss", &now.format("%S").to_string());
-    
-    Ok(result)
-}
-
 // ==================== USER DATA PATH ====================
 
 #[tauri::command]
@@ -902,6 +874,37 @@ pub fn get_plugins_dev_path() -> Result<String, String> {
         "plugins-dev folder not found. Looked in: {:?}",
         candidates,
     ))
+}
+
+// ==================== PLATFORM TARGET ====================
+
+/// Количество логических CPU ядер. Из WebView через navigator.hardwareConcurrency
+/// получить нельзя — Safari/WebKit clamp'ит результат до 8 (anti-fingerprinting),
+/// что мешает корректно настроить thread-pool для нативных бинарников (whisper, ffmpeg).
+#[tauri::command]
+pub fn get_cpu_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
+/// Возвращает сегмент платформы в формате, удобном для путей бинарников плагинов:
+/// `mac-arm64`, `mac-x64`, `win-x64`, `linux-x64`, `linux-arm64`.
+/// Из WebView архитектуру macOS определить нельзя (Apple отдаёт "Intel" в navigator
+/// даже на Apple Silicon), поэтому источник правды — Rust runtime.
+#[tauri::command]
+pub fn get_platform_target() -> String {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    match (os, arch) {
+        ("macos", "aarch64") => "mac-arm64".to_string(),
+        ("macos", _) => "mac-x64".to_string(),
+        ("windows", "aarch64") => "win-arm64".to_string(),
+        ("windows", _) => "win-x64".to_string(),
+        ("linux", "aarch64") => "linux-arm64".to_string(),
+        ("linux", _) => "linux-x64".to_string(),
+        _ => format!("{}-{}", os, arch),
+    }
 }
 
 // ==================== FONTS ====================

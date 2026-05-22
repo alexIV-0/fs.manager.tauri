@@ -48,11 +48,31 @@ export function VideoPreview({ filePath }: { filePath: string }) {
 			if (w >= h && w > MAX_DIM) { h = Math.round((h * MAX_DIM) / w); w = MAX_DIM; }
 			else if (h > w && h > MAX_DIM) { w = Math.round((w * MAX_DIM) / h); h = MAX_DIM; }
 
+			console.log(
+				`[VideoPreview metadata] videoNative=${vw}x${vh} aspect=${(vw / vh).toFixed(4)} ` +
+				`→ sending preview:resize w=${w} h=${h} ` +
+				`| window innerW=${window.innerWidth} innerH=${window.innerHeight} ` +
+				`aspect=${(window.innerWidth / window.innerHeight).toFixed(4)}`
+			);
+
 			window.electronAPI.invoke('preview:resize', {
 				width: w,
 				height: h,
 				aspectRatio: vw / vh,
 			});
+
+			// Через 200мс проверим, как окно и видео-элемент фактически выглядят
+			setTimeout(() => {
+				const rect = video.getBoundingClientRect();
+				console.log(
+					`[VideoPreview after-resize +200ms] ` +
+					`window inner=${window.innerWidth}x${window.innerHeight} ` +
+					`videoElement rect=${rect.width.toFixed(1)}x${rect.height.toFixed(1)} ` +
+					`at (${rect.left.toFixed(1)},${rect.top.toFixed(1)}) ` +
+					`videoElement aspect=${(rect.width / rect.height).toFixed(4)} ` +
+					`expected aspect=${(vw / vh).toFixed(4)}`
+				);
+			}, 200);
 		};
 
 		video.addEventListener('loadedmetadata', onMetadata);

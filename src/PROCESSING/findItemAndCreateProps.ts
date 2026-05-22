@@ -1,5 +1,5 @@
 import { executeFunction } from './executeFunction';
-import { getNeededPropsFromNode } from './function/utils/getNeededPropsFromNode';
+import { getNeededPropsFromNode } from './utils/getNeededPropsFromNode';
 
 export type PrefetchedInItems = { files: string[]; folders: string[] };
 

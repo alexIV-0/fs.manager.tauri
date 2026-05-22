@@ -2,7 +2,7 @@ import { greyColor } from '@/Store/Color/grayColor';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { runProcessingForSingleFolder } from '@/PROCESSING/runProcessingForSingleFolder';
-import { abortNow } from '@/PROCESSING/function/utils/processingAbort';
+import { abortNow } from '@/PROCESSING/utils/processingAbort';
 import { Box, Button, Divider, IconButton, Stack, Typography } from '@mui/material';
 import { useReactFlow } from '@xyflow/react';
 import { Play, Square } from 'lucide-react';

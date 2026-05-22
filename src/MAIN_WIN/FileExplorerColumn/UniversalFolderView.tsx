@@ -11,8 +11,9 @@ import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { TopPanelLocal } from './TopPanelLocal';
 import { TopPanelGD } from './TopPanelGD';
-import { deleteItemWithTrimColumns } from '@/PROCESSING/function/utils/deleteIteWithTrimColumn';
-import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/function/utils/fileSystemActions';
+import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimColumn';
+import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
+import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 
 interface UniversalFolderViewProps {
@@ -23,8 +24,7 @@ interface UniversalFolderViewProps {
 
 export function UniversalFolderView({ type, containerHeight = '100%', onStartResize }: UniversalFolderViewProps) {
 	const { activeMainFolder, activeProjectFolder } = setActiveFolders_store();
-	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths, clearMultiSelection } =
-		useColumnView_Store();
+	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths, clearMultiSelection, lastActiveInstance } = useColumnView_Store();
 	const { localFolder } = localFolders_stor();
 
 	const refreshTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,12 +104,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			if (state.lastActiveInstance !== type) return;
 			e.preventDefault();
 			const { multiSelectedPaths } = state.instances[type];
-			const paths =
-				multiSelectedPaths.length > 0
-					? multiSelectedPaths
-					: state.lastSelectedItem
-						? [state.lastSelectedItem.item.path]
-						: [];
+			const paths = multiSelectedPaths.length > 0 ? multiSelectedPaths : state.lastSelectedItem ? [state.lastSelectedItem.item.path] : [];
 			if (paths.length > 0) copyToClipboardFs(paths);
 		},
 	});
@@ -124,12 +119,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			if (state.lastActiveInstance !== type) return;
 			e.preventDefault();
 			const { multiSelectedPaths } = state.instances[type];
-			const paths =
-				multiSelectedPaths.length > 0
-					? multiSelectedPaths
-					: state.lastSelectedItem
-						? [state.lastSelectedItem.item.path]
-						: [];
+			const paths = multiSelectedPaths.length > 0 ? multiSelectedPaths : state.lastSelectedItem ? [state.lastSelectedItem.item.path] : [];
 			if (paths.length > 0) cutToClipboardFs(paths);
 		},
 	});
@@ -146,6 +136,28 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			const cols = state.instances[type].columns;
 			if (cols.length === 0) return;
 			await pasteFromClipboardFs(cols[cols.length - 1].path);
+		},
+	});
+
+	// Tab — переключение активной панели между gd и local
+	useKeyboardShortcut({
+		key: 'Tab',
+		skipOnInput: true,
+		enabled: lastActiveInstance === type,
+		callback: (e) => {
+			e.preventDefault();
+			useColumnView_Store.setState({ lastActiveInstance: type === 'gd' ? 'local' : 'gd' });
+		},
+	});
+
+	// Escape — отмена операции cut
+	useKeyboardShortcut({
+		key: 'Escape',
+		skipOnInput: true,
+		callback: () => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== type) return;
+			clipboardFs_store.getState().clear();
 		},
 	});
 
@@ -221,9 +233,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 				const { instances } = useColumnView_Store.getState();
 				const cols = instances[type].columns;
 				cols.forEach((col, index) => {
-					const affected = changedPaths.some(
-						(p) => p.startsWith(col.path) || col.path.startsWith(p),
-					);
+					const affected = changedPaths.some((p) => p.startsWith(col.path) || col.path.startsWith(p));
 					if (affected) {
 						invalidateDirCache(col.path);
 						useColumnView_Store.getState().refreshColumn(type, index);
@@ -316,13 +326,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 				multiSelectedPaths={instance.multiSelectedPaths}
 				onMultiSelectToggle={handleMultiSelectToggle}
 				onMultiSelectRange={handleMultiSelectRange}
-				topPanel={
-					type === 'gd' ? (
-						<TopPanelGD />
-					) : (
-						<TopPanelLocal />
-					)
-				}
+				topPanel={type === 'gd' ? <TopPanelGD /> : <TopPanelLocal />}
 				sourceType={type}
 			/>
 		</Box>

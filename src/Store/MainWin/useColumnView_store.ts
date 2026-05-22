@@ -1,6 +1,6 @@
 // stores/useColumnViewStore.ts
 import { create } from 'zustand';
-import { COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent } from '../helpers/readDirContent';
+import { calcColumnWidth, COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent } from '../helpers/readDirContent';
 
 interface ColumnInstance {
 	columns: any[];
@@ -18,7 +18,7 @@ interface UniversalColumnViewState {
 	};
 	lastActiveInstance: 'gd' | 'local' | null;
 	lastSelectedItem: { colIndex: number; item: any } | null;
-	openRoot: (instanceType: 'gd' | 'local', rootPath: string) => Promise<void>;
+	openRoot: (instanceType: 'gd' | 'local', rootPath: string, options?: { ensureDir?: boolean }) => Promise<void>;
 	selectItem: (instanceType: 'gd' | 'local', colIndex: number, item: any) => Promise<void>;
 	refreshColumn: (instanceType: 'gd' | 'local', colIndex: number) => Promise<void>;
 	refreshAffectedColumns: (instanceType: 'gd' | 'local', affectedPaths: string[]) => void;
@@ -58,7 +58,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 	lastActiveInstance: null,
 	lastSelectedItem: null,
 
-	openRoot: async (instanceType: 'gd' | 'local', rootPath: string) => {
+	openRoot: async (instanceType: 'gd' | 'local', rootPath: string, options?: { ensureDir?: boolean }) => {
 		try {
 			set((state) => ({
 				instances: {
@@ -71,14 +71,14 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 				},
 			}));
 
-			const items = await readDirContent(rootPath);
+			const items = await readDirContent(rootPath, options?.ensureDir);
 
 			set((state) => ({
 				instances: {
 					...state.instances,
 					[instanceType]: {
 						...state.instances[instanceType],
-						columns: [{ path: rootPath, items, width: COLUMN_DEFAULT_WIDTH }],
+						columns: [{ path: rootPath, items, width: calcColumnWidth(items) }],
 						loading: false,
 					},
 				},
@@ -146,7 +146,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 
 			const nextItems = await readDirContent(item.path);
 			updatedCols.splice(colIndex + 1);
-			updatedCols.push({ path: item.path, items: nextItems, width: COLUMN_DEFAULT_WIDTH });
+			updatedCols.push({ path: item.path, items: nextItems, width: calcColumnWidth(nextItems) });
 
 			set((state) => ({
 				instances: {
@@ -394,9 +394,18 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 	toggleMultiSelect: (instanceType: 'gd' | 'local', colIndex: number, path: string) => {
 		set((state) => {
 			const prev = state.instances[instanceType].multiSelectedPaths;
-			const exists = prev.includes(path);
-			const multiSelectedPaths = exists ? prev.filter((p) => p !== path) : [...prev, path];
+			// When starting a new multi-selection, include the single-selected item from the same column
+			let base = prev;
+			if (prev.length === 0 && state.lastSelectedItem) {
+				const last = state.lastSelectedItem;
+				if (last.colIndex === colIndex && !prev.includes(last.item.path)) {
+					base = [last.item.path];
+				}
+			}
+			const exists = base.includes(path);
+			const multiSelectedPaths = exists ? base.filter((p) => p !== path) : [...base, path];
 			return {
+				lastActiveInstance: instanceType,
 				instances: {
 					...state.instances,
 					[instanceType]: {

@@ -521,6 +521,9 @@ function otsuThreshold(scores: number[]): number {
 export interface ExecOptions {
 	cwd?: string;
 	env?: Record<string, string>;
+	/** ID ноды — если передан, Rust будет стримить stdout/stderr процесса в лог-окно
+	 *  как processing-event'ы (видно прогресс в реальном времени). */
+	nodeId?: string;
 }
 
 export interface ExecResult {
@@ -536,6 +539,7 @@ export function exec(cmd: string, args: string[] = [], opts: ExecOptions = {}): 
 		args,
 		cwd: opts.cwd,
 		env: opts.env ? Object.entries(opts.env) : undefined,
+		nodeId: opts.nodeId,
 	});
 }
 
@@ -598,6 +602,27 @@ export const paths = {
 	tmpdir(): Promise<string> {
 		return api().invoke('os_tmpdir');
 	},
+
+	/** Корневая папка plugins-dev (где лежат собранные/dev-плагины с их ресурсами). */
+	pluginsDev(): Promise<string> {
+		return api().invoke('getPluginsDevPath');
+	},
+
+	/** Сегмент платформы для путей к нативным бинарникам:
+	 *  `mac-arm64` | `mac-x64` | `win-x64` | `win-arm64` | `linux-x64` | `linux-arm64`. */
+	platformTarget(): Promise<string> {
+		return api().invoke('getPlatformTarget');
+	},
+};
+
+// ─── Системная инфа ──────────────────────────────────────────────────────────
+
+export const system = {
+	/** Реальное количество логических ядер CPU. В отличие от
+	 *  `navigator.hardwareConcurrency` (Safari clamp'ит до 8) — даёт честное число. */
+	cpuCount(): Promise<number> {
+		return api().invoke('getCpuCount');
+	},
 };
 
 // ─── Шрифты (системный список через Rust fontsGetList) ───────────────────────
@@ -652,6 +677,14 @@ export const statusBar = {
 // эмитят `processing-event` — main_win и node_win получают через onProcessingEvent.
 
 export function sendToMW(type: string, payload: any): void {
+	// Если processItem выставил контекстный отправитель — используем его.
+	// Это гарантирует, что логи попадут в log_win с правильными itemId/stepId.
+	const tauriSend = (globalThis as any).__pluginSendToMW as ((t: string, p: any) => void) | undefined;
+	if (tauriSend) {
+		tauriSend(type, payload);
+		return;
+	}
+	// Fallback (вне processing-контекста): прямой IPC.
 	if (type === 'statusbar') {
 		const text = typeof payload === 'string' ? payload : payload?.text ?? '';
 		api().invoke('setStatusBar', String(text)).catch(() => {});
@@ -660,7 +693,6 @@ export function sendToMW(type: string, payload: any): void {
 		const text = typeof payload === 'string' ? payload : payload?.text ?? payload?.message ?? '';
 		api().invoke('sendLog', level, String(text)).catch(() => {});
 	}
-	// Прочие типы пока игнорируем — добавим по мере необходимости.
 }
 
 // Сохраняем onLoad как no-op для обратной совместимости с экспортами плагинов:

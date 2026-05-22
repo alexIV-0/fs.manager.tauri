@@ -3,7 +3,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -84,8 +84,7 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 
 	const bgAdjFilter = buildBgAdjustFilter(bg.adjust);
 
-	const curPath: string[] =
-		(_item.targetPath?.length ?? 0) === 0 ? ['$clearName (switch $random(3))'] : [...(_item.targetPath ?? [])];
+	const curPath: string[] = (_item.targetPath?.length ?? 0) === 0 ? ['$clearName (switch $random(3))'] : [...(_item.targetPath ?? [])];
 	if (_item.import?.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -114,9 +113,10 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 		duration = Number(importedTimecode);
 	} else {
 		const durationMode = (_item.ddm as string) ?? 'Min';
-		duration = durationMode === 'Max'
-			? Math.max(...fgInfos.map((i) => i.durationInSeconds || 1))
-			: Math.min(...fgInfos.map((i) => i.durationInSeconds || 1));
+		duration =
+			durationMode === 'Max'
+				? Math.max(...fgInfos.map((i) => i.durationInSeconds || 1))
+				: Math.min(...fgInfos.map((i) => i.durationInSeconds || 1));
 	}
 
 	let audioSlotIndex: number | null = null;
@@ -253,14 +253,21 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 	const ffmpegArgs: string[] = [
 		'-y',
 		...inputFlags,
-		'-filter_complex', filterComplex,
-		'-map', '[vout]',
+		'-filter_complex',
+		filterComplex,
+		'-map',
+		'[vout]',
 		...audioMap,
-		'-t', String(duration),
-		'-c:v', 'libx264',
-		'-preset', 'faster',
-		'-crf', '22',
-		'-threads', '0',
+		'-t',
+		String(duration),
+		'-c:v',
+		'libx264',
+		'-preset',
+		'faster',
+		'-crf',
+		'22',
+		'-threads',
+		'0',
 		outFile,
 	];
 

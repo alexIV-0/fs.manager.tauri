@@ -11,7 +11,8 @@
 		"resolveJsonModule": true,
 		"isolatedModules": true,
 		"noEmit": true,
-		"types": ["node"]
+		"types": ["node"],
+		"typeRoots": ["../node_modules/@types"]
 	},
 	"include": ["./**/*.ts"],
 	"exclude": ["node_modules", "_template/convertFile-old"]

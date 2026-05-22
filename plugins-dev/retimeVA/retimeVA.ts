@@ -3,8 +3,8 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -13,8 +13,14 @@ function buildAtempoChain(tempo: number): string {
 	if (tempo === 1) return 'atempo=1';
 	const chain: number[] = [];
 	let t = tempo;
-	while (t < 0.5) { chain.push(0.5); t /= 0.5; }
-	while (t > 2)   { chain.push(2);   t /= 2; }
+	while (t < 0.5) {
+		chain.push(0.5);
+		t /= 0.5;
+	}
+	while (t > 2) {
+		chain.push(2);
+		t /= 2;
+	}
 	chain.push(t);
 	return chain.map((v) => `atempo=${v.toFixed(6)}`).join(',');
 }
@@ -37,8 +43,7 @@ export async function retimeVAFunc(_item: any, _description: any): Promise<strin
 	}
 
 	const importedTimecode = _item.import.timecode?.[0];
-	const targetDuration: number =
-		importedTimecode != null ? Number(importedTimecode) : Number(_item.timecode ?? 0);
+	const targetDuration: number = importedTimecode != null ? Number(importedTimecode) : Number(_item.timecode ?? 0);
 	if (targetDuration <= 0) {
 		sendToMW('log', { level: 'warn', text: `[retimeVA] targetDuration is 0 or not set, skipping` });
 		return finalFile;
@@ -47,8 +52,7 @@ export async function retimeVAFunc(_item: any, _description: any): Promise<strin
 	const speedUp: boolean = _item.speedUp ?? false;
 	const slowDown: boolean = _item.SlowDown ?? false;
 
-	let curPath: string[] =
-		_item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
+	let curPath: string[] = _item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
 	if (_item.import.targetPath?.length > 0) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -102,41 +106,89 @@ export async function retimeVAFunc(_item: any, _description: any): Promise<strin
 			else if (info.codec_name) videoCodec = info.codec_name;
 			else videoCodec = hasAlpha ? 'qtrle' : 'prores_ks';
 
-			const pixFmt =
-				info.pix_fmt && info.codec_name !== 'hap'
-					? info.pix_fmt
-					: hasAlpha
-						? 'argb'
-						: 'yuv422p10le';
+			const pixFmt = info.pix_fmt && info.codec_name !== 'hap' ? info.pix_fmt : hasAlpha ? 'argb' : 'yuv422p10le';
 
 			if (curDuration > targetDuration && speedUp) {
 				const atempoChain = buildAtempoChain(coefficient);
 				ffmpegArgs = hasAudio
-					? ['-filter_complex',
-						`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v];[0:a]${atempoChain}[a]`,
-						'-map', '[v]', '-map', '[a]',
-						'-c:v', videoCodec, '-pix_fmt', pixFmt, '-c:a', 'aac']
-					: ['-filter_complex',
-						`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v]`,
-						'-map', '[v]', '-c:v', videoCodec, '-pix_fmt', pixFmt];
+					? [
+							'-filter_complex',
+							`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v];[0:a]${atempoChain}[a]`,
+							'-map',
+							'[v]',
+							'-map',
+							'[a]',
+							'-c:v',
+							videoCodec,
+							'-pix_fmt',
+							pixFmt,
+							'-c:a',
+							'aac',
+						]
+					: [
+							'-filter_complex',
+							`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v]`,
+							'-map',
+							'[v]',
+							'-c:v',
+							videoCodec,
+							'-pix_fmt',
+							pixFmt,
+						];
 			} else if (curDuration < targetDuration && slowDown) {
 				const atempoChain = buildAtempoChain(coefficient);
 				ffmpegArgs = hasAudio
-					? ['-filter_complex',
-						`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v];[0:a]${atempoChain}[a]`,
-						'-map', '[v]', '-map', '[a]',
-						'-c:v', videoCodec, '-pix_fmt', pixFmt, '-c:a', 'aac']
-					: ['-filter_complex',
-						`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v]`,
-						'-map', '[v]', '-c:v', videoCodec, '-pix_fmt', pixFmt];
+					? [
+							'-filter_complex',
+							`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v];[0:a]${atempoChain}[a]`,
+							'-map',
+							'[v]',
+							'-map',
+							'[a]',
+							'-c:v',
+							videoCodec,
+							'-pix_fmt',
+							pixFmt,
+							'-c:a',
+							'aac',
+						]
+					: [
+							'-filter_complex',
+							`[0:v]setpts=${(1 / coefficient).toFixed(6)}*PTS${hasAlpha ? ',format=rgba' : ''}[v]`,
+							'-map',
+							'[v]',
+							'-c:v',
+							videoCodec,
+							'-pix_fmt',
+							pixFmt,
+						];
 			} else if (curDuration < targetDuration) {
 				const extend = targetDuration - curDuration;
 				ffmpegArgs = hasAudio
-					? ['-vf', `tpad=stop_mode=clone:stop_duration=${extend}${hasAlpha ? ',format=rgba' : ''}`,
-						'-af', `apad=whole_dur=${targetDuration}`,
-						'-c:v', videoCodec, '-pix_fmt', pixFmt, '-c:a', 'aac', '-t', String(targetDuration)]
-					: ['-vf', `tpad=stop_mode=clone:stop_duration=${extend}${hasAlpha ? ',format=rgba' : ''}`,
-						'-c:v', videoCodec, '-pix_fmt', pixFmt, '-t', String(targetDuration)];
+					? [
+							'-vf',
+							`tpad=stop_mode=clone:stop_duration=${extend}${hasAlpha ? ',format=rgba' : ''}`,
+							'-af',
+							`apad=whole_dur=${targetDuration}`,
+							'-c:v',
+							videoCodec,
+							'-pix_fmt',
+							pixFmt,
+							'-c:a',
+							'aac',
+							'-t',
+							String(targetDuration),
+						]
+					: [
+							'-vf',
+							`tpad=stop_mode=clone:stop_duration=${extend}${hasAlpha ? ',format=rgba' : ''}`,
+							'-c:v',
+							videoCodec,
+							'-pix_fmt',
+							pixFmt,
+							'-t',
+							String(targetDuration),
+						];
 			} else {
 				ffmpegArgs = ['-c:v', 'copy', ...(hasAudio ? ['-c:a', 'copy'] : []), '-t', String(targetDuration)];
 			}

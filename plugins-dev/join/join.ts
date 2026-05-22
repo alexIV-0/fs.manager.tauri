@@ -6,8 +6,8 @@
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { fs, ffmpeg, sendToMW, VideoFileInfo } from '../_template/tauri';
-import { getFileTypeByExt } from '../../electron/main/utilits/getFileTypeByExt';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -69,9 +69,7 @@ function findReferenceFile(allFileInfo: VideoFileInfo[]): VideoFileInfo {
 
 	// Если 2 файла, и группы равны — берём более длинный (короткий пойдёт на конвертацию).
 	if (allFileInfo.length === 2 && maxGroupSize === 1) {
-		reference = allFileInfo[0].durationInSeconds >= allFileInfo[1].durationInSeconds
-			? allFileInfo[0]
-			: allFileInfo[1];
+		reference = allFileInfo[0].durationInSeconds >= allFileInfo[1].durationInSeconds ? allFileInfo[0] : allFileInfo[1];
 	}
 
 	return reference;
@@ -86,10 +84,7 @@ async function convertFileToReference(
 	workDir: string,
 	ffmpegComm: { text: string; duration: number; nodeId?: string },
 ): Promise<string> {
-	const tmpFile = path.join(
-		workDir,
-		`${path.basename(curFile, path.extname(curFile))}_conv_${nanoid(3)}${path.extname(curFile)}`,
-	);
+	const tmpFile = path.join(workDir, `${path.basename(curFile, path.extname(curFile))}_conv_${nanoid(3)}${path.extname(curFile)}`);
 
 	const vfFilters: string[] = [];
 	vfFilters.push(`fps=${reference.fps}`);
@@ -102,10 +97,15 @@ async function convertFileToReference(
 	if (reference.sar) vfFilters.push(`setsar=${reference.sar}`);
 
 	const command: string[] = [
-		'-y', '-i', curFile,
-		'-c:v', String(reference.codec_name),
-		'-pix_fmt', String(reference.pix_fmt),
-		'-vf', vfFilters.join(','),
+		'-y',
+		'-i',
+		curFile,
+		'-c:v',
+		String(reference.codec_name),
+		'-pix_fmt',
+		String(reference.pix_fmt),
+		'-vf',
+		vfFilters.join(','),
 	];
 
 	if (reference.color_primaries) command.push('-color_primaries', reference.color_primaries);
@@ -167,9 +167,7 @@ async function concatWithFade(
 		for (let i = 0; i < n - 1; i++) {
 			xfadeOffset += fileInfos[i].durationInSeconds - fadeDuration;
 			const outLabel = `[vout${i}]`;
-			filters.push(
-				`${prevLabel}[${i + 1}:v]xfade=transition=fade:duration=${fadeDuration}:offset=${xfadeOffset.toFixed(3)}${outLabel}`,
-			);
+			filters.push(`${prevLabel}[${i + 1}:v]xfade=transition=fade:duration=${fadeDuration}:offset=${xfadeOffset.toFixed(3)}${outLabel}`);
 			prevLabel = outLabel;
 		}
 	}
@@ -230,8 +228,7 @@ export async function joinFileFunc(_item: any, _description: any): Promise<strin
 
 	// Параметры из интерфейса
 	const importedTimecode = _item.import.finalTimecode?.[0];
-	const targetDuration: number =
-		importedTimecode != null ? Number(importedTimecode) : Number(_item.finalTimecode ?? 0);
+	const targetDuration: number = importedTimecode != null ? Number(importedTimecode) : Number(_item.finalTimecode ?? 0);
 	const fadeDuration: number = Math.max(0, Number(_item.autoFade ?? 0));
 	const joinType: string = _item.joinType ?? 'Sequentially';
 
@@ -282,8 +279,7 @@ export async function joinFileFunc(_item: any, _description: any): Promise<strin
 
 	// 7. Путь для финального файла
 	const fileForName = inputFiles[0];
-	let curPath: string[] =
-		(_item.targetPath?.length ?? 0) === 0 ? ['$clearName (join $random(3))'] : [..._item.targetPath];
+	let curPath: string[] = (_item.targetPath?.length ?? 0) === 0 ? ['$clearName (join $random(3))'] : [..._item.targetPath];
 	if (_item.import.targetPath?.length) {
 		curPath.unshift(..._item.import.targetPath);
 	} else {
@@ -317,17 +313,11 @@ export async function joinFileFunc(_item: any, _description: any): Promise<strin
 		});
 
 		if (anyNeedsConversion && needConvertFlags[i]) {
-			const tmpFile = await convertFileToReference(
-				curFile,
-				curInfo,
-				reference,
-				workDir,
-				{
-					text: `${_description.infoText}: [join VA] convert ${i + 1}/${filesForJoin.length} ${path.basename(curFile)}`,
-					duration: curInfo.durationInSeconds || 100,
-					nodeId: _item.id,
-				},
-			);
+			const tmpFile = await convertFileToReference(curFile, curInfo, reference, workDir, {
+				text: `${_description.infoText}: [join VA] convert ${i + 1}/${filesForJoin.length} ${path.basename(curFile)}`,
+				duration: curInfo.durationInSeconds || 100,
+				nodeId: _item.id,
+			});
 			processedFiles.push(tmpFile);
 			tempFilesToDelete.push(tmpFile);
 		} else {
@@ -337,27 +327,18 @@ export async function joinFileFunc(_item: any, _description: any): Promise<strin
 
 	// 10. Эффективная длительность
 	const effectiveDuration =
-		filesForJoinInfo.reduce((acc, info) => acc + info.durationInSeconds, 0) -
-		Math.max(0, filesForJoin.length - 1) * fadeDuration;
+		filesForJoinInfo.reduce((acc, info) => acc + info.durationInSeconds, 0) - Math.max(0, filesForJoin.length - 1) * fadeDuration;
 	const outputDuration = targetDuration > 0 ? targetDuration : 0;
 
 	sendToMW('statusbar', { text: `${_description.infoText}: [join VA] concat → ${path.basename(finalF)}` });
 
 	// 11. Склейка
 	if (fadeDuration > 0 && processedFiles.length > 1) {
-		await concatWithFade(
-			processedFiles,
-			filesForJoinInfo,
-			fadeDuration,
-			finalF,
-			outputDuration,
-			reference,
-			{
-				text: `${_description.infoText}: [join VA] concat+fade → ${path.basename(finalF)}`,
-				duration: effectiveDuration || 100,
-				nodeId: _item.id,
-			},
-		);
+		await concatWithFade(processedFiles, filesForJoinInfo, fadeDuration, finalF, outputDuration, reference, {
+			text: `${_description.infoText}: [join VA] concat+fade → ${path.basename(finalF)}`,
+			duration: effectiveDuration || 100,
+			nodeId: _item.id,
+		});
 	} else {
 		// Простая склейка через concat demuxer
 		const textFile = path.join(workDir, `_concat_list_${nanoid(4)}.txt`);

@@ -1,15 +1,16 @@
 // components/DroppableColumn.tsx
 import { useDroppable } from '@dnd-kit/core';
-import { Box } from '@mui/material';
+import { Box, SxProps } from '@mui/material';
 
 interface DroppableColumnProps {
     id: string;
     path: string;
     source: 'gd' | 'local';
     children: React.ReactNode;
+    sx?: SxProps;
 }
 
-export function DroppableColumn({ id, path, source, children }: DroppableColumnProps) {
+export function DroppableColumn({ id, path, source, children, sx }: DroppableColumnProps) {
     const { isOver, setNodeRef } = useDroppable({
         id,
         data: {
@@ -22,13 +23,11 @@ export function DroppableColumn({ id, path, source, children }: DroppableColumnP
         <Box
             ref={setNodeRef}
             sx={{
-                // Контейнер должен иметь измеримые габариты,
-                // иначе dnd-kit не сможет вычислить пересечение
-                // и over.data в onDragEnd будет null.
                 display: 'flex',
                 flexDirection: 'column',
                 height: '100%',
                 position: 'relative',
+                ...sx,
             }}
         >
             {children}

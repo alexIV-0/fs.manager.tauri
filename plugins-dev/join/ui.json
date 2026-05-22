@@ -1,5 +1,5 @@
 {
-	"type": "joinVA",
+	"type": "join",
 	"position": {
 		"x": 0,
 		"y": 0
@@ -7,7 +7,7 @@
 	"width": 400,
 	"height": 620,
 	"data": {
-		"label": "Join Video/Audio",
+		"label": "Join VA",
 		"colorType": "ffmpeg",
 		"comment": "Задаем таймкод для дальнейших действий. Можно вытаскивать таймкод из аудио или видео файла, а так же из нескольких файлов вытаскивать максимальный или минимальный таймкод. Тaк же можно задавать таймкод в ручную",
 		"properties": [
@@ -20,7 +20,10 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["video", "audio"],
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -30,14 +33,20 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
-					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
+					"options": [
+						"#pathPattern",
+						"CustomFolder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": false
 			},
 			{
@@ -46,7 +55,10 @@
 				"controlProps": {
 					"label": "Join Type",
 					"tooltip": "Выбираем как мы будем соединять файлы.\nПоследовательно\nРандомно",
-					"options": ["Sequentially", "Random"],
+					"options": [
+						"Sequentially",
+						"Random"
+					],
 					"freeInput": false,
 					"value": "Sequentially"
 				},
@@ -62,7 +74,9 @@
 					"value": 0
 				},
 				"isInput": true,
-				"acceptedTypes": ["timecode"],
+				"acceptedTypes": [
+					"timecode"
+				],
 				"required": false,
 				"outputType": "string"
 			},

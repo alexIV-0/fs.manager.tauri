@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 
 const WINDOW_W = 900;
@@ -98,7 +99,7 @@ export function TextPreview({ filePath }: { filePath: string }) {
 				// Monaco по умолчанию ловит Esc для своих виджетов (Find), поэтому
 				// глобальный useKeyboardShortcut в PreviewApp не сработает при фокусе в редакторе.
 				editorInstRef.current.addCommand(monaco.KeyCode.Escape, () => {
-					window.close();
+					getCurrentWebviewWindow().close().catch(() => {});
 				});
 			}
 		};

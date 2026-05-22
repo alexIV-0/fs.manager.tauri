@@ -199,11 +199,9 @@ function NumberInput({
 	return (
 		<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
 			<input
-				type='number'
+				type='text'
+				inputMode='decimal'
 				value={local}
-				min={min}
-				max={max}
-				step={step}
 				onChange={(e) => setLocal(e.target.value)}
 				onBlur={commit}
 				onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}

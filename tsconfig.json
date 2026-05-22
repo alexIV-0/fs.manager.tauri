@@ -21,7 +21,8 @@
 		"paths": {
 			"@/*": ["./src/*"],
 			"@plugin-api/fs-promises": ["./src/PluginAPI/fs-promises.ts"],
-			"@plugin-api/*": ["./src/PluginAPI/*.ts"]
+			"@plugin-api/*": ["./src/PluginAPI/*.ts"],
+			"path": ["./src/PluginAPI/path.ts"]
 		}
 	},
 	"include": ["src"],

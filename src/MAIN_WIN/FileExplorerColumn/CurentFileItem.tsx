@@ -18,7 +18,7 @@ import {
 	pasteFromClipboardFs,
 	renameFile,
 	showInFinder,
-} from '@/PROCESSING/function/utils/fileSystemActions';
+} from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 
@@ -26,6 +26,7 @@ interface CurrentFileItemProps {
 	name: string;
 	path: string;
 	isSelected: boolean;
+	isActiveSelection?: boolean;
 	isMultiSelected?: boolean;
 	onSelect: () => void;
 	onMultiSelectToggle?: () => void;
@@ -37,6 +38,7 @@ export function CurrentFileItem({
 	name,
 	path,
 	isSelected,
+	isActiveSelection = true,
 	isMultiSelected,
 	onSelect,
 	onMultiSelectToggle,
@@ -69,6 +71,7 @@ export function CurrentFileItem({
 	const { menuPosition, handleContextMenu, handleMenuClose, isMenuOpen } = useContextMenu(menuId);
 
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
+	const isCut = clipboardFs_store((s) => s.type === 'cut' && s.paths.includes(path));
 
 	const getMultiPaths = () => {
 		if (!isMultiSelected) return [path];
@@ -114,7 +117,7 @@ export function CurrentFileItem({
 	}, [name]);
 
 	const getIconByType = () => {
-		const iconProps = { style: { flexShrink: 0 }, size: 22, color: iconColor };
+		const iconProps = { style: { flexShrink: 0, opacity: isCut ? 0.4 : 1, transition: 'opacity 0.2s ease' }, size: 22, color: iconColor };
 
 		switch (detectedType) {
 			case 'video':
@@ -146,10 +149,16 @@ export function CurrentFileItem({
 				disablePadding
 				ref={listItemRef}
 				data-item-path={path}
-				onContextMenu={(e) => handleContextMenu(e, onSelect)}
+				onContextMenu={(e) => handleContextMenu(e, isMultiSelected ? undefined : onSelect)}
 				sx={{
 					height: 34,
-					backgroundColor: isMultiSelected ? '#007bff33' : isSelected ? '#007bff4c' : 'transparent',
+					backgroundColor: isMultiSelected
+						? '#007bff33'
+						: isSelected
+							? isActiveSelection
+								? '#007bff4c'
+								: 'rgba(255,255,255,0.08)'
+							: 'transparent',
 					outline: isMultiSelected ? '1px solid #007bff66' : 'none',
 					'&:hover': { backgroundColor: isMultiSelected ? '#007bff44' : '#ffffff0b' },
 					transition: 'background-color 0.1s ease',
@@ -206,8 +215,9 @@ export function CurrentFileItem({
 								fontWeight: isSelected ? 600 : 400,
 								fontSize: '1.2rem',
 								color: greyColor(80),
+								opacity: isCut ? 0.4 : 1,
 								cursor: 'pointer',
-								transition: 'color 0.2s ease',
+								transition: 'color 0.2s ease, opacity 0.2s ease',
 								'&:hover': { color: '#ffffff' },
 							}}
 						/>

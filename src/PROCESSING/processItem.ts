@@ -9,6 +9,7 @@
 import { basename, join } from '@plugin-api/path';
 import { loadPlugin } from '@/PluginAPI/loader';
 import { acquirePool, releasePool } from './ResourcePool';
+import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 
 const api = () => (window as any).electronAPI;
 
@@ -22,6 +23,7 @@ export interface ExecutionContext {
 	signal: AbortSignal;
 	itemId: string;
 	send: SendFn;
+	accumulatedCost: number;
 }
 
 export interface PluginCtx {
@@ -151,6 +153,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					status: payload.status,
 					endTime: new Date().toISOString(),
 					totalCost: payload.totalCost,
+					duration: payload.duration,
 				})
 				.catch(() => {});
 		} else if (type === 'node:start') {
@@ -215,6 +218,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 		signal,
 		itemId,
 		send,
+		accumulatedCost: 0,
 	};
 
 	// Главный поиск (первый элемент queue) уже имеет output из findItemAndCreateProps
@@ -262,7 +266,15 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 	}
 
 	const finalStatus = ctx.signal.aborted ? 'aborted' : allStepsSucceeded ? 'done' : 'error';
-	send('item:end', { itemId, status: finalStatus });
+	// Передаём totalCost когда хоть один шаг имел costUnit='run' или 'fromSite'.
+	const hasCostTracking = steps.some((s) => ['run', 'fromSite'].includes(s.costUnit ?? 'run'));
+	const totalCost = hasCostTracking ? ctx.accumulatedCost : undefined;
+
+	// Суммируем длительности всех выходных медиафайлов из терминальных шагов.
+	const mediaDurationSecs = await collectMediaDuration(ctx, steps);
+	const duration = secsToDurationStr(mediaDurationSecs);
+
+	send('item:end', { itemId, status: finalStatus, totalCost, duration });
 	return finalStatus;
 }
 
@@ -301,6 +313,9 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			throw new Error(`Plugin ${execObj.pluginId}@${execObj.pluginVersion} has no callable export`);
 		}
 
+		// Захватывает стоимость от плагинов с costUnit='fromSite'
+		let capturedSiteCost: number | undefined;
+
 		// sendToMW из плагинов имеет сигнатуру (type, payload) — маршрутизируем по type.
 		const sendToMW = (type: string, payload: any) => {
 			if (type === 'log') {
@@ -312,6 +327,11 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			} else if (type === 'statusbar') {
 				const text = typeof payload === 'string' ? payload : (payload?.text ?? '');
 				send('statusbar', { text });
+			} else if (type === 'node:siteCost') {
+				const raw = payload?.cost;
+				const cost = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '0')) || 0;
+				capturedSiteCost = cost;
+				send('log', { level: 'info', text: `[siteCost] raw=${raw} parsed=${cost}`, itemId: ctx.itemId, stepId });
 			} else {
 				send(type, { ...(typeof payload === 'object' && payload !== null ? payload : { value: payload }), itemId: ctx.itemId, stepId });
 			}
@@ -343,7 +363,19 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		ctx.results.set(stepId, output);
 		stepObj.output = output;
 
-		send('node:done', { nodeId: stepId, output, itemId: ctx.itemId });
+		let finalCost: number | undefined;
+		const costNum = parseFloat(execObj.cost ?? stepObj.cost ?? '0') || 0;
+		const costUnit = execObj.costUnit ?? stepObj.costUnit ?? 'run';
+		if (capturedSiteCost !== undefined) {
+			finalCost = capturedSiteCost;
+			ctx.accumulatedCost += capturedSiteCost;
+		} else if (costUnit === 'run') {
+			finalCost = costNum;
+			ctx.accumulatedCost += costNum;
+		}
+
+		send('log', { level: 'info', text: `[costDebug] costUnit=${costUnit} capturedSiteCost=${capturedSiteCost} finalCost=${finalCost}`, itemId: ctx.itemId, stepId });
+		send('node:done', { nodeId: stepId, output, itemId: ctx.itemId, finalCost });
 		return true;
 	} catch (e: any) {
 		send('node:error', { nodeId: stepId, message: e?.message ?? String(e), itemId: ctx.itemId });
@@ -394,6 +426,7 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 			signal: ctx.signal,
 			itemId: ctx.itemId,
 			send,
+			accumulatedCost: 0,
 		};
 		innerCtx.results.set(`${stepId}__inputInLoop`, [currentItem]);
 
@@ -409,6 +442,8 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 				break;
 			}
 		}
+
+		ctx.accumulatedCost += innerCtx.accumulatedCost;
 
 		if (!iterationOk) {
 			send('log', { level: 'warn', text: `  [${i + 1}/${inputArray.length}] failed`, itemId: ctx.itemId, stepId });
@@ -475,4 +510,47 @@ function patchSubStepImport(subStep: any, loopNodeId: string): any {
 		if (value === loopNodeId) patched[key] = `${loopNodeId}__inputInLoop`;
 	}
 	return { ...subStep, import: patched };
+}
+
+// ─── Media duration helpers ───────────────────────────────────────────────────
+
+function secsToDurationStr(secs: number): string {
+	const s = Math.floor(secs);
+	const h = Math.floor(s / 3600);
+	const m = Math.floor((s % 3600) / 60);
+	const sec = s % 60;
+	return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+async function collectMediaDuration(ctx: ExecutionContext, steps: { stepId: string; isTerminal: boolean }[]): Promise<number> {
+	const types = typeOfFile_store.getState().patternStore;
+	const mediaExts = new Set<string>(
+		types
+			.filter((t) => t.name === 'video' || t.name === 'audio')
+			.flatMap((t) => t.path)
+			.map((ext) => ext.toLowerCase()),
+	);
+
+	let totalSecs = 0;
+	for (const step of steps) {
+		if (!step.isTerminal) continue;
+		const output = ctx.results.get(step.stepId);
+		const outputs = Array.isArray(output) ? output : (output != null ? [output] : []);
+		for (const item of outputs) {
+			const filePath: unknown =
+				typeof item === 'string' ? item
+				: (item as any)?.path ?? (item as any)?.filePath ?? (item as any)?.outputPath ?? null;
+			if (typeof filePath !== 'string' || !filePath) continue;
+			const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+			if (!mediaExts.has(ext)) continue;
+			try {
+				const infoJson: string = await api().invoke('ffprobe_get_info', filePath);
+				const streams: any[] = JSON.parse(infoJson).streams ?? [];
+				const stream = streams.find((s: any) => s.codec_type === 'video')
+				            ?? streams.find((s: any) => s.codec_type === 'audio');
+				if (stream?.duration) totalSecs += parseFloat(stream.duration) || 0;
+			} catch {}
+		}
+	}
+	return totalSecs;
 }

@@ -83,7 +83,7 @@ export function randomUUID(): string {
 		return globalThis.crypto.randomUUID();
 	}
 	// Fallback
-	return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c: any) =>
+	return ('' + 1e7 + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c: any) =>
 		(c ^ (randomBytes(1)[0] & (15 >> (c / 4)))).toString(16),
 	);
 }

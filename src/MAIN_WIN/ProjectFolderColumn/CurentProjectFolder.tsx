@@ -221,7 +221,7 @@ export function CurentProjectFolder() {
 				{/* Ресайз хендл */}
 				<Box
 					sx={{
-						height: '4px',
+						height: '6px',
 						backgroundColor: isResizingHeight ? 'primary.main' : 'transparent',
 						cursor: 'row-resize',
 						display: 'flex',
@@ -235,8 +235,8 @@ export function CurentProjectFolder() {
 						'&::before': {
 							content: '""',
 							position: 'absolute',
-							top: '-8px',
-							bottom: '-8px',
+							top: '2px',
+							bottom: '-10px',
 							left: 0,
 							right: 0,
 							zIndex: 1,

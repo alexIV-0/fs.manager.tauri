@@ -9,9 +9,9 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { findAllFilesForProcess } from './findAllFilesForProcess';
-import { finalyWating } from './function/utils/finalyWating';
+import { finalyWating } from './utils/finalyWating';
 import { startProcessing } from './startProcessing';
-import { startProcessContext } from './function/utils/processingAbort';
+import { startProcessContext } from './utils/processingAbort';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
 

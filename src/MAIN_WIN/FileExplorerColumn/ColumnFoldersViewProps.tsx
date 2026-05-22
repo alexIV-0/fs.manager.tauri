@@ -1,6 +1,7 @@
 // ColumnFolderView.tsx
 import { Box, List } from '@mui/material';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { greyColor } from '@/Store/Color/grayColor';
 import { contentStyle, resizeHandleStyle, resizeHandleStyleBottom, resizeHandleStyleLeft } from '../mainStyles';
 import { DraggableFileItem } from './DraggableFileItem';
@@ -10,7 +11,8 @@ import { COLUMN_DEFAULT_WIDTH, useColumnView_Store } from '@/Store/MainWin/useCo
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useMenuItems } from '../hooks/useMenuItems';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
-import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/function/utils/fileSystemActions';
+import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 interface ColumnFolderViewProps {
 	columns: any[];
@@ -42,7 +44,6 @@ export function ColumnFolderView({
 	onMultiSelectRange,
 }: ColumnFolderViewProps) {
 	const [resizingColumnIndex, setResizingColumnIndex] = useState<number | null>(null);
-	const [isHovered, setIsHovered] = useState(false);
 	const [externalDropIndex, setExternalDropIndex] = useState<number | null>(null);
 	const [emptyMenu, setEmptyMenu] = useState<{ pos: { mouseX: number; mouseY: number }; colPath: string } | null>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
@@ -112,9 +113,101 @@ export function ColumnFolderView({
 	}, [sourceType]);
 
 	const addItemToColumn = useColumnView_Store((s) => s.addItemToColumn);
+	const lastActiveInstance = useColumnView_Store((s) => s.lastActiveInstance);
+	const lastSelectedColIndex = useColumnView_Store((s) => s.lastSelectedItem?.colIndex ?? -1);
+	const multiAnchorColIndex = useColumnView_Store((s) => s.instances[sourceType].multiSelectAnchor?.colIndex ?? -1);
 	const cbType = clipboardFs_store((s) => s.type);
 	const cbPaths = clipboardFs_store((s) => s.paths);
 	const hasClipboard = cbType !== null && cbPaths.length > 0;
+
+	// ── Tauri native drag-drop из Finder/Explorer ────────────────────────────
+	// HTML5 onDrop в WebView НЕ получает File.path (это было Electron-only).
+	// Tauri перехватывает файловые drops на нативном уровне и эмитит события
+	// `tauri://drag-drop` с реальными путями. По позиции дропа находим элемент
+	// и читаем колонку из data-source/data-col-index.
+	useEffect(() => {
+		const win = getCurrentWebviewWindow();
+		let unlisten: (() => void) | undefined;
+
+		const findColumnIndexAt = (x: number, y: number): number | null => {
+			// Tauri DragDrop positions are PhysicalPosition (device pixels).
+			// getBoundingClientRect returns logical (CSS) pixels.
+			// We try divided-by-DPR first, then raw (in case Tauri already sends logical).
+			const ratio = window.devicePixelRatio || 1;
+			const cols = document.querySelectorAll(`[id^="col-${sourceType}-"]`);
+			if (cols.length === 0) return null;
+
+			for (const divisor of [ratio, 1]) {
+				const lx = x / divisor;
+				const ly = y / divisor;
+				for (const col of cols) {
+					const r = col.getBoundingClientRect();
+					if (lx >= r.left && lx <= r.right && ly >= r.top && ly <= r.bottom) {
+						const m = col.id.match(/^col-[^-]+-(\d+)$/);
+						if (m) return Number(m[1]);
+					}
+				}
+			}
+			return null;
+		};
+
+		win.onDragDropEvent(async (event) => {
+			const payload = event.payload as any;
+			const type = payload?.type;
+			console.log(`[DragDrop:${sourceType}] event:`, type, payload);
+			if (type === 'enter' || type === 'over') {
+				const { x, y } = payload.position ?? {};
+				const idx = typeof x === 'number' && typeof y === 'number' ? findColumnIndexAt(x, y) : null;
+				setExternalDropIndex(idx);
+				return;
+			}
+			if (type === 'leave') {
+				setExternalDropIndex(null);
+				return;
+			}
+			if (type === 'drop') {
+				setExternalDropIndex(null);
+				const paths: string[] = Array.isArray(payload.paths) ? payload.paths : [];
+				if (paths.length === 0) return;
+				const { x, y } = payload.position ?? {};
+				const ratio = window.devicePixelRatio || 1;
+				const cols = document.querySelectorAll(`[id^="col-${sourceType}-"]`);
+				console.log(`[DragDrop:${sourceType} drop] pos:`, x, y, 'dpr:', ratio, 'cols found:', cols.length);
+				cols.forEach((c) => {
+					const r = c.getBoundingClientRect();
+					console.log('  col', c.id, 'rect:', r.left, r.top, r.right, r.bottom);
+				});
+				const idx = typeof x === 'number' && typeof y === 'number' ? findColumnIndexAt(x, y) : null;
+				console.log(`[DragDrop:${sourceType} drop] idx:`, idx, 'columns.length:', columns.length, 'paths:', paths);
+				if (idx === null || idx >= columns.length) return;
+
+				const col = columns[idx];
+				for (const filePath of paths) {
+					try {
+						const name = (await window.electronAPI.invoke('pathBasename', filePath)) as string;
+						const info: any = await window.electronAPI.invoke('getFileInfo', filePath).catch(() => null);
+						const destPath = (await window.electronAPI.invoke('pathJoin', col.path, name)) as string;
+
+						addItemToColumn(sourceType, idx, {
+							name,
+							path: destPath,
+							isDir: Boolean(info?.isDirectory),
+						});
+
+						await window.electronAPI.invoke('copyItem', filePath, destPath, { overwrite: false });
+					} catch (error) {
+						console.error('❌ Ошибка при копировании внешнего файла:', filePath, error);
+					}
+				}
+			}
+		}).then((u) => {
+			unlisten = u;
+		});
+
+		return () => {
+			unlisten?.();
+		};
+	}, [columns, sourceType, addItemToColumn]);
 
 	const emptyMenuItems = useMenuItems({
 		type: 'empty',
@@ -146,7 +239,7 @@ export function ColumnFolderView({
 	const resizeColumn = (e: MouseEvent) => {
 		if (resizingColumnIndex === null) return;
 
-		const columnEl = document.getElementById(`col-${resizingColumnIndex}`);
+		const columnEl = document.getElementById(`col-${sourceType}-${resizingColumnIndex}`);
 		if (!columnEl) return;
 
 		const rect = columnEl.getBoundingClientRect();
@@ -168,31 +261,117 @@ export function ColumnFolderView({
 		};
 	}, [resizingColumnIndex]);
 
-	// ==============================
-	// 🔹 Расчет ширины последней колонки
-	// ==============================
-	const calculateLastColumnWidth = () => {
-		if (!contentRef.current || columns.length === 0) return 'auto';
-		const containerWidth = contentRef.current.clientWidth;
-		const fixedColumnsWidth = columns.slice(0, -1).reduce((total, col) => total + (col.width ?? COLUMN_DEFAULT_WIDTH), 0);
-		const availableWidth = containerWidth - fixedColumnsWidth;
-		return availableWidth >= minLastColumnWidth ? availableWidth : minLastColumnWidth;
-	};
 
-	const needsHorizontalScroll = () => {
-		if (!contentRef.current || columns.length === 0) return false;
-		const containerWidth = contentRef.current.clientWidth;
-		const totalColumnsWidth = columns.reduce((total, col, index) => {
-			if (index === columns.length - 1) {
-				const lastColWidth = calculateLastColumnWidth();
-				return total + (typeof lastColWidth === 'number' ? lastColWidth : minLastColumnWidth);
+
+	// Auto-scroll to the rightmost column whenever a new one is added
+	useEffect(() => {
+		if (contentRef.current) {
+			contentRef.current.scrollLeft = contentRef.current.scrollWidth;
+		}
+	}, [columns.length]);
+
+	// ── Keyboard navigation ───────────────────────────────────────────────────
+	const scrollItemIntoView = (path: string) => {
+		setTimeout(() => {
+			const els = document.querySelectorAll<HTMLElement>('[data-item-path]');
+			for (const el of els) {
+				if (el.dataset.itemPath === path) {
+					el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+					break;
+				}
 			}
-			return total + (col.width ?? COLUMN_DEFAULT_WIDTH);
-		}, 0);
-		return totalColumnsWidth > containerWidth;
+		}, 30);
 	};
 
-	const shouldShowHorizontalScroll = needsHorizontalScroll() && isHovered;
+	useKeyboardShortcut({
+		key: 'ArrowUp',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex, item } = lastSelectedItem;
+			const col = state.instances[sourceType].columns[colIndex];
+			if (!col) return;
+			const idx = col.items.findIndex((i: any) => i.path === item.path);
+			if (idx <= 0) return;
+			e.preventDefault();
+			selectItem(colIndex, col.items[idx - 1]);
+			scrollItemIntoView(col.items[idx - 1].path);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowDown',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex, item } = lastSelectedItem;
+			const col = state.instances[sourceType].columns[colIndex];
+			if (!col) return;
+			const idx = col.items.findIndex((i: any) => i.path === item.path);
+			if (idx === -1 || idx >= col.items.length - 1) return;
+			e.preventDefault();
+			selectItem(colIndex, col.items[idx + 1]);
+			scrollItemIntoView(col.items[idx + 1].path);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowRight',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex, item } = lastSelectedItem;
+			if (!item.isDir) return;
+			e.preventDefault();
+			const cols = state.instances[sourceType].columns;
+			if (cols.length > colIndex + 1) {
+				const nextCol = cols[colIndex + 1];
+				if (nextCol.items.length > 0) {
+					selectItem(colIndex + 1, nextCol.items[0]);
+					scrollItemIntoView(nextCol.items[0].path);
+				}
+			} else {
+				selectItem(colIndex, item);
+			}
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowLeft',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex } = lastSelectedItem;
+			if (colIndex === 0) return;
+			e.preventDefault();
+			const cols = state.instances[sourceType].columns;
+			const prevCol = cols[colIndex - 1];
+			const prevItem = prevCol?.items.find((i: any) => i.name === prevCol.selected) ?? prevCol?.items[0];
+			useColumnView_Store.setState((s) => ({
+				lastActiveInstance: sourceType,
+				lastSelectedItem: prevItem ? { colIndex: colIndex - 1, item: prevItem } : s.lastSelectedItem,
+				instances: {
+					...s.instances,
+					[sourceType]: {
+						...s.instances[sourceType],
+						columns: cols.slice(0, colIndex),
+					},
+				},
+			}));
+		},
+	});
 
 	return (
 		<Box
@@ -228,39 +407,33 @@ export function ColumnFolderView({
 			{/* Контент с колонками */}
 			<Box
 				ref={contentRef}
-				onMouseEnter={() => setIsHovered(true)}
-				onMouseLeave={() => setIsHovered(false)}
 				sx={{
 					...contentStyle,
 					flex: 1,
 					display: 'flex',
-					overflowX: shouldShowHorizontalScroll ? 'auto' : 'hidden',
+					overflowX: 'auto',
 					overflowY: 'hidden',
 					position: 'relative',
 					'&::-webkit-scrollbar': { height: 8 },
 					'&::-webkit-scrollbar-track': { background: 'transparent' },
 					'&::-webkit-scrollbar-thumb': {
-						backgroundColor: 'rgba(255,255,255,0)',
+						backgroundColor: 'rgba(255,255,255,0.15)',
 						borderRadius: 4,
 					},
 					'&:hover::-webkit-scrollbar-thumb': {
-						backgroundColor: 'rgba(255,255,255,0.3)',
-					},
-					'&:active::-webkit-scrollbar-thumb': {
-						backgroundColor: 'rgba(255,255,255,0.5)',
+						backgroundColor: 'rgba(255,255,255,0.4)',
 					},
 				}}
 			>
 				{columns.map((col, i) => {
 					const isLast = i === columns.length - 1;
 					const width = col.width ?? COLUMN_DEFAULT_WIDTH;
-					const lastColumnWidth = isLast ? calculateLastColumnWidth() : width;
 					const isExternalOver = externalDropIndex === i;
 
 					return (
 						<Box
 							key={col.path}
-							sx={{ display: 'flex', position: 'relative' }}
+							sx={{ display: 'flex', position: 'relative', ...(isLast && { flex: 1, minWidth: minLastColumnWidth }) }}
 							onDragOver={(e: React.DragEvent) => {
 								if (!e.dataTransfer.types.includes('Files')) return;
 								e.preventDefault();
@@ -303,16 +476,13 @@ export function ColumnFolderView({
 							}}
 						>
 							{/* Droppable Column */}
-							<DroppableColumn id={`column-${sourceType}-${i}`} path={col.path} source={sourceType}>
+							<DroppableColumn id={`column-${sourceType}-${i}`} path={col.path} source={sourceType} sx={isLast ? { flex: 1 } : undefined}>
 								<Box
 									id={`col-${sourceType}-${i}`}
 									sx={{
 										display: 'flex',
 										flexDirection: 'column',
-										width: isLast ? lastColumnWidth : width,
-										flexGrow: 0,
-										flexShrink: 0,
-										minWidth: isLast ? minLastColumnWidth : width,
+										...(isLast ? { flex: 1, minWidth: minLastColumnWidth } : { width, flexGrow: 0, flexShrink: 0, minWidth: width }),
 										borderRight: isLast ? 'none' : `1px solid ${greyColor(50)}`,
 										overflow: 'hidden',
 										height: '100%',
@@ -368,6 +538,10 @@ export function ColumnFolderView({
 														name={item.name}
 														path={item.path}
 														isSelected={col.selected === item.name}
+														isActiveSelection={
+															sourceType === lastActiveInstance &&
+															i === (multiSelectedPaths.length > 0 ? multiAnchorColIndex : lastSelectedColIndex)
+														}
 														isMultiSelected={multiSelectedPaths.includes(item.path)}
 														onSelect={() => selectItem(i, item)}
 														onMultiSelectToggle={() => onMultiSelectToggle?.(i, item)}
@@ -388,6 +562,10 @@ export function ColumnFolderView({
 														name={item.name}
 														path={item.path}
 														isSelected={col.selected === item.name}
+														isActiveSelection={
+															sourceType === lastActiveInstance &&
+															i === (multiSelectedPaths.length > 0 ? multiAnchorColIndex : lastSelectedColIndex)
+														}
 														isMultiSelected={multiSelectedPaths.includes(item.path)}
 														onSelect={() => selectItem(i, item)}
 														onMultiSelectToggle={() => onMultiSelectToggle?.(i, item)}

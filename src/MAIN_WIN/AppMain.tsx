@@ -1,5 +1,5 @@
 import { runProcessing } from '@/PROCESSING/runProcessing';
-import { abortNow } from '@/PROCESSING/function/utils/processingAbort';
+import { abortNow } from '@/PROCESSING/utils/processingAbort';
 import { greenColor, greyColor, steelColor } from '@/Store/Color/grayColor';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';

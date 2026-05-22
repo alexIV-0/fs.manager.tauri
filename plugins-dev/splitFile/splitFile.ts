@@ -4,7 +4,7 @@
 
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -15,8 +15,7 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 	const blackFrames: boolean = _item.blackFrames || false;
 	const splitBy: number = Number(_item.splitBy || 0);
 
-	let curPath: string[] =
-		_item.targetPath.length === 0 ? ['$clearName (split $random(3))'] : [..._item.targetPath];
+	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName (split $random(3))'] : [..._item.targetPath];
 	const tPath: string[] = _item.import.targetPath || [];
 
 	for (const fileFrom of _item.import.inputFile as string[]) {
@@ -93,10 +92,7 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 		}
 
 		// Если получился один сегмент длиной во весь файл — возвращаем оригинал.
-		if (
-			finalArrTimeStamp.length === 1 &&
-			finalArrTimeStamp[0].sceneDuration === fileInfo.durationInSeconds
-		) {
+		if (finalArrTimeStamp.length === 1 && finalArrTimeStamp[0].sceneDuration === fileInfo.durationInSeconds) {
 			return [fileFrom];
 		}
 
@@ -108,12 +104,18 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 				nodeId: _item.id,
 				command: [
 					'-y',
-					'-ss', String(finalArrTimeStamp[scNumm].stTime),
-					'-i', fileFrom,
-					'-c:v', 'libx264',
-					'-preset', 'superfast',
-					'-c:a', 'aac',
-					'-t', String(finalArrTimeStamp[scNumm].sceneDuration),
+					'-ss',
+					String(finalArrTimeStamp[scNumm].stTime),
+					'-i',
+					fileFrom,
+					'-c:v',
+					'libx264',
+					'-preset',
+					'superfast',
+					'-c:a',
+					'aac',
+					'-t',
+					String(finalArrTimeStamp[scNumm].sceneDuration),
 					outputFile,
 				],
 			});

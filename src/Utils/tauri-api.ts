@@ -4,8 +4,16 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { installGlobalPolyfills } from '@/PluginAPI/globals';
+
+// Слушаем события только текущего webview-окна. `listen()` из `@tauri-apps/api/event`
+// по умолчанию использует target { kind: 'Any' } и принимает события emit_to(),
+// направленные ДРУГИМ окнам — из-за этого nodeWin получал данные preview, что приводило
+// к созданию мусорных папок в src-tauri/. Window-scoped listen фильтрует по label
+// нашего окна, при этом broadcast-эмиты (emit без target) тоже доходят.
+const currentWebviewWindow = getCurrentWebviewWindow();
 
 // Совместимость типов
 interface IpcRendererEvent {
@@ -70,8 +78,6 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	getSomeFromFolder: (path, search?) => ({ path, ...(search ? { search } : {}) }),
 	listSubfolders: (paths) => ({ paths }),
 	recursiveFindFiles: (path, search?) => ({ path, ...(search ? { search } : {}) }),
-	// Format
-	formatNameByPattern: (args) => ({ args }),
 	// Check
 	checkFilePath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
 	checkFolderPath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
@@ -194,6 +200,8 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	http_fetch: (args: any) => ({ args }),
 	http_upload: (args: any) => ({ args }),
 	http_download: (args: any) => ({ args }),
+	// fn exec_command(args: ExecCommandArgs) — тоже единственный параметр `args`.
+	exec_command: (args: any) => ({ args }),
 };
 
 // Алиасы: фронтенд имена → Rust имена
@@ -211,6 +219,7 @@ const commandAliases: Record<string, string> = {
 	'plugins:list': 'plugin_manager_list',
 	'plugins:install': 'plugin_manager_install',
 	'plugins:delete': 'plugin_manager_delete',
+	getUserDataPath: 'getOptionsFolder',
 	'shell:openPath': 'shellOpenPath',
 	'request-data': 'request_data',
 	requestData: 'request_data',
@@ -229,6 +238,9 @@ const commandAliases: Record<string, string> = {
 	'preview:transcode-webm': 'preview_transcode_webm',
 	'preview:delete-temp': 'preview_delete_temp',
 	'preview:make-alpha-webm': 'preview_transcode_webm',
+	// Fonts
+	'fonts:get-list': 'fontsGetList',
+	'fonts:load-one': 'fontsLoadOne',
 	// App settings
 	'app-settings:get': 'app_settings_get',
 	'app-settings:set': 'app_settings_set',
@@ -308,7 +320,7 @@ function tauriOn(channel: string, listener: Listener): void {
 	eventListeners.get(channel)!.add(listener);
 
 	if (!unlistenFns.has(channel)) {
-		const p = listen(channel, (event) => {
+		const p = currentWebviewWindow.listen(channel, (event) => {
 			const listeners = eventListeners.get(channel);
 			if (listeners) {
 				listeners.forEach((cb) => cb(event, event.payload));

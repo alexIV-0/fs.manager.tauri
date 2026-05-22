@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/nicknisi/dotfiles/master/tmux/conf/tmux.conf",
+	"$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
 	"productName": "fsManager",
 	"version": "0.1.0",
 	"identifier": "com.fsmanager.tauri.alexiv",
@@ -18,8 +18,7 @@
 				"width": 1200,
 				"height": 800,
 				"resizable": true,
-				"url": "index.html",
-				"dragDropEnabled": false
+				"url": "index.html"
 			}
 		],
 		"security": {
@@ -27,9 +26,7 @@
 			"assetProtocol": {
 				"enable": true,
 				"scope": {
-					"allow": [
-						"**"
-					],
+					"allow": ["**"],
 					"deny": [],
 					"requireLiteralLeadingDot": false
 				}
@@ -39,19 +36,13 @@
 	"plugins": {
 		"updater": {
 			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFMjI2QzE3RkM3NEY3RDIKUldUUzkzVDhGMndpenBtdVkzQStmVkF1cjE5dGt1aFkzaVVWWUcycnFaZTBTUzl3MjJDcm94VWIK",
-			"endpoints": [
-				"https://github.com/alexIV-0/fs.manager.tauri/releases/latest/download/latest.json"
-			]
+			"endpoints": ["https://github.com/alexIV-0/fs.manager.releases/releases/latest/download/latest.json"]
 		}
 	},
 	"bundle": {
 		"active": true,
 		"targets": "all",
-		"icon": [
-			"icons/fsManager.icns",
-			"icons/fsManager.ico",
-			"icons/icon.png"
-		],
+		"icon": ["icons/fsManager.icns", "icons/fsManager.ico", "icons/icon.png"],
 		"resources": {
 			"icons/nodeS.icns": "icons/nodeS.icns",
 			"icons/nodeS.ico": "icons/nodeS.ico"

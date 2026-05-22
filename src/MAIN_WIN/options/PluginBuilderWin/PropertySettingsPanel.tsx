@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Box, Button, Checkbox, Chip, FormControlLabel, IconButton, Stack, TextField, Typography } from '@mui/material';
+import { NumInput } from '@/components/NumInput';
 import { X } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
 import type { UiPropertyData } from './types';
@@ -432,36 +433,16 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 				{property.controlType === 'slider' && (
 					<>
 						<JsonField label='minValue'>
-							<input
-								type='number'
-								value={cp.minValue ?? 0}
-								onChange={(e) => setCp('minValue', Number(e.target.value))}
-								style={inp(60, '#fab387')}
-							/>
+							<NumInput value={cp.minValue ?? 0} onChange={(v) => setCp('minValue', v)} style={inp(60, '#fab387')} />
 						</JsonField>
 						<JsonField label='maxValue'>
-							<input
-								type='number'
-								value={cp.maxValue ?? 100}
-								onChange={(e) => setCp('maxValue', Number(e.target.value))}
-								style={inp(60, '#fab387')}
-							/>
+							<NumInput value={cp.maxValue ?? 100} onChange={(v) => setCp('maxValue', v)} style={inp(60, '#fab387')} />
 						</JsonField>
 						<JsonField label='step'>
-							<input
-								type='number'
-								value={cp.step ?? 1}
-								onChange={(e) => setCp('step', Number(e.target.value))}
-								style={inp(60, '#fab387')}
-							/>
+							<NumInput value={cp.step ?? 1} onChange={(v) => setCp('step', v)} style={inp(60, '#fab387')} />
 						</JsonField>
 						<JsonField label='value'>
-							<input
-								type='number'
-								value={cp.value ?? 50}
-								onChange={(e) => setCp('value', Number(e.target.value))}
-								style={inp(60, '#fab387')}
-							/>
+							<NumInput value={cp.value ?? 50} onChange={(v) => setCp('value', v)} style={inp(60, '#fab387')} />
 						</JsonField>
 						<JsonField label='isTextInput'>
 							<Checkbox
@@ -524,8 +505,14 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 								color: '#cdd6f4',
 								fontFamily: 'monospace',
 								fontSize: 13,
-								padding: '2px 4px',
+								padding: '2px 18px 2px 4px',
 								borderRadius: 4,
+								appearance: 'none',
+								WebkitAppearance: 'none',
+								cursor: 'pointer',
+								backgroundImage: "url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23888'/%3E%3C%2Fsvg%3E\")",
+								backgroundRepeat: 'no-repeat',
+								backgroundPosition: 'right 4px center',
 							}}
 						>
 							<option value='' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>

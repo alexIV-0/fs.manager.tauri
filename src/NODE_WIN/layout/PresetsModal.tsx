@@ -20,6 +20,7 @@ import { useNodes, useReactFlow } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
 import { joinPath } from '@/Utils/joinPath';
+import { tauriAPI } from '@/Utils/tauri-api';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ interface PresetItem {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-const api = window.electronAPI;
+const api = tauriAPI;
 
 async function getPressetDir(): Promise<string> {
 	const userData = await api.invoke<string>('getUserDataPath');
@@ -82,7 +83,11 @@ async function loadAllPresets(): Promise<PresetItem[]> {
 async function getUniqueName(dir: string, baseName: string): Promise<string> {
 	const exists = async (name: string) => {
 		const p = joinPath(dir, `${name}.json`);
-		return !!(await api.invoke<string>('checkFilePath', p));
+		try {
+			return !!(await api.invoke<string>('checkFilePath', p));
+		} catch {
+			return false;
+		}
 	};
 	if (!(await exists(baseName))) return baseName;
 	let i = 1;
