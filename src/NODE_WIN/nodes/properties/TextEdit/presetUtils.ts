@@ -2,8 +2,9 @@ import { nanoid } from 'nanoid';
 import { PresetIndexItem } from './types';
 import { getPresetsDir } from '@/NODE_WIN/utils/getPresetDir';
 import { joinPath } from '@/Utils/joinPath';
+import { tauriAPI } from '@/Utils/tauri-api';
 
-const api = window.electronAPI;
+const api = tauriAPI;
 
 async function getIndexPath(): Promise<string> {
 	const dir = await getPresetsDir('textPresets');

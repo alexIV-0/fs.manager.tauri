@@ -10,7 +10,10 @@
       "Bash(find /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/PROCESSING -type f 2>/dev/null | sort)",
       "Read(//Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/PROCESSING/**)",
       "Bash(find /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/Store -type f 2>/dev/null | sort)",
-      "Read(//Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/Store/**)"
+      "Read(//Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/src/Store/**)",
+      "Bash(find /Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI -type f \\\\\\( -name \"*preset*\" -o -name \"*Preset*\" \\\\\\) 2>/dev/null)",
+      "Read(//Users/aleksey.ivanov/Desktop/WORK_CEP_DEV/fs.manager.electron.MUI/**)",
+      "Bash(cargo build *)"
     ]
   }
 }

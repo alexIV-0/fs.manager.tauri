@@ -3,8 +3,9 @@
 import { getPresetsDir } from '@/NODE_WIN/utils/getPresetDir';
 import { TitlePresetItem, TitleSettings } from './types';
 import { joinPath } from '@/Utils/joinPath';
+import { tauriAPI } from '@/Utils/tauri-api';
 
-const api = window.electronAPI;
+const api = tauriAPI;
 
 // ── Пути ─────────────────────────────────────────────────────────────────────
 

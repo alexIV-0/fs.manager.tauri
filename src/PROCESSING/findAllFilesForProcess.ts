@@ -21,6 +21,7 @@ import { getSignal } from './utils/processingAbort';
 import { findFilesForSingleFolder } from './findFilesForSingleFolder';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
+import { formatNameByPattern } from '@/Utils/formatNameByPattern';
 
 export async function findAllFilesForProcess(clearQueue = true) {
 	useProcessingStats_store.getState().incIteration();
@@ -29,7 +30,7 @@ export async function findAllFilesForProcess(clearQueue = true) {
 	const { setStatusBarState } = useStatusBar_Store.getState();
 	const signal = getSignal();
 
-	const dateTime: any = await window.electronAPI.invoke('formatNameByPattern', {
+	const dateTime = formatNameByPattern({
 		string: '$YYYY.$DD.$MM-$HH.$mm',
 	});
 	const year = dateTime.slice(0, 4);

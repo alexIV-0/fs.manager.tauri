@@ -121,13 +121,6 @@ pub fn recursiveFindFiles(path: String, search: Option<super::fs_commands::Searc
     super::fs_commands::recursive_find_files(path, search)
 }
 
-// ==================== FORMAT ====================
-
-#[tauri::command]
-pub fn formatNameByPattern(args: super::fs_commands::FormatNameByPatternArgs) -> Result<String, String> {
-    super::fs_commands::format_name_by_pattern(args)
-}
-
 // ==================== USER DATA ====================
 
 #[tauri::command]

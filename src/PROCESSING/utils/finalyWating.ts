@@ -1,6 +1,7 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { getSignal } from './processingAbort';
+import { formatNameByPattern } from '@/Utils/formatNameByPattern';
 
 function formatTime(seconds: number) {
 	const total = Math.max(0, Math.floor(seconds));
@@ -15,7 +16,7 @@ export async function finalyWating(timeAEprocess: number) {
 	const { setStatusBarState } = useStatusBar_Store.getState();
 	const signal = getSignal();
 
-	const dateTime = await window.electronAPI.invoke('formatNameByPattern', { string: '$DD.$MM-$HH.$mm' });
+	const dateTime = formatNameByPattern({ string: '$DD.$MM-$HH.$mm' });
 
 	if (!isScanningStore.getState().isScanning) {
 		console.warn(`=== without waiting === ${dateTime}`);

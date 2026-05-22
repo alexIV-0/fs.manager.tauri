@@ -78,8 +78,6 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	getSomeFromFolder: (path, search?) => ({ path, ...(search ? { search } : {}) }),
 	listSubfolders: (paths) => ({ paths }),
 	recursiveFindFiles: (path, search?) => ({ path, ...(search ? { search } : {}) }),
-	// Format
-	formatNameByPattern: (args) => ({ args }),
 	// Check
 	checkFilePath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
 	checkFolderPath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
@@ -219,6 +217,7 @@ const commandAliases: Record<string, string> = {
 	'plugins:list': 'plugin_manager_list',
 	'plugins:install': 'plugin_manager_install',
 	'plugins:delete': 'plugin_manager_delete',
+	getUserDataPath: 'getOptionsFolder',
 	'shell:openPath': 'shellOpenPath',
 	'request-data': 'request_data',
 	requestData: 'request_data',

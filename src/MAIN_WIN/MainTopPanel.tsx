@@ -117,6 +117,7 @@ export function MainTopPanel() {
 						</IconButton>
 					</Tooltip>
 				)}
+				{/*
 				<Tooltip title='Open devTools'>
 					<IconButton sx={{ p: 0, margin: '0 10px', opacity: 0.7, '&:hover': { opacity: 1 } }} size='small' onClick={openDevTools}>
 						<Wrench strokeWidth={1} />
@@ -127,6 +128,7 @@ export function MainTopPanel() {
 						<Hammer strokeWidth={1} />
 					</IconButton>
 				</Tooltip>
+				*/}
 			</Box>
 
 			<OptionsPopover open={open} handleClose={() => setOpen(false)} />

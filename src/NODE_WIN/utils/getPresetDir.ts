@@ -1,8 +1,7 @@
 import { joinPath } from '@/Utils/joinPath';
-
-const api = window.electronAPI;
+import { tauriAPI } from '@/Utils/tauri-api';
 
 export async function getPresetsDir(_name: string): Promise<string> {
-	const userData = await api.invoke<string>('getUserDataPath');
+	const userData = await tauriAPI.invoke<string>('getUserDataPath');
 	return joinPath(userData, _name);
 }
