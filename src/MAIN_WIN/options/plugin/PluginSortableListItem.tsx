@@ -223,11 +223,17 @@ export const PluginSortableListItem: React.FC<SortableListItemProps> = ({ plugin
 								background: 'transparent',
 								border: `1px solid ${greyColor(30)}`,
 								borderRadius: 4,
-								padding: '2px 4px',
+								padding: '2px 18px 2px 4px',
 								color: greyColor(85),
 								fontSize: 12,
 								fontFamily: 'monospace',
 								outline: 'none',
+								appearance: 'none',
+								WebkitAppearance: 'none',
+								cursor: 'pointer',
+								backgroundImage: "url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23888'/%3E%3C%2Fsvg%3E\")",
+								backgroundRepeat: 'no-repeat',
+								backgroundPosition: 'right 4px center',
 							}}
 							title='Единица измерения стоимости'
 						>

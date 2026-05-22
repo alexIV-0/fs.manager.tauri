@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Stack, TextField, Typography } from '@mui/material';
+import { NumInput } from '@/components/NumInput';
 import { X } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
@@ -117,21 +118,11 @@ export function NodeSettingsPanel({ uiJson, onChange, onClose }: NodeSettingsPan
 				</JsonField>
 
 				<JsonField label='width'>
-					<input
-						type='number'
-						value={uiJson.width}
-						onChange={(e) => onChange({ ...uiJson, width: Number(e.target.value) })}
-						style={inp(60)}
-					/>
+					<NumInput value={uiJson.width} onChange={(v) => onChange({ ...uiJson, width: v })} integer style={inp(60)} />
 				</JsonField>
 
 				<JsonField label='height'>
-					<input
-						type='number'
-						value={uiJson.height}
-						onChange={(e) => onChange({ ...uiJson, height: Number(e.target.value) })}
-						style={inp(60)}
-					/>
+					<NumInput value={uiJson.height} onChange={(v) => onChange({ ...uiJson, height: v })} integer style={inp(60)} />
 				</JsonField>
 
 				<JsonField label='type'>

@@ -13,6 +13,7 @@ import { TopPanelLocal } from './TopPanelLocal';
 import { TopPanelGD } from './TopPanelGD';
 import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimColumn';
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
+import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 
 interface UniversalFolderViewProps {
@@ -23,7 +24,7 @@ interface UniversalFolderViewProps {
 
 export function UniversalFolderView({ type, containerHeight = '100%', onStartResize }: UniversalFolderViewProps) {
 	const { activeMainFolder, activeProjectFolder } = setActiveFolders_store();
-	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths, clearMultiSelection } = useColumnView_Store();
+	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths, clearMultiSelection, lastActiveInstance } = useColumnView_Store();
 	const { localFolder } = localFolders_stor();
 
 	const refreshTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -135,6 +136,28 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			const cols = state.instances[type].columns;
 			if (cols.length === 0) return;
 			await pasteFromClipboardFs(cols[cols.length - 1].path);
+		},
+	});
+
+	// Tab — переключение активной панели между gd и local
+	useKeyboardShortcut({
+		key: 'Tab',
+		skipOnInput: true,
+		enabled: lastActiveInstance === type,
+		callback: (e) => {
+			e.preventDefault();
+			useColumnView_Store.setState({ lastActiveInstance: type === 'gd' ? 'local' : 'gd' });
+		},
+	});
+
+	// Escape — отмена операции cut
+	useKeyboardShortcut({
+		key: 'Escape',
+		skipOnInput: true,
+		callback: () => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== type) return;
+			clipboardFs_store.getState().clear();
 		},
 	});
 

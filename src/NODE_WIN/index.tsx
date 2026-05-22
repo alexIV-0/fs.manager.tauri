@@ -10,7 +10,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { SavedState } from './definitions/types';
 import NodeView from './layout/FlowNodeView';
 import './index.css';
-import type { CollectedUINode } from '@/Utils/collectPluginUINodes';
+import { loadAllUINodes, type CollectedUINode } from '@/Utils/loadAllUINodes';
 import { buildNodeDefinitions } from './definitions';
 import { joinPath } from '@/Utils/joinPath';
 
@@ -36,17 +36,11 @@ function NodeApp() {
 			try {
 				rebuildColorTypes();
 
-				// Plugin UI ноды собирает MAIN_WIN (там есть populated plugin_Store/typeOfNodes_store)
-				// и кладёт в localStorage перед вызовом 'open-node-window'.
-				// NODE_WIN — отдельный renderer-процесс, эти сторы тут пустые.
-				const storedNodes = localStorage.getItem('pluginUINodes');
-				let nodes: CollectedUINode[] = [];
-
-				if (storedNodes) {
-					nodes = JSON.parse(storedNodes) as CollectedUINode[];
-					setPluginUINodes(nodes);
-				}
-
+				// Источник правды — Rust plugin manager. Он сканирует диск и держит
+				// актуальный список UI-нод в памяти. Здесь же применяются enabled-фильтр
+				// (из localStorage['plugins-data']) и colorType override (из localStorage['typeOfNodes']).
+				const nodes = await loadAllUINodes();
+				setPluginUINodes(nodes);
 				buildNodeDefinitions(nodes);
 
 				if (!isMounted) return;

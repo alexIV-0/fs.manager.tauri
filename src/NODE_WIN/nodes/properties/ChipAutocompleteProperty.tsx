@@ -46,6 +46,9 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 	const removeFromHistory = userInputHistory_store((s) => s.removeFromHistory);
 	const historyItems = userInputHistory_store((s) => (historyKey ? (s.history[historyKey] ?? EMPTY_ARRAY) : EMPTY_ARRAY));
 
+	// Системные опции (без #historyValue) — их значения не нужно сохранять в историю
+	const systemOptionsRef = useRef<Set<string>>(new Set());
+
 	const [inheritedChips, setInheritedChips] = useState<string[]>(
 		Array.isArray(settings?.inheritedValue)
 			? settings.inheritedValue
@@ -104,6 +107,11 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 			// #historyValue резолвится через useResolveOptions (с переданным propertyId)
 			const options = await resolveOptions(settings.options ?? []);
 
+			// Обновляем кэш системных опций (без #historyValue) для проверки при сохранении
+			const sysOnlyOpts = (settings.options ?? []).filter((o) => !/^#historyValue(\(.+\))?$/.test(o));
+			const sysResolved = await resolveOptions(sysOnlyOpts);
+			systemOptionsRef.current = new Set(sysResolved);
+
 			// Элементы из истории могут уже присутствовать среди resolved options (через #historyValue).
 			// Дополнительно вставляем те, которых ещё нет — для корректной работы deletableSet.
 			const optionsSet = new Set(options);
@@ -140,7 +148,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 		setInputValue('');
 		setShowDropdown(false);
 		setDropdownType(null);
-		if (historyKey) addToHistory(historyKey, value);
+		if (historyKey && !systemOptionsRef.current.has(value)) addToHistory(historyKey, value);
 	};
 
 	/** Универсальная замена слова/значения */
@@ -204,7 +212,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 			setEditingChipValue(newValue);
 
 			if (commit) {
-				if (historyKey) addToHistory(historyKey, newValue);
+				if (historyKey && !systemOptionsRef.current.has(newValue)) addToHistory(historyKey, newValue);
 				setEditingChipIndex(null);
 				setShowDropdown(false);
 				setDropdownType(null);
@@ -255,7 +263,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 
 		// Если список закрыт и нажат Enter в режиме чипа - выходим из редактирования
 		if (e.key === 'Enter' && dropdownType === 'chip' && !showDropdown) {
-			if (historyKey && editingChipValue.trim()) addToHistory(historyKey, editingChipValue);
+			if (historyKey && editingChipValue.trim() && !systemOptionsRef.current.has(editingChipValue)) addToHistory(historyKey, editingChipValue);
 			setEditingChipIndex(null);
 			setDropdownType(null);
 			return;

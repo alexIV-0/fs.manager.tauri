@@ -121,4 +121,34 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
 
 export const HIDDEN_FILES = ['.DS_Store', 'Thumbs.db'];
 export const COLUMN_MIN_WIDTH = 150;
+export const COLUMN_MAX_WIDTH = 600;
 export const COLUMN_DEFAULT_WIDTH = 220;
+
+let _measureCanvas: HTMLCanvasElement | null = null;
+let _measureCtx: CanvasRenderingContext2D | null = null;
+
+/** Calculates optimal column width to fit the longest filename, clamped to [COLUMN_MIN_WIDTH, COLUMN_MAX_WIDTH]. */
+export function calcColumnWidth(items: { name: string }[]): number {
+	if (items.length === 0) return COLUMN_DEFAULT_WIDTH;
+
+	if (!_measureCanvas) {
+		_measureCanvas = document.createElement('canvas');
+		_measureCtx = _measureCanvas.getContext('2d');
+	}
+	const ctx = _measureCtx;
+	if (!ctx) return COLUMN_DEFAULT_WIDTH;
+
+	// Match the font used in CurentFolderItem / CurentFileItem:
+	// ListItemText sx={{ fontSize: '1.2rem' }} → 1.2 * 16px = ~19px; selected items are bold (600)
+	ctx.font = '600 19px -apple-system, system-ui, "Segoe UI", sans-serif';
+
+	let maxW = 0;
+	for (const item of items) {
+		const w = ctx.measureText(item.name).width;
+		if (w > maxW) maxW = w;
+	}
+
+	// icon(24) + gap(8) + left-pad(16) + right-pad(16) + safety(12) = 76
+	const total = Math.ceil(maxW) + 76;
+	return Math.max(COLUMN_MIN_WIDTH, Math.min(COLUMN_MAX_WIDTH, total));
+}

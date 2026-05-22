@@ -1,6 +1,7 @@
 // ColumnFolderView.tsx
 import { Box, List } from '@mui/material';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { greyColor } from '@/Store/Color/grayColor';
 import { contentStyle, resizeHandleStyle, resizeHandleStyleBottom, resizeHandleStyleLeft } from '../mainStyles';
 import { DraggableFileItem } from './DraggableFileItem';
@@ -43,7 +44,6 @@ export function ColumnFolderView({
 	onMultiSelectRange,
 }: ColumnFolderViewProps) {
 	const [resizingColumnIndex, setResizingColumnIndex] = useState<number | null>(null);
-	const [isHovered, setIsHovered] = useState(false);
 	const [externalDropIndex, setExternalDropIndex] = useState<number | null>(null);
 	const [emptyMenu, setEmptyMenu] = useState<{ pos: { mouseX: number; mouseY: number }; colPath: string } | null>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
@@ -239,7 +239,7 @@ export function ColumnFolderView({
 	const resizeColumn = (e: MouseEvent) => {
 		if (resizingColumnIndex === null) return;
 
-		const columnEl = document.getElementById(`col-${resizingColumnIndex}`);
+		const columnEl = document.getElementById(`col-${sourceType}-${resizingColumnIndex}`);
 		if (!columnEl) return;
 
 		const rect = columnEl.getBoundingClientRect();
@@ -261,31 +261,117 @@ export function ColumnFolderView({
 		};
 	}, [resizingColumnIndex]);
 
-	// ==============================
-	// 🔹 Расчет ширины последней колонки
-	// ==============================
-	const calculateLastColumnWidth = () => {
-		if (!contentRef.current || columns.length === 0) return 'auto';
-		const containerWidth = contentRef.current.clientWidth;
-		const fixedColumnsWidth = columns.slice(0, -1).reduce((total, col) => total + (col.width ?? COLUMN_DEFAULT_WIDTH), 0);
-		const availableWidth = containerWidth - fixedColumnsWidth;
-		return availableWidth >= minLastColumnWidth ? availableWidth : minLastColumnWidth;
-	};
 
-	const needsHorizontalScroll = () => {
-		if (!contentRef.current || columns.length === 0) return false;
-		const containerWidth = contentRef.current.clientWidth;
-		const totalColumnsWidth = columns.reduce((total, col, index) => {
-			if (index === columns.length - 1) {
-				const lastColWidth = calculateLastColumnWidth();
-				return total + (typeof lastColWidth === 'number' ? lastColWidth : minLastColumnWidth);
+
+	// Auto-scroll to the rightmost column whenever a new one is added
+	useEffect(() => {
+		if (contentRef.current) {
+			contentRef.current.scrollLeft = contentRef.current.scrollWidth;
+		}
+	}, [columns.length]);
+
+	// ── Keyboard navigation ───────────────────────────────────────────────────
+	const scrollItemIntoView = (path: string) => {
+		setTimeout(() => {
+			const els = document.querySelectorAll<HTMLElement>('[data-item-path]');
+			for (const el of els) {
+				if (el.dataset.itemPath === path) {
+					el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+					break;
+				}
 			}
-			return total + (col.width ?? COLUMN_DEFAULT_WIDTH);
-		}, 0);
-		return totalColumnsWidth > containerWidth;
+		}, 30);
 	};
 
-	const shouldShowHorizontalScroll = needsHorizontalScroll() && isHovered;
+	useKeyboardShortcut({
+		key: 'ArrowUp',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex, item } = lastSelectedItem;
+			const col = state.instances[sourceType].columns[colIndex];
+			if (!col) return;
+			const idx = col.items.findIndex((i: any) => i.path === item.path);
+			if (idx <= 0) return;
+			e.preventDefault();
+			selectItem(colIndex, col.items[idx - 1]);
+			scrollItemIntoView(col.items[idx - 1].path);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowDown',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex, item } = lastSelectedItem;
+			const col = state.instances[sourceType].columns[colIndex];
+			if (!col) return;
+			const idx = col.items.findIndex((i: any) => i.path === item.path);
+			if (idx === -1 || idx >= col.items.length - 1) return;
+			e.preventDefault();
+			selectItem(colIndex, col.items[idx + 1]);
+			scrollItemIntoView(col.items[idx + 1].path);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowRight',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex, item } = lastSelectedItem;
+			if (!item.isDir) return;
+			e.preventDefault();
+			const cols = state.instances[sourceType].columns;
+			if (cols.length > colIndex + 1) {
+				const nextCol = cols[colIndex + 1];
+				if (nextCol.items.length > 0) {
+					selectItem(colIndex + 1, nextCol.items[0]);
+					scrollItemIntoView(nextCol.items[0].path);
+				}
+			} else {
+				selectItem(colIndex, item);
+			}
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowLeft',
+		skipOnInput: true,
+		callback: (e) => {
+			const state = useColumnView_Store.getState();
+			if (state.lastActiveInstance !== sourceType) return;
+			const { lastSelectedItem } = state;
+			if (!lastSelectedItem) return;
+			const { colIndex } = lastSelectedItem;
+			if (colIndex === 0) return;
+			e.preventDefault();
+			const cols = state.instances[sourceType].columns;
+			const prevCol = cols[colIndex - 1];
+			const prevItem = prevCol?.items.find((i: any) => i.name === prevCol.selected) ?? prevCol?.items[0];
+			useColumnView_Store.setState((s) => ({
+				lastActiveInstance: sourceType,
+				lastSelectedItem: prevItem ? { colIndex: colIndex - 1, item: prevItem } : s.lastSelectedItem,
+				instances: {
+					...s.instances,
+					[sourceType]: {
+						...s.instances[sourceType],
+						columns: cols.slice(0, colIndex),
+					},
+				},
+			}));
+		},
+	});
 
 	return (
 		<Box
@@ -321,39 +407,33 @@ export function ColumnFolderView({
 			{/* Контент с колонками */}
 			<Box
 				ref={contentRef}
-				onMouseEnter={() => setIsHovered(true)}
-				onMouseLeave={() => setIsHovered(false)}
 				sx={{
 					...contentStyle,
 					flex: 1,
 					display: 'flex',
-					overflowX: shouldShowHorizontalScroll ? 'auto' : 'hidden',
+					overflowX: 'auto',
 					overflowY: 'hidden',
 					position: 'relative',
 					'&::-webkit-scrollbar': { height: 8 },
 					'&::-webkit-scrollbar-track': { background: 'transparent' },
 					'&::-webkit-scrollbar-thumb': {
-						backgroundColor: 'rgba(255,255,255,0)',
+						backgroundColor: 'rgba(255,255,255,0.15)',
 						borderRadius: 4,
 					},
 					'&:hover::-webkit-scrollbar-thumb': {
-						backgroundColor: 'rgba(255,255,255,0.3)',
-					},
-					'&:active::-webkit-scrollbar-thumb': {
-						backgroundColor: 'rgba(255,255,255,0.5)',
+						backgroundColor: 'rgba(255,255,255,0.4)',
 					},
 				}}
 			>
 				{columns.map((col, i) => {
 					const isLast = i === columns.length - 1;
 					const width = col.width ?? COLUMN_DEFAULT_WIDTH;
-					const lastColumnWidth = isLast ? calculateLastColumnWidth() : width;
 					const isExternalOver = externalDropIndex === i;
 
 					return (
 						<Box
 							key={col.path}
-							sx={{ display: 'flex', position: 'relative' }}
+							sx={{ display: 'flex', position: 'relative', ...(isLast && { flex: 1, minWidth: minLastColumnWidth }) }}
 							onDragOver={(e: React.DragEvent) => {
 								if (!e.dataTransfer.types.includes('Files')) return;
 								e.preventDefault();
@@ -396,16 +476,13 @@ export function ColumnFolderView({
 							}}
 						>
 							{/* Droppable Column */}
-							<DroppableColumn id={`column-${sourceType}-${i}`} path={col.path} source={sourceType}>
+							<DroppableColumn id={`column-${sourceType}-${i}`} path={col.path} source={sourceType} sx={isLast ? { flex: 1 } : undefined}>
 								<Box
 									id={`col-${sourceType}-${i}`}
 									sx={{
 										display: 'flex',
 										flexDirection: 'column',
-										width: isLast ? lastColumnWidth : width,
-										flexGrow: 0,
-										flexShrink: 0,
-										minWidth: isLast ? minLastColumnWidth : width,
+										...(isLast ? { flex: 1, minWidth: minLastColumnWidth } : { width, flexGrow: 0, flexShrink: 0, minWidth: width }),
 										borderRight: isLast ? 'none' : `1px solid ${greyColor(50)}`,
 										overflow: 'hidden',
 										height: '100%',

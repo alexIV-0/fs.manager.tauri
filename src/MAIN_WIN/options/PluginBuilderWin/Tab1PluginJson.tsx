@@ -5,6 +5,7 @@ import { greyColor } from '@/Store/Color/grayColor';
 import type { PluginJsonData } from './types';
 import { COST_UNITS } from './types';
 import { DescriptionEditorModal } from './DescriptionEditorModal';
+import { NumInput } from '@/components/NumInput';
 
 interface Tab1Props {
 	data: PluginJsonData;
@@ -140,10 +141,10 @@ export function Tab1PluginJson({ data, onChange }: Tab1Props) {
 					</JsonLine>
 
 					<JsonLine k='apiVersion'>
-						<input
-							type='number'
+						<NumInput
 							value={data.apiVersion}
-							onChange={(e) => set('apiVersion', Number(e.target.value))}
+							onChange={(v) => set('apiVersion', v)}
+							integer
 							style={inp(40, '#fab387')}
 						/>
 					</JsonLine>
@@ -158,7 +159,18 @@ export function Tab1PluginJson({ data, onChange }: Tab1Props) {
 						<select
 							value={data.costUnit}
 							onChange={(e) => set('costUnit', e.target.value)}
-							style={{ ...inp(90, '#a6e3a1'), appearance: 'auto' }}
+							style={{
+								...inp(90, '#a6e3a1'),
+								appearance: 'none',
+								WebkitAppearance: 'none',
+								border: '1px solid rgba(166,227,161,0.3)',
+								borderRadius: 3,
+								padding: '2px 18px 2px 4px',
+								cursor: 'pointer',
+								backgroundImage: "url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23a6e3a1'/%3E%3C%2Fsvg%3E\")",
+								backgroundRepeat: 'no-repeat',
+								backgroundPosition: 'right 4px center',
+							}}
 						>
 							{COST_UNITS.map((u) => (
 								<option key={u} value={u} style={{ background: '#1e1e2e', color: '#a6e3a1' }}>

@@ -71,6 +71,7 @@ export function CurrentFileItem({
 	const { menuPosition, handleContextMenu, handleMenuClose, isMenuOpen } = useContextMenu(menuId);
 
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
+	const isCut = clipboardFs_store((s) => s.type === 'cut' && s.paths.includes(path));
 
 	const getMultiPaths = () => {
 		if (!isMultiSelected) return [path];
@@ -116,7 +117,7 @@ export function CurrentFileItem({
 	}, [name]);
 
 	const getIconByType = () => {
-		const iconProps = { style: { flexShrink: 0 }, size: 22, color: iconColor };
+		const iconProps = { style: { flexShrink: 0, opacity: isCut ? 0.4 : 1, transition: 'opacity 0.2s ease' }, size: 22, color: iconColor };
 
 		switch (detectedType) {
 			case 'video':
@@ -214,8 +215,9 @@ export function CurrentFileItem({
 								fontWeight: isSelected ? 600 : 400,
 								fontSize: '1.2rem',
 								color: greyColor(80),
+								opacity: isCut ? 0.4 : 1,
 								cursor: 'pointer',
-								transition: 'color 0.2s ease',
+								transition: 'color 0.2s ease, opacity 0.2s ease',
 								'&:hover': { color: '#ffffff' },
 							}}
 						/>

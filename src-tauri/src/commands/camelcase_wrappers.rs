@@ -133,6 +133,16 @@ pub fn getPluginsDevPath() -> Result<String, String> {
     super::fs_commands::get_plugins_dev_path()
 }
 
+#[tauri::command]
+pub fn getPlatformTarget() -> String {
+    super::fs_commands::get_platform_target()
+}
+
+#[tauri::command]
+pub fn getCpuCount() -> usize {
+    super::fs_commands::get_cpu_count()
+}
+
 // ==================== CHECK ====================
 
 #[tauri::command]

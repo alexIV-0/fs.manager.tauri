@@ -24,7 +24,7 @@ export const mainSearch = {
 				controlType: 'autocomplete',
 				controlProps: {
 					label: 'Search Type',
-					tooltip: 'Search Type',
+					tooltip: 'Тип файлов для поиска. Может быть только один тип',
 					options: ['#typeOfFile', 'folders'],
 					value: [],
 					optionsOnly: true,

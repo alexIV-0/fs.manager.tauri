@@ -35,6 +35,7 @@ export default function TitleCanvas({
 
 	// Редактирование текста
 	const [isEditing, setIsEditing] = useState(false);
+	const [editPos, setEditPos] = useState<{ x: number; y: number } | null>(null);
 	const editInputRef = useRef<HTMLTextAreaElement>(null);
 
 	// Редактирование размера кадра
@@ -145,6 +146,10 @@ export default function TitleCanvas({
 			const inside = mouseX >= vx && mouseX <= vx + vw && mouseY >= vy && mouseY <= vy + vh;
 
 			if (inside) {
+				const s = settingsRef.current;
+				const textCanvasX = offsetX + (s.position.x / 100) * vw;
+				const textCanvasY = offsetY + (s.position.y / 100) * vh;
+				setEditPos({ x: rect.left + textCanvasX, y: rect.top + textCanvasY });
 				setIsEditing(true);
 				setTimeout(() => {
 					editInputRef.current?.focus();
@@ -241,8 +246,8 @@ export default function TitleCanvas({
 				)}
 			</div>
 
-			{/* Textarea */}
-			{isEditing && (
+			{/* Textarea — позиционируется у точки привязки текста через fixed */}
+			{isEditing && editPos && (
 				<textarea
 					ref={editInputRef}
 					value={placeholderText}
@@ -254,26 +259,26 @@ export default function TitleCanvas({
 					}}
 					placeholder='Preview text...'
 					style={{
-						position: 'absolute',
-						left: '50%',
-						top: '50%',
-						transform: 'translate(-50%, -50%)',
-						width: Math.min(
-							400,
-							(settings.text.wrapWidth / 100) * (settings.videoWidth * transformRef.current.scale),
+						position: 'fixed',
+						left: editPos.x,
+						top: editPos.y,
+						transform: getTextareaTransform(settings.position.hAlign, settings.position.vAlign),
+						width: Math.max(
+							120,
+							Math.min(600, (settings.text.wrapWidth / 100) * (settings.videoWidth * transformRef.current.scale)),
 						),
-						minHeight: 60,
-						backgroundColor: 'rgba(0,0,0,0.75)',
+						minHeight: 44,
+						backgroundColor: 'rgba(0,0,0,0.82)',
 						color: '#fff',
 						fontSize: 13,
-						fontFamily: 'monospace',
-						border: '1px dashed rgba(255,255,255,0.4)',
+						fontFamily: `"${settings.text.font}", monospace`,
+						border: '1px dashed rgba(255,255,255,0.5)',
 						borderRadius: 4,
 						outline: 'none',
 						resize: 'both',
 						padding: '6px 10px',
 						boxSizing: 'border-box',
-						zIndex: 5,
+						zIndex: 9999,
 					}}
 				/>
 			)}
@@ -323,3 +328,9 @@ const sizeInputStyle: React.CSSProperties = {
 	padding: '1px 4px',
 	outline: 'none',
 };
+
+function getTextareaTransform(hAlign: 'left' | 'center' | 'right', vAlign: 'top' | 'middle' | 'bottom'): string {
+	const tx = hAlign === 'center' ? '-50%' : hAlign === 'right' ? '-100%' : '0%';
+	const ty = vAlign === 'middle' ? '-50%' : vAlign === 'bottom' ? '-100%' : '0%';
+	return `translate(${tx}, ${ty})`;
+}

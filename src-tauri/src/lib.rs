@@ -247,6 +247,10 @@ pub fn run() {
             get_user_data_path,
             get_plugins_dev_path,
             getPluginsDevPath,
+            get_platform_target,
+            getPlatformTarget,
+            get_cpu_count,
+            getCpuCount,
             fonts_get_list,
             fonts_load_one,
             // CamelCase wrappers (frontend compatible)

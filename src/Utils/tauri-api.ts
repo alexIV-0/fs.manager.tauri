@@ -200,6 +200,8 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	http_fetch: (args: any) => ({ args }),
 	http_upload: (args: any) => ({ args }),
 	http_download: (args: any) => ({ args }),
+	// fn exec_command(args: ExecCommandArgs) — тоже единственный параметр `args`.
+	exec_command: (args: any) => ({ args }),
 };
 
 // Алиасы: фронтенд имена → Rust имена
@@ -236,6 +238,9 @@ const commandAliases: Record<string, string> = {
 	'preview:transcode-webm': 'preview_transcode_webm',
 	'preview:delete-temp': 'preview_delete_temp',
 	'preview:make-alpha-webm': 'preview_transcode_webm',
+	// Fonts
+	'fonts:get-list': 'fontsGetList',
+	'fonts:load-one': 'fontsLoadOne',
 	// App settings
 	'app-settings:get': 'app_settings_get',
 	'app-settings:set': 'app_settings_set',

@@ -1,6 +1,6 @@
 {
-	"id": "transcribeAudio",
-	"name": "Transcribe Audio to Text",
+	"id": "transcribeVA",
+	"name": "TranscribeVA to text",
 	"version": "0.1",
 	"apiVersion": 1,
 	"type": [
@@ -8,7 +8,7 @@
 		"processing"
 	],
 	"description": "Делаем транскрипцию аудио в текст. с таймкодами или просто в текст. модели для обработки подключаются отдельно",
-	"main": "transcribe.js",
+	"main": "transcribeVA.js",
 	"ui": "ui.json",
 	"copyAssets": [
 		"whisper"

@@ -6,6 +6,7 @@ import { greyColor } from '@/Store/Color/grayColor';
 import { OverlayFormatSettings } from './types';
 import PanelSlider from '../PanelSlider';
 import { SectionLabel, CheckboxRow, FilePickerButton } from '../PanelUI';
+import { NumInput } from '@/components/NumInput';
 
 // ── 3×3 position presets ───────────────────────────────────────────────────
 
@@ -176,21 +177,9 @@ function OverlaySettingsPanel({
 			<Box sx={{ p: 1.5, pb: 1 }}>
 				<SectionLabel>BG Canvas Size</SectionLabel>
 				<Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-					<input
-						type='number'
-						value={bgWidth}
-						min={1}
-						onChange={(e) => onChange({ ...settings, bgWidth: Math.max(1, parseInt(e.target.value) || bgWidth) })}
-						style={numInputStyle}
-					/>
+					<NumInput value={bgWidth} min={1} integer onChange={(v) => onChange({ ...settings, bgWidth: v })} style={numInputStyle} />
 					<Typography sx={{ fontSize: 11, color: labelColor, flexShrink: 0 }}>×</Typography>
-					<input
-						type='number'
-						value={bgHeight}
-						min={1}
-						onChange={(e) => onChange({ ...settings, bgHeight: Math.max(1, parseInt(e.target.value) || bgHeight) })}
-						style={numInputStyle}
-					/>
+					<NumInput value={bgHeight} min={1} integer onChange={(v) => onChange({ ...settings, bgHeight: v })} style={numInputStyle} />
 				</Box>
 			</Box>
 

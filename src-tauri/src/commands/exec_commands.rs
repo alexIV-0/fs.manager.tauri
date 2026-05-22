@@ -8,6 +8,7 @@ use std::time::Duration;
 use tauri::Emitter;
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecCommandArgs {
     pub cmd: String,
     pub args: Vec<String>,
@@ -29,7 +30,7 @@ pub struct ExecOutput {
 
 // Глобальное состояние для активных процессов
 pub struct ExecState {
-    pub running: Mutex<Vec<RunningProcess>>,
+    pub running: Arc<Mutex<Vec<RunningProcess>>>,
     pub abort_flag: Arc<AtomicBool>,
 }
 
@@ -43,7 +44,7 @@ pub struct RunningProcess {
 impl ExecState {
     pub fn new(processing_abort: Arc<AtomicBool>) -> Self {
         Self {
-            running: Mutex::new(Vec::new()),
+            running: Arc::new(Mutex::new(Vec::new())),
             abort_flag: processing_abort,
         }
     }
@@ -55,12 +56,38 @@ impl ExecState {
 }
 
 #[tauri::command]
-#[allow(unused_assignments)]
-pub fn exec_command(
+pub async fn exec_command(
     args: ExecCommandArgs,
     app: tauri::AppHandle,
-    exec_state: tauri::State<ExecState>,
-    processing_state: tauri::State<super::processing_commands::ProcessingState>,
+    exec_state: tauri::State<'_, ExecState>,
+    processing_state: tauri::State<'_, std::sync::Mutex<super::processing_commands::ProcessingState>>,
+) -> Result<ExecOutput, String> {
+    // Подготавливаем Send + 'static данные для блокирующей таски.
+    // Sync-команды Tauri выполняются на главном потоке и блокируют WebView event-loop,
+    // поэтому всю долгую работу (spawn процесса, чтение stdout/stderr, ожидание) —
+    // в tokio::task::spawn_blocking.
+    let running = exec_state.running.clone();
+    let abort_flag = exec_state.abort_flag.clone();
+    let processing_abort = processing_state
+        .lock()
+        .map_err(|e| format!("ProcessingState lock poisoned: {}", e))?
+        .abort_signal
+        .clone();
+
+    tokio::task::spawn_blocking(move || {
+        exec_command_blocking(args, app, running, abort_flag, processing_abort)
+    })
+    .await
+    .map_err(|e| format!("exec task panicked: {}", e))?
+}
+
+#[allow(unused_assignments)]
+fn exec_command_blocking(
+    args: ExecCommandArgs,
+    app: tauri::AppHandle,
+    running: Arc<Mutex<Vec<RunningProcess>>>,
+    abort_flag: Arc<AtomicBool>,
+    processing_abort: Arc<AtomicBool>,
 ) -> Result<ExecOutput, String> {
     let cmd = &args.cmd;
     let cmd_args = &args.args;
@@ -110,7 +137,7 @@ pub fn exec_command(
 
     // Регистрируем процесс
     {
-        let mut processes = exec_state.running.lock().unwrap();
+        let mut processes = running.lock().unwrap();
         processes.push(RunningProcess {
             node_id: args.node_id.clone().unwrap_or_default(),
             killed: false,
@@ -121,25 +148,6 @@ pub fn exec_command(
     // Читаем stdout и stderr построчно
     let stdout_reader = BufReader::new(child.stdout.take().unwrap());
     let stderr_reader = BufReader::new(child.stderr.take().unwrap());
-
-    // Флаг для мониторинга abort
-    let should_abort = Arc::new(AtomicBool::new(false));
-
-    // Поток мониторинга abort
-    let abort_monitor_state = exec_state.abort_flag.clone();
-    let processing_abort = processing_state.abort_signal.clone();
-    let should_abort_clone = should_abort.clone();
-    let monitor_handle = thread::spawn(move || {
-        loop {
-            if processing_abort.load(Ordering::Relaxed)
-                || abort_monitor_state.load(Ordering::Relaxed)
-            {
-                should_abort_clone.store(true, Ordering::Relaxed);
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-    });
 
     // Читаем stdout в отдельном потоке
     let app_clone = app.clone();
@@ -216,9 +224,11 @@ pub fn exec_command(
     #[allow(unused_assignments)]
     let killed;
     loop {
-        if should_abort.load(Ordering::Relaxed) {
+        // Проверяем abort-флаги напрямую — без отдельного monitor-потока,
+        // он создавал deadlock при normal completion (бесконечный loop без выхода).
+        if abort_flag.load(Ordering::Relaxed) || processing_abort.load(Ordering::Relaxed) {
             println!("[Exec] Abort signal received, killing process {}", child_pid);
-            
+
             // Отправляем событие отмены
             if let Some(ref node_id) = args.node_id {
                 let _ = app.emit(
@@ -231,7 +241,7 @@ pub fn exec_command(
                     }),
                 );
             }
-            
+
             let _ = child.kill();
             killed = true;
             break;
@@ -243,13 +253,10 @@ pub fn exec_command(
                 // Процесс завершился
                 let exit_code = status.code().unwrap_or(-1);
                 println!("[Exec] Process {} finished with exit code: {}", cmd, exit_code);
-                
+
                 // Собираем вывод
                 let stdout_output = stdout_handle.join().unwrap_or_default();
                 let stderr_output = stderr_handle.join().unwrap_or_default();
-                
-                // Останавливаем монитор
-                let _ = monitor_handle.join();
 
                 // Отправляем событие завершения
                 if let Some(ref node_id) = args.node_id {
@@ -284,11 +291,10 @@ pub fn exec_command(
     // Если дошли сюда — процесс был убит
     let stdout_output = stdout_handle.join().unwrap_or_default();
     let stderr_output = stderr_handle.join().unwrap_or_default();
-    let _ = monitor_handle.join();
 
     // Убираем из списка запущенных
     {
-        let mut processes = exec_state.running.lock().unwrap();
+        let mut processes = running.lock().unwrap();
         for proc in processes.iter_mut() {
             if proc.pid == Some(child_pid) {
                 proc.killed = true;
@@ -298,7 +304,7 @@ pub fn exec_command(
     }
 
     // Сбрасываем флаг abort
-    exec_state.abort_flag.store(false, Ordering::Relaxed);
+    abort_flag.store(false, Ordering::Relaxed);
 
     Ok(ExecOutput {
         exit_code: -1,

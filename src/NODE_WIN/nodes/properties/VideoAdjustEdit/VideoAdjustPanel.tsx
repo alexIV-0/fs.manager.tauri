@@ -12,6 +12,7 @@ import PanelSlider from '../PanelSlider';
 import { MyPopoverColor } from '@/MAIN_WIN/Universal/MyPopoverColor';
 import { SectionLabel, CheckboxRow, FilePickerButton } from '../PanelUI';
 import { VideoAdjustSettings, defaultFgShadow } from './types';
+import { NumInput } from '@/components/NumInput';
 
 function fileBasename(p: string): string {
 	return p.split(/[/\\]/).pop() ?? p;
@@ -150,28 +151,22 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 						Final Format (px){(autoFormat ?? true) ? ' — auto' : ''}
 					</Typography>
 					<Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-						<input
-							type='number'
+						<NumInput
 							value={fw}
 							min={1}
+							integer
 							disabled={autoFormat ?? true}
 							style={{ ...numInputStyle, opacity: (autoFormat ?? true) ? 0.4 : 1 }}
-							onChange={(e) => {
-								const v = Math.max(1, parseInt(e.target.value) || fw);
-								onChange({ ...settings, finalFormat: [v, fh] });
-							}}
+							onChange={(v) => onChange({ ...settings, finalFormat: [v, fh] })}
 						/>
 						<Typography sx={{ fontSize: 11, color: labelColor, flexShrink: 0 }}>×</Typography>
-						<input
-							type='number'
+						<NumInput
 							value={fh}
 							min={1}
+							integer
 							disabled={autoFormat ?? true}
 							style={{ ...numInputStyle, opacity: (autoFormat ?? true) ? 0.4 : 1 }}
-							onChange={(e) => {
-								const v = Math.max(1, parseInt(e.target.value) || fh);
-								onChange({ ...settings, finalFormat: [fw, v] });
-							}}
+							onChange={(v) => onChange({ ...settings, finalFormat: [fw, v] })}
 						/>
 					</Box>
 				</Box>

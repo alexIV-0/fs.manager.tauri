@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Box, TextField, Typography } from '@mui/material';
 import { greyColor } from '@/Store/Color/grayColor';
 import MyTooltip from '@/MAIN_WIN/Universal/MyTooltip';
@@ -76,17 +77,29 @@ export default function MySettingRow(props: Props) {
 	const greyLight = greyColor(30);
 	const greyHover = greyColor(55);
 
+	const numericValue = props.type === 'number' ? props.value : 0;
+	const [numLocal, setNumLocal] = useState(props.type === 'number' ? String(props.value) : '');
+	useEffect(() => {
+		if (props.type === 'number') setNumLocal(Number.isFinite(props.value) ? String(props.value) : '');
+	}, [numericValue]);
+
+	const commitNum = () => {
+		if (props.type !== 'number') return;
+		const n = Number(numLocal);
+		if (Number.isFinite(n)) props.onChange(Math.max(props.min ?? 0, n));
+		else setNumLocal(Number.isFinite(props.value) ? String(props.value) : '');
+	};
+
 	let field: React.ReactNode;
 	if (props.type === 'number') {
 		field = (
 			<TextField
 				variant='standard'
 				type='number'
-				value={Number.isFinite(props.value) ? props.value : ''}
-				onChange={(e) => {
-					const n = Number(e.target.value);
-					if (Number.isFinite(n)) props.onChange(Math.max(props.min ?? 0, n));
-				}}
+				value={numLocal}
+				onChange={(e) => setNumLocal(e.target.value)}
+				onBlur={commitNum}
+				onKeyDown={(e) => { if (e.key === 'Enter') commitNum(); }}
 				sx={numberFieldSx(greyLight, greyHover, valueWidth)}
 			/>
 		);

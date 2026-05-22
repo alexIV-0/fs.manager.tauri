@@ -74,6 +74,7 @@ export function CurentFolderItem({
 	const { menuPosition, handleContextMenu, handleMenuClose, isMenuOpen } = useContextMenu(menuId);
 
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
+	const isCut = clipboardFs_store((s) => s.type === 'cut' && s.paths.includes(path));
 
 	const getMultiPaths = () => {
 		if (!isMultiSelected) return [path];
@@ -147,7 +148,7 @@ export function CurentFolderItem({
 						className='folder-icon'
 						fill={isSelected && isActiveSelection ? '#007bff' : grey}
 						color={isSelected && isActiveSelection ? '#007bff' : grey}
-						style={{ flexShrink: 0 }}
+						style={{ flexShrink: 0, opacity: isCut ? 0.4 : 1, transition: 'opacity 0.2s ease' }}
 					/>
 
 					{isEditing && rename ? (
@@ -173,8 +174,9 @@ export function CurentFolderItem({
 								fontWeight: isSelected ? 600 : 400,
 								fontSize: '1.2rem',
 								color: isSelected ? (isActiveSelection ? '#64afffff' : '#ffffffd9') : '#ffffffd9',
+								opacity: isCut ? 0.4 : 1,
 								cursor: 'pointer',
-								transition: 'color 0.2s ease',
+								transition: 'color 0.2s ease, opacity 0.2s ease',
 								'&:hover': {
 									color: isSelected && isActiveSelection ? '#91c8ffff' : '#ffffff',
 								},

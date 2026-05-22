@@ -1,6 +1,6 @@
 // stores/useColumnViewStore.ts
 import { create } from 'zustand';
-import { COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent } from '../helpers/readDirContent';
+import { calcColumnWidth, COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent } from '../helpers/readDirContent';
 
 interface ColumnInstance {
 	columns: any[];
@@ -78,7 +78,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 					...state.instances,
 					[instanceType]: {
 						...state.instances[instanceType],
-						columns: [{ path: rootPath, items, width: COLUMN_DEFAULT_WIDTH }],
+						columns: [{ path: rootPath, items, width: calcColumnWidth(items) }],
 						loading: false,
 					},
 				},
@@ -146,7 +146,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 
 			const nextItems = await readDirContent(item.path);
 			updatedCols.splice(colIndex + 1);
-			updatedCols.push({ path: item.path, items: nextItems, width: COLUMN_DEFAULT_WIDTH });
+			updatedCols.push({ path: item.path, items: nextItems, width: calcColumnWidth(nextItems) });
 
 			set((state) => ({
 				instances: {

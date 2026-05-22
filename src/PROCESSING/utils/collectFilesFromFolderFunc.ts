@@ -13,7 +13,7 @@ export async function collectFilesFromFolderFunc(_node: any, prefetched?: Prefet
 		'IN',
 	);
 
-	const searchTypeName: string = _node.searchType[0];
+	const searchTypeName: string = Array.isArray(_node.searchType) ? _node.searchType[0] : _node.searchType;
 	const fileTypes = typeOfFile_store.getState().patternStore.find((element) => element.name === searchTypeName) || {
 		path: [],
 	};

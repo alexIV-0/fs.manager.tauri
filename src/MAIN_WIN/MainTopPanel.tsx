@@ -8,7 +8,7 @@ import { plugin_Store } from '@/Store/MainWin/plugin_store';
 import { PluginBuilderModal } from './options/plugin/PluginBuilderModal';
 import DocModal from '@/NODE_WIN/layout/DocModal';
 import { buildNodeDefinitions, isNodeDefinitionsInitialized } from '@/NODE_WIN/definitions';
-import type { CollectedUINode } from '@/Utils/collectPluginUINodes';
+import { loadAllUINodes } from '@/Utils/loadAllUINodes';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 
 export function MainTopPanel() {
@@ -26,11 +26,10 @@ export function MainTopPanel() {
 		window.plugins.getState().then((s) => setIsDev(s.isDev));
 	}, []);
 
-	const handleOpenDoc = () => {
+	const handleOpenDoc = async () => {
 		if (!isNodeDefinitionsInitialized()) {
 			try {
-				const stored = localStorage.getItem('pluginUINodes');
-				const nodes: CollectedUINode[] = stored ? JSON.parse(stored) : [];
+				const nodes = await loadAllUINodes();
 				buildNodeDefinitions(nodes);
 			} catch (err) {
 				console.error('[MainTopPanel] Failed to init node definitions for docs:', err);

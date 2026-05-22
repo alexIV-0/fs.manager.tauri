@@ -876,6 +876,37 @@ pub fn get_plugins_dev_path() -> Result<String, String> {
     ))
 }
 
+// ==================== PLATFORM TARGET ====================
+
+/// Количество логических CPU ядер. Из WebView через navigator.hardwareConcurrency
+/// получить нельзя — Safari/WebKit clamp'ит результат до 8 (anti-fingerprinting),
+/// что мешает корректно настроить thread-pool для нативных бинарников (whisper, ffmpeg).
+#[tauri::command]
+pub fn get_cpu_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
+/// Возвращает сегмент платформы в формате, удобном для путей бинарников плагинов:
+/// `mac-arm64`, `mac-x64`, `win-x64`, `linux-x64`, `linux-arm64`.
+/// Из WebView архитектуру macOS определить нельзя (Apple отдаёт "Intel" в navigator
+/// даже на Apple Silicon), поэтому источник правды — Rust runtime.
+#[tauri::command]
+pub fn get_platform_target() -> String {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    match (os, arch) {
+        ("macos", "aarch64") => "mac-arm64".to_string(),
+        ("macos", _) => "mac-x64".to_string(),
+        ("windows", "aarch64") => "win-arm64".to_string(),
+        ("windows", _) => "win-x64".to_string(),
+        ("linux", "aarch64") => "linux-arm64".to_string(),
+        ("linux", _) => "linux-x64".to_string(),
+        _ => format!("{}-{}", os, arch),
+    }
+}
+
 // ==================== FONTS ====================
 
 #[tauri::command]

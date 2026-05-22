@@ -1,22 +1,22 @@
 {
-	"type": "transcribeAudio",
+	"type": "transcribeVA",
 	"position": {
 		"x": 0,
 		"y": 0
 	},
 	"width": 400,
-	"height": 650,
+	"height": 680,
 	"data": {
-		"label": "Transcribe File",
+		"label": "Transcribe VA",
 		"colorType": "ai",
-		"comment": "Пытаемся сделать транскрипцию аудио в текст или титры. Используем для этого whisper. <br>Все локально, модели нужно подключить через опции",
+		"comment": "Транскрипция аудио/видео в текст или титры через Whisper (локально). Модели подключаются в Настройках → Пути.",
 		"properties": [
 			{
 				"id": "inputFile",
 				"controlType": "link",
 				"controlProps": {
-					"label": "Imput File",
-					"tooltip": "Указываем видео или аудио файл который нужно распознать и выдать транскрипцию",
+					"label": "Input File",
+					"tooltip": "Видео или аудио файл для распознавания",
 					"value": ""
 				},
 				"isInput": true,
@@ -29,7 +29,7 @@
 				"controlType": "autocomplete",
 				"controlProps": {
 					"label": "Target Path",
-					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
+					"tooltip": "Путь до финального файла. Если пустой — сохраняется рядом с исходником",
 					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
@@ -47,8 +47,8 @@
 				"required": true,
 				"controlProps": {
 					"label": "Whisper model",
-					"tooltip": "Нужно выбрать модель которая будет использоваться для распознавания аудио в whisper",
-					"value": "",
+					"tooltip": "Модель Whisper для транскрипции. Чем больше модель — тем точнее, но медленнее.",
+					"value": "ggml-large-v3-turbo.bin",
 					"freeInput": false,
 					"options": ["#whisperModels", "Custom File..."]
 				}
@@ -57,9 +57,9 @@
 				"id": "outputFormat",
 				"controlType": "ddm",
 				"controlProps": {
-					"label": "output Format",
-					"tooltip": "Тип файла, который нужно найти в указанной папке. только один",
-					"options": ["srt", "vtt", "JSONfull", "json", "txt"],
+					"label": "Output Format",
+					"tooltip": "Формат выходного файла. «Detect Language» — только определить язык и записать его в .txt файл.",
+					"options": ["srt", "vtt", "JSONfull", "json", "txt", "Detect Language"],
 					"freeInput": false,
 					"value": "JSONfull"
 				},
@@ -70,6 +70,6 @@
 		"output": {
 			"sourceProperty": "outputFormat"
 		},
-		"isValid": true
+		"isValid": false
 	}
 }

@@ -161,9 +161,14 @@ function TextEditModal({
 							color: grey65,
 							border: `1px solid ${grey28}`,
 							borderRadius: 3,
-							padding: '2px 4px',
+							padding: '2px 18px 2px 4px',
 							cursor: 'pointer',
 							outline: 'none',
+							appearance: 'none',
+							WebkitAppearance: 'none',
+							backgroundImage: "url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23888'/%3E%3C%2Fsvg%3E\")",
+							backgroundRepeat: 'no-repeat',
+							backgroundPosition: 'right 4px center',
 						}}
 					>
 						{LANGUAGES.map((lang) => (

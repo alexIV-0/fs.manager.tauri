@@ -521,6 +521,9 @@ function otsuThreshold(scores: number[]): number {
 export interface ExecOptions {
 	cwd?: string;
 	env?: Record<string, string>;
+	/** ID ноды — если передан, Rust будет стримить stdout/stderr процесса в лог-окно
+	 *  как processing-event'ы (видно прогресс в реальном времени). */
+	nodeId?: string;
 }
 
 export interface ExecResult {
@@ -536,6 +539,7 @@ export function exec(cmd: string, args: string[] = [], opts: ExecOptions = {}): 
 		args,
 		cwd: opts.cwd,
 		env: opts.env ? Object.entries(opts.env) : undefined,
+		nodeId: opts.nodeId,
 	});
 }
 
@@ -597,6 +601,27 @@ export const paths = {
 	/** Системная temp-папка (через Rust os_tmpdir). */
 	tmpdir(): Promise<string> {
 		return api().invoke('os_tmpdir');
+	},
+
+	/** Корневая папка plugins-dev (где лежат собранные/dev-плагины с их ресурсами). */
+	pluginsDev(): Promise<string> {
+		return api().invoke('getPluginsDevPath');
+	},
+
+	/** Сегмент платформы для путей к нативным бинарникам:
+	 *  `mac-arm64` | `mac-x64` | `win-x64` | `win-arm64` | `linux-x64` | `linux-arm64`. */
+	platformTarget(): Promise<string> {
+		return api().invoke('getPlatformTarget');
+	},
+};
+
+// ─── Системная инфа ──────────────────────────────────────────────────────────
+
+export const system = {
+	/** Реальное количество логических ядер CPU. В отличие от
+	 *  `navigator.hardwareConcurrency` (Safari clamp'ит до 8) — даёт честное число. */
+	cpuCount(): Promise<number> {
+		return api().invoke('getCpuCount');
 	},
 };
 
