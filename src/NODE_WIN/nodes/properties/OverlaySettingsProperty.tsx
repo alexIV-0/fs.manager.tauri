@@ -80,7 +80,7 @@ function OverlaySettingsPropertyComponent({ property }: OverlaySettingsPropertyP
 			{/* Модальное окно */}
 			{isOpen &&
 				createPortal(
-					<OverlaySettingsModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} nodeId={nodeId} />,
+					<OverlaySettingsModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} />,
 					document.body,
 				)}
 		</Stack>

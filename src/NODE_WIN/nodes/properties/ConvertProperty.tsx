@@ -88,7 +88,7 @@ function ConvertPropertyComponent({ property }: ConvertPropertyProps) {
 
 			{isOpen &&
 				createPortal(
-					<ConvertModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} nodeId={nodeId} />,
+					<ConvertModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} />,
 					document.body,
 				)}
 		</Stack>

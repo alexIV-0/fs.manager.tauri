@@ -5,7 +5,7 @@
 //   2. FG Layer — copies, fitPercent, drop shadow
 //   3. BG Layer — copies, blur/brightness/contrast/saturation/hFlip
 
-import { memo, useRef } from 'react';
+import { memo } from 'react';
 import { Box, Divider, Typography } from '@mui/material';
 import { greyColor } from '@/Store/Color/grayColor';
 import PanelSlider from '../PanelSlider';
@@ -35,8 +35,15 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 	const numBg = greyColor(20);
 	const numBorder = greyColor(30);
 
-	const fgInputRef = useRef<HTMLInputElement>(null);
-	const bgInputRef = useRef<HTMLInputElement>(null);
+	const selectFile = (cb: (path: string) => void) => {
+		(window as any).electronAPI
+			.invoke('selectFiles', {
+				multiSelect: false,
+				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+			})
+			.then((paths: string[]) => { if (paths?.length > 0) cb(paths[0]); })
+			.catch(() => {});
+	};
 
 	const { finalFormat, autoFormat, useFgAsBg, fg, bg: bgS } = settings;
 	const shadow = fg.shadow ?? defaultFgShadow();
@@ -76,39 +83,9 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 			<Box sx={{ p: 1.5, pb: 1 }}>
 				<SectionLabel>File &amp; Format</SectionLabel>
 
-				{/* Hidden file inputs */}
-				<input
-					ref={fgInputRef}
-					type='file'
-					accept='video/*,image/*'
-					style={{ display: 'none' }}
-					onChange={(e) => {
-						const file = e.target.files?.[0];
-						if (file) {
-							const p = (window as any).electronAPI?.getPathForFile?.(file) ?? (file as any).path ?? file.name;
-							onFgFile(p);
-						}
-						e.target.value = '';
-					}}
-				/>
-				<input
-					ref={bgInputRef}
-					type='file'
-					accept='video/*,image/*'
-					style={{ display: 'none' }}
-					onChange={(e) => {
-						const file = e.target.files?.[0];
-						if (file) {
-							const p = (window as any).electronAPI?.getPathForFile?.(file) ?? (file as any).path ?? file.name;
-							onBgFile(p);
-						}
-						e.target.value = '';
-					}}
-				/>
-
 				{/* FG file */}
 				<Box sx={{ mb: 0.5 }}>
-					<FilePickerButton filePath={fgFilePath} onClick={() => fgInputRef.current?.click()} tooltipTitle='Выбрать FG видео для превью'>
+					<FilePickerButton filePath={fgFilePath} onClick={() => selectFile(onFgFile)} tooltipTitle='Выбрать FG видео для превью'>
 						FG: {fgFilePath ? fileBasename(fgFilePath) : 'Select FG file…'}
 					</FilePickerButton>
 				</Box>
@@ -123,7 +100,7 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 				{/* BG file */}
 				<FilePickerButton
 					filePath={bgFilePath}
-					onClick={() => bgInputRef.current?.click()}
+					onClick={() => selectFile(onBgFile)}
 					disabled={useFgAsBg}
 					tooltipTitle={useFgAsBg ? 'Отключён: используется FG-файл' : 'Выбрать BG видео для превью'}
 				>

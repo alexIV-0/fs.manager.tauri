@@ -3,12 +3,14 @@
 use tauri::{Emitter, Manager};
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectFoldersOptions {
     #[serde(default)]
     pub multi_select: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectFilesOptions {
     #[serde(default)]
     pub multi_select: bool,

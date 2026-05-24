@@ -8,6 +8,8 @@ import { DEFAULT_MODAL_SIZE, MIN_MODAL_WIDTH, MIN_MODAL_HEIGHT, DEFAULT_PANEL_WI
 import ModalShell from '../ModalShell';
 import OverlayCanvas from './OverlayCanvas';
 import OverlaySettingsPanel from './OverlaySettingsPanel';
+import { usePathStore } from '@/Store/Node/usePathStore';
+import { toAbsolutePath, toStoredPath } from '@/Utils/projectPath';
 
 const FORMAT_TABS: { value: VideoFormat; label: string }[] = [
 	{ value: 'landscape', label: 'Landscape' },
@@ -28,10 +30,9 @@ interface OverlaySettingsModalProps {
 	value: string;
 	onSave: (value: string) => void;
 	onClose: () => void;
-	nodeId: string;
 }
 
-export default function OverlaySettingsModal({ value, onSave, onClose, nodeId }: OverlaySettingsModalProps) {
+export default function OverlaySettingsModal({ value, onSave, onClose }: OverlaySettingsModalProps) {
 	const [settings, setSettings] = useState<OverlaySettings>(() => {
 		if (value) {
 			try {
@@ -44,10 +45,11 @@ export default function OverlaySettingsModal({ value, onSave, onClose, nodeId }:
 	const [activeFormat, setActiveFormat] = useState<VideoFormat>('landscape');
 	const [lockAspect, setLockAspect] = useState(true);
 
-	const fgKey = `overlayEdit_fgFilePath_${nodeId}`;
-	const bgKey = `overlayEdit_bgFilePath_${nodeId}`;
-	const [fgFilePath, setFgFilePath] = useState(() => localStorage.getItem(fgKey) ?? '');
-	const [bgFilePath, setBgFilePath] = useState(() => localStorage.getItem(bgKey) ?? '');
+	// Пути в settings.fg/bgFilePath хранятся в stored-форме (relative к проекту если внутри,
+	// иначе absolute). UI получает absolute и только после подтверждения существования файла.
+	const projectPath = usePathStore((s) => s.path);
+	const [effectiveFgPath, setEffectiveFgPath] = useState('');
+	const [effectiveBgPath, setEffectiveBgPath] = useState('');
 	const [fgDataUrl, setFgDataUrl] = useState('');
 	const [bgDataUrl, setBgDataUrl] = useState('');
 
@@ -55,9 +57,24 @@ export default function OverlaySettingsModal({ value, onSave, onClose, nodeId }:
 
 	useEffect(() => {
 		const api = (window as any).electronAPI;
-		if (fgFilePath) api.invoke('read-media-preview', fgFilePath).then(setFgDataUrl).catch(() => {});
-		if (bgFilePath) api.invoke('read-media-preview', bgFilePath).then(setBgDataUrl).catch(() => {});
-	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+		const fgAbs = settings.fgFilePath ? toAbsolutePath(settings.fgFilePath, projectPath) : '';
+		const bgAbs = settings.bgFilePath ? toAbsolutePath(settings.bgFilePath, projectPath) : '';
+		if (fgAbs) {
+			api.invoke('checkFilePath', fgAbs).then((ok: any) => {
+				if (!ok) return;
+				setEffectiveFgPath(fgAbs);
+				api.invoke('read-media-preview', fgAbs).then(setFgDataUrl).catch(() => {});
+			}).catch(() => {});
+		}
+		if (bgAbs) {
+			api.invoke('checkFilePath', bgAbs).then((ok: any) => {
+				if (!ok) return;
+				setEffectiveBgPath(bgAbs);
+				api.invoke('read-media-preview', bgAbs).then(setBgDataUrl).catch(() => {});
+			}).catch(() => {});
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	const currentFormatSettings = settings[activeFormat];
 
@@ -73,52 +90,49 @@ export default function OverlaySettingsModal({ value, onSave, onClose, nodeId }:
 		onClose();
 	}, [settings, onSave, onClose]);
 
-	const handleFgFile = useCallback(
-		async (p: string) => {
-			setFgFilePath(p);
-			localStorage.setItem(fgKey, p);
-			const dataUrl: string = await (window as any).electronAPI.invoke('read-media-preview', p).catch(() => '');
-			if (!dataUrl) return;
-			setFgDataUrl(dataUrl);
-			const dims = await new Promise<{ w: number; h: number } | null>((resolve) => {
-				const img = new Image();
-				img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-				img.onerror = () => resolve(null);
-				img.src = dataUrl;
-			});
-			if (!dims || dims.w <= 0 || dims.h <= 0) return;
-			setSettings((prev) => {
-				const formats: VideoFormat[] = ['landscape', 'portrait', 'square'];
-				const updated = { ...prev };
-				for (const fmt of formats) {
-					const { bgWidth, bgHeight } = prev[fmt];
-					const ratio = dims.w / dims.h;
-					let sw = dims.w, sh = dims.h;
-					if (sw > bgWidth || sh > bgHeight) {
-						if (bgWidth / bgHeight < ratio) {
-							sw = bgWidth; sh = Math.round(bgWidth / ratio);
-						} else {
-							sh = bgHeight; sw = Math.round(bgHeight * ratio);
-						}
+	const handleFgFile = useCallback(async (p: string) => {
+		setEffectiveFgPath(p);
+		const stored = toStoredPath(p, projectPath);
+		const dataUrl: string = await (window as any).electronAPI.invoke('read-media-preview', p).catch(() => '');
+		if (!dataUrl) {
+			setSettings((prev) => ({ ...prev, fgFilePath: stored }));
+			return;
+		}
+		setFgDataUrl(dataUrl);
+		const dims = await new Promise<{ w: number; h: number } | null>((resolve) => {
+			const img = new Image();
+			img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+			img.onerror = () => resolve(null);
+			img.src = dataUrl;
+		});
+		setSettings((prev) => {
+			const next: OverlaySettings = { ...prev, fgFilePath: stored };
+			if (!dims || dims.w <= 0 || dims.h <= 0) return next;
+			const formats: VideoFormat[] = ['landscape', 'portrait', 'square'];
+			for (const fmt of formats) {
+				const { bgWidth, bgHeight } = prev[fmt];
+				const ratio = dims.w / dims.h;
+				let sw = dims.w, sh = dims.h;
+				if (sw > bgWidth || sh > bgHeight) {
+					if (bgWidth / bgHeight < ratio) {
+						sw = bgWidth; sh = Math.round(bgWidth / ratio);
+					} else {
+						sh = bgHeight; sw = Math.round(bgHeight * ratio);
 					}
-					const posX = parseFloat(((bgWidth - sw) / 2).toFixed(2));
-					const posY = parseFloat(((bgHeight - sh) / 2).toFixed(2));
-					updated[fmt] = { ...prev[fmt], scaleW: sw, scaleH: sh, posX, posY };
 				}
-				return updated;
-			});
-		},
-		[fgKey],
-	);
+				const posX = parseFloat(((bgWidth - sw) / 2).toFixed(2));
+				const posY = parseFloat(((bgHeight - sh) / 2).toFixed(2));
+				next[fmt] = { ...prev[fmt], scaleW: sw, scaleH: sh, posX, posY };
+			}
+			return next;
+		});
+	}, [projectPath]);
 
-	const handleBgFile = useCallback(
-		(p: string) => {
-			setBgFilePath(p);
-			localStorage.setItem(bgKey, p);
-			(window as any).electronAPI.invoke('read-media-preview', p).then(setBgDataUrl).catch(() => {});
-		},
-		[bgKey],
-	);
+	const handleBgFile = useCallback((p: string) => {
+		setEffectiveBgPath(p);
+		setSettings((prev) => ({ ...prev, bgFilePath: toStoredPath(p, projectPath) }));
+		(window as any).electronAPI.invoke('read-media-preview', p).then(setBgDataUrl).catch(() => {});
+	}, [projectPath]);
 
 	const defColor = greyColor(80);
 	const labelColor = greyColor(55);
@@ -168,8 +182,8 @@ export default function OverlaySettingsModal({ value, onSave, onClose, nodeId }:
 					settings={currentFormatSettings}
 					onChange={handleFormatSettingsChange}
 					width={panelWidth}
-					bgFilePath={bgFilePath}
-					fgFilePath={fgFilePath}
+					bgFilePath={effectiveBgPath}
+					fgFilePath={effectiveFgPath}
 					onBgFile={handleBgFile}
 					onFgFile={handleFgFile}
 					lockAspect={lockAspect}

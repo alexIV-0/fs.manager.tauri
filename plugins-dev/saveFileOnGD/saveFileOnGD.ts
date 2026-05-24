@@ -29,7 +29,17 @@ async function copyVideoWithMetadata(fileFrom: string, fileTo: string, descripti
 		if (v?.duration) durationSec = Number(v.duration);
 	} catch {}
 
-	const result = await ffmpeg.exec(['-y', '-i', fileFrom, '-metadata', `description=${jsonStr}`, '-c', 'copy', fileTo], {
+	// DIAG: проверяем что папка реально существует прямо перед запуском ffmpeg.
+	const dir = path.dirname(fileTo);
+	const dirExists = await fs.exists(dir);
+	const args = ['-y', '-i', fileFrom, '-metadata', `description=${jsonStr}`, '-c', 'copy', fileTo];
+	sendToMW('log', {
+		level: 'info',
+		text:
+			`[saveFileOnGD DIAG]\n  fileFrom: ${fileFrom}\n  fileTo:   ${fileTo}\n  dir:      ${dir}\n  dirExists (after mkdir): ${dirExists}\n  ffmpeg args: ${JSON.stringify(args)}`,
+	});
+
+	const result = await ffmpeg.exec(args, {
 		durationSec,
 		nodeId,
 		statusText: `${description.infoText}: [copy file with add metadata] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
@@ -73,7 +83,20 @@ export async function saveFileOnGDFunc(_item: any, _description: any): Promise<s
 			text: `${_description.infoText}: [save file on GD] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 		});
 
-		await fs.mkdir(path.dirname(fileTo));
+		// DIAG: запоминаем целевую папку до и после mkdir.
+		const targetDir = path.dirname(fileTo);
+		const existedBefore = await fs.exists(targetDir);
+		try {
+			await fs.mkdir(targetDir);
+		} catch (e: any) {
+			sendToMW('log', { level: 'error', text: `[saveFileOnGD DIAG] mkdir THREW: ${targetDir}\n  error: ${e?.message ?? e}` });
+			throw e;
+		}
+		const existsAfter = await fs.exists(targetDir);
+		sendToMW('log', {
+			level: 'info',
+			text: `[saveFileOnGD DIAG] mkdir target=${targetDir}\n  existedBefore=${existedBefore} existsAfter=${existsAfter}`,
+		});
 
 		if (fileType === 'video') {
 			await copyVideoWithMetadata(fileFrom, fileTo, _description, _item.id);
