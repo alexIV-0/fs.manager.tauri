@@ -1,12 +1,42 @@
 // Полифил node:path для renderer'а. Pure JS, без IPC.
-// Поддерживает POSIX (/) и Windows (\\) пути; разделитель выбирается по первому сегменту.
+// Сепаратор выбирается по правилам:
+//  1) Явный Windows-маркер в пути (C:\, \\UNC, \) → '\\'
+//  2) Явный POSIX-маркер (/ в начале) → '/'
+//  3) Ambiguous (токены, относительные сегменты без сепаратора) → OS-дефолт
+// Это критично потому что `path.join('$mainFolderPath', 'OUT')` сам по себе
+// не выглядит ни Windows ни POSIX, а финальный путь после подстановки токенов
+// зависит от реальной ОС.
+
+// Детектится один раз при загрузке модуля; та же логика что в os.platform() и globals.ts.
+const OS_DEFAULT_SEP: '\\' | '/' = (() => {
+	const ua = (typeof navigator !== 'undefined' ? navigator.userAgent : '') ?? '';
+	return ua.includes('Windows') ? '\\' : '/';
+})();
 
 function isWindows(p: string): boolean {
-	return /^[a-zA-Z]:[\\/]/.test(p) || p.includes('\\');
+	return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.includes('\\');
+}
+
+function isPosixRooted(p: string): boolean {
+	return p.startsWith('/');
 }
 
 function getSep(p: string): string {
-	return isWindows(p) ? '\\' : '/';
+	if (isWindows(p)) return '\\';
+	if (isPosixRooted(p)) return '/';
+	return OS_DEFAULT_SEP;
+}
+
+// На путях со смешанными сепараторами ищем последний разделитель любого вида —
+// иначе dirname/basename режут путь по неправильному месту.
+function lastSepIdx(p: string): number {
+	if (OS_DEFAULT_SEP === '\\' || isWindows(p)) return Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+	return p.lastIndexOf('/');
+}
+
+function splitAll(p: string): string[] {
+	if (OS_DEFAULT_SEP === '\\' || isWindows(p)) return p.split(/[\\/]/);
+	return p.split('/');
 }
 
 export const sep = '/';
@@ -15,25 +45,37 @@ export function join(...segments: string[]): string {
 	const parts = segments.filter((s) => s != null && s !== '');
 	if (parts.length === 0) return '';
 
-	const useBackslash = parts[0].includes('\\') || /^[a-zA-Z]:/.test(parts[0]);
-	const s = useBackslash ? '\\' : '/';
+	// Sep по тем же правилам что и getSep, но смотрим на ВСЕ сегменты:
+	//  - Windows-маркер хоть в одном → '\\'
+	//  - POSIX-маркер (leading '/') хоть в одном → '/'
+	//  - Иначе → OS-дефолт (важно для случая токенов '$mainFolderPath' и т.п.)
+	const looksWindows = parts.some((p) => /^[a-zA-Z]:/.test(p) || p.startsWith('\\\\') || p.includes('\\'));
+	const looksPosix = !looksWindows && parts.some((p) => p.startsWith('/'));
+	const s = looksWindows ? '\\' : looksPosix ? '/' : OS_DEFAULT_SEP;
 
 	let prefix = '';
 	const first = parts[0];
 	if (first.startsWith('\\\\')) prefix = '\\\\'; // UNC
+	else if (/^[a-zA-Z]:[\\/]/.test(first)) prefix = first.slice(0, 2) + s; // 'C:\'
+	else if (/^[a-zA-Z]:/.test(first)) prefix = first.slice(0, 2); // 'C:' (drive-relative)
 	else if (first.startsWith('/')) prefix = '/';
 	else if (first.startsWith('\\')) prefix = '\\';
 
+	// Внутри каждого сегмента приводим ВСЕ разделители к выбранному s,
+	// и обрезаем края — иначе после подстановок остаются микс-сепараторы.
 	const cleaned = parts
-		.map((p) => p.replace(/^[\\/]+/, '').replace(/[\\/]+$/, ''))
+		.map((p, i) => {
+			let segment = i === 0 && prefix ? p.slice(prefix.length) : p;
+			segment = segment.replace(/[\\/]+/g, s);
+			return segment.replace(/^[\\/]+|[\\/]+$/g, '');
+		})
 		.filter((p) => p !== '');
 
 	return prefix + cleaned.join(s);
 }
 
 export function basename(p: string, ext?: string): string {
-	const s = getSep(p);
-	const parts = p.split(s);
+	const parts = splitAll(p);
 	let name = parts[parts.length - 1] || parts[parts.length - 2] || '';
 	if (ext && name.toLowerCase().endsWith(ext.toLowerCase())) {
 		name = name.slice(0, name.length - ext.length);
@@ -42,9 +84,8 @@ export function basename(p: string, ext?: string): string {
 }
 
 export function dirname(p: string): string {
-	const s = getSep(p);
-	const idx = p.lastIndexOf(s);
-	if (idx <= 0) return s === '/' ? '/' : p;
+	const idx = lastSepIdx(p);
+	if (idx <= 0) return isWindows(p) ? p : '/';
 	return p.slice(0, idx);
 }
 
@@ -106,8 +147,8 @@ export function resolve(...segments: string[]): string {
 
 export function relative(from: string, to: string): string {
 	const s = getSep(from);
-	const fromParts = from.split(s).filter(Boolean);
-	const toParts = to.split(s).filter(Boolean);
+	const fromParts = splitAll(from).filter(Boolean);
+	const toParts = splitAll(to).filter(Boolean);
 	let i = 0;
 	while (i < fromParts.length && i < toParts.length && fromParts[i] === toParts[i]) {
 		i++;
@@ -122,9 +163,29 @@ export function isAbsolute(p: string): boolean {
 }
 
 export function normalize(p: string): string {
+	if (!p) return '.';
 	const s = getSep(p);
-	const isAbs = isAbsolute(p);
-	const parts = p.split(/[\\/]+/);
+
+	// Вычисляем root отдельно — он не должен попадать в split/.. логику
+	// (иначе для 'C:\foo' получим обратно '\C:\foo').
+	let root = '';
+	let rest = p;
+	if (rest.startsWith('\\\\')) {
+		root = '\\\\';
+		rest = rest.slice(2);
+	} else {
+		const drive = rest.match(/^([a-zA-Z]:)([\\/])?/);
+		if (drive) {
+			root = drive[1] + (drive[2] ? s : '');
+			rest = rest.slice(drive[0].length);
+		} else if (rest.startsWith('/') || rest.startsWith('\\')) {
+			root = s;
+			rest = rest.replace(/^[\\/]+/, '');
+		}
+	}
+
+	const isAbs = root.length > 0;
+	const parts = rest.split(/[\\/]+/);
 	const result: string[] = [];
 	for (const part of parts) {
 		if (!part || part === '.') continue;
@@ -136,7 +197,7 @@ export function normalize(p: string): string {
 		}
 	}
 	const joined = result.join(s);
-	return isAbs ? s + joined : joined || '.';
+	return (root + joined) || '.';
 }
 
 // node:path/posix и node:path/win32 — в большинстве плагинов не используются, но добавим как алиасы.

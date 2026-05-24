@@ -78,7 +78,7 @@ function VideoAdjustmentPropertyComponent({ property }: VideoAdjustmentPropertyP
 
 			{isOpen &&
 				createPortal(
-					<VideoAdjustModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} nodeId={nodeId} />,
+					<VideoAdjustModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} />,
 					document.body,
 				)}
 		</Stack>

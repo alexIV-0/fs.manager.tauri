@@ -1,10 +1,12 @@
 // src/NODE_WIN/nodes/properties/ConvertEdit/ConvertModal.tsx
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ConvertSettings, defaultConvertSettings } from './types';
 import ModalShell from '../ModalShell';
 import ConvertPanel from './ConvertPanel';
 import ConvertPreview from './ConvertPreview';
+import { usePathStore } from '@/Store/Node/usePathStore';
+import { toAbsolutePath, toStoredPath } from '@/Utils/projectPath';
 
 const SHELL_CONFIG = {
 	defaultSize: { width: 1060, height: 680 },
@@ -19,10 +21,9 @@ interface ConvertModalProps {
 	value: string;
 	onSave: (v: string) => void;
 	onClose: () => void;
-	nodeId: string;
 }
 
-export default function ConvertModal({ value, onSave, onClose, nodeId }: ConvertModalProps) {
+export default function ConvertModal({ value, onSave, onClose }: ConvertModalProps) {
 	const [settings, setSettings] = useState<ConvertSettings>(() => {
 		if (value) {
 			try {
@@ -34,21 +35,31 @@ export default function ConvertModal({ value, onSave, onClose, nodeId }: Convert
 
 	const [sourceSize, setSourceSize] = useState<{ w: number; h: number } | null>(null);
 
-	const fileKey = `convert_filePath_${nodeId}`;
-	const [filePath, setFilePath] = useState(() => localStorage.getItem(fileKey) ?? '');
+	// settings.filePath хранится в stored-форме (relative к проекту если внутри, иначе absolute).
+	// UI работает с absolute, и только если файл реально существует.
+	const projectPath = usePathStore((s) => s.path);
+	const [effectiveFilePath, setEffectiveFilePath] = useState('');
+
+	useEffect(() => {
+		const saved = settings.filePath;
+		if (!saved) return;
+		const abs = toAbsolutePath(saved, projectPath);
+		(async () => {
+			const exists = await (window as any).electronAPI.invoke('checkFilePath', abs).catch(() => false);
+			if (exists) setEffectiveFilePath(abs);
+		})();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	const handleSave = useCallback(() => {
 		onSave(JSON.stringify(settings));
 		onClose();
 	}, [settings, onSave, onClose]);
 
-	const handleSelectFile = useCallback(
-		(p: string) => {
-			setFilePath(p);
-			localStorage.setItem(fileKey, p);
-		},
-		[fileKey],
-	);
+	const handleSelectFile = useCallback((p: string) => {
+		setEffectiveFilePath(p);
+		setSettings((prev) => ({ ...prev, filePath: toStoredPath(p, projectPath) }));
+	}, [projectPath]);
 
 	return (
 		<ModalShell
@@ -58,7 +69,7 @@ export default function ConvertModal({ value, onSave, onClose, nodeId }: Convert
 			config={SHELL_CONFIG}
 			canvasSlot={
 				<ConvertPreview
-					filePath={filePath}
+					filePath={effectiveFilePath}
 					settings={settings}
 					onSettingsChange={setSettings}
 					onOrigSizeDetected={(w, h) => setSourceSize({ w, h })}
@@ -69,7 +80,7 @@ export default function ConvertModal({ value, onSave, onClose, nodeId }: Convert
 					settings={settings}
 					onChange={setSettings}
 					width={panelWidth}
-					filePath={filePath}
+					filePath={effectiveFilePath}
 					onSelectFile={handleSelectFile}
 					sourceW={sourceSize?.w}
 					sourceH={sourceSize?.h}

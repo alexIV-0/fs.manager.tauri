@@ -197,6 +197,7 @@ export interface ConvertSettings {
 	image: ImageConvertSettings;
 	video: VideoConvertSettings;
 	audio: AudioConvertSettings;
+	filePath?: string;
 }
 
 // ── Default factories ──────────────────────────────────────────────────────
