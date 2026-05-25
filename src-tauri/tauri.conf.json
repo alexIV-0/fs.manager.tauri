@@ -46,6 +46,7 @@
 	"bundle": {
 		"active": true,
 		"targets": "all",
+		"createUpdaterArtifacts": true,
 		"icon": [
 			"icons/fsManager.icns",
 			"icons/fsManager.ico",

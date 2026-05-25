@@ -228,7 +228,9 @@ jobs:
         run: |
           TAG="${{ needs.bump-version.outputs.tag }}"
           VERSION="${{ needs.bump-version.outputs.version }}"
-          FILES=$(find artifacts -type f | tr '\n' ' ')
+          # -size +0c: GitHub Uploads API отвечает 400 Bad Content-Length на 0-байтовые файлы.
+          # Пустышки могут появиться из шага latest.json, который touch-ит отсутствующие .sig для jq.
+          FILES=$(find artifacts -type f -size +0c | tr '\n' ' ')
           gh release create "$TAG" \
             --repo alexIV-0/fs.manager.releases \
             --title "fsManager $VERSION" \
