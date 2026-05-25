@@ -307,7 +307,12 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 	send('log', { level: 'info', text: `→ ${stepId} (${execObj.pluginId}@${execObj.pluginVersion})`, itemId: ctx.itemId, stepId });
 
 	try {
-		const pluginModule = await loadPlugin(execObj.pluginId, execObj.pluginVersion);
+		// execToken = уникальный токен на каждый вызов плагина. loader.ts использует
+		// его для cache-bust динамического import'а — это гарантирует свежий
+		// module-instance для каждого исполнения, без чего sendToMW из параллельных
+		// вызовов одного плагина гонялись бы за общим module-local `_bound`.
+		const execToken = `${ctx.itemId}-${stepId}-${Date.now().toString(36)}`;
+		const pluginModule = await loadPlugin(execObj.pluginId, execObj.pluginVersion, execToken);
 		const pluginFn = resolveCallable(pluginModule);
 		if (!pluginFn) {
 			throw new Error(`Plugin ${execObj.pluginId}@${execObj.pluginVersion} has no callable export`);
@@ -348,17 +353,15 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			sendToMW,
 		};
 
-		// pluginSender.ts (inlined в каждый плагин) читает globalThis.__pluginSendToMW
-		// при каждом вызове sendToMW(...). Выставляем перед вызовом, восстанавливаем после.
-		const prevGlobalSend = (globalThis as any).__pluginSendToMW;
-		(globalThis as any).__pluginSendToMW = sendToMW;
-
-		let result: any;
-		try {
-			result = await pluginFn(execObj, ctx.description, pluginCtx);
-		} finally {
-			(globalThis as any).__pluginSendToMW = prevGlobalSend;
+		// pluginSender.ts / tauri.ts (inlined в каждый плагин-бандл) хранят
+		// module-local `_bound`, в который мы биндим per-execution sendToMW через
+		// onLoad. loader.ts даёт свежий module-instance на каждый execToken, так
+		// что параллельные вызовы одного плагина не делят `_bound`.
+		if (typeof pluginModule.onLoad === 'function') {
+			pluginModule.onLoad({ sendToMW });
 		}
+
+		const result = await pluginFn(execObj, ctx.description, pluginCtx);
 		const output = Array.isArray(result) ? result : [result];
 		ctx.results.set(stepId, output);
 		stepObj.output = output;

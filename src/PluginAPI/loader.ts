@@ -9,7 +9,8 @@
 
 import { convertFileSrc } from '@tauri-apps/api/core';
 
-const cache = new Map<string, any>();
+// Кэш только манифестов — JS-модуль плагина намеренно НЕ кэшируем (см. ниже).
+const manifestCache = new Map<string, { mainFile: string }>();
 
 function pluginUrl(relPath: string): string {
 	// relPath: "<key>/<file>" — без ведущего слэша.
@@ -18,43 +19,48 @@ function pluginUrl(relPath: string): string {
 
 /**
  * Загружает плагин и возвращает его module-объект.
- * Кэшируется по ключу `id@version` — повторные вызовы мгновенные.
  *
- * Чтобы перезагрузить плагин в dev (после ребилда) — вызвать `clearPluginCache(id, version)`.
+ * Кэш module-instance'ов отключён: каждый вызов создаёт СВЕЖИЙ инстанс через
+ * cache-bust URL (`?inst=...`). Это нужно потому, что плагин-бандл хранит
+ * module-local `_bound`/`_sendToMW` (см. _template/tauri.ts, pluginSender.ts) —
+ * туда processItem биндит per-execution sendToMW через onLoad. Без cache-bust
+ * два параллельных запуска одного плагина делили бы один _bound, и логи второго
+ * вызова уходили бы первому item'у. Парсинг плагина повторно — миллисекунды,
+ * на фоне ffmpeg/HTTP незаметно.
+ *
+ * Манифест (plugin.json) при этом кэшируется — он маленький и не источник гонок.
  */
-export async function loadPlugin(pluginId: string, version: string): Promise<any> {
+export async function loadPlugin(pluginId: string, version: string, execToken?: string): Promise<any> {
 	const key = `${pluginId}@${version}`;
-	const cached = cache.get(key);
-	if (cached) return cached;
 
-	// Главный файл плагина — обычно `<id>.js` (см. plugin.json[main]).
-	// Просим Tauri через plugin:// — он зарезолвит путь и сам выберет main.
-	// Для упрощения сначала читаем manifest, чтобы узнать main.
-	const manifestText = await fetchPluginText(`${key}/plugin.json`);
-	const manifest = JSON.parse(manifestText);
-	const mainFile: string = manifest.main || `${pluginId}.js`;
+	let manifestEntry = manifestCache.get(key);
+	if (!manifestEntry) {
+		const manifestText = await fetchPluginText(`${key}/plugin.json`);
+		const manifest = JSON.parse(manifestText);
+		manifestEntry = { mainFile: manifest.main || `${pluginId}.js` };
+		manifestCache.set(key, manifestEntry);
+	}
 
-	const moduleUrl = pluginUrl(`${key}/${mainFile}`);
+	const baseUrl = pluginUrl(`${key}/${manifestEntry.mainFile}`);
+	const token = execToken ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	const moduleUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}inst=${encodeURIComponent(token)}`;
 	// /* @vite-ignore */ — Vite не должен пытаться bundle'ить runtime-плагины
 	const mod = await import(/* @vite-ignore */ moduleUrl);
-	cache.set(key, mod);
-	console.log(`[PluginLoader] Loaded ${key} via ${moduleUrl}`);
 	return mod;
 }
 
 export function clearPluginCache(pluginId?: string, version?: string): void {
 	if (!pluginId) {
-		cache.clear();
+		manifestCache.clear();
 		return;
 	}
 	if (!version) {
-		// Очищаем все версии плагина
-		for (const k of Array.from(cache.keys())) {
-			if (k.startsWith(`${pluginId}@`)) cache.delete(k);
+		for (const k of Array.from(manifestCache.keys())) {
+			if (k.startsWith(`${pluginId}@`)) manifestCache.delete(k);
 		}
 		return;
 	}
-	cache.delete(`${pluginId}@${version}`);
+	manifestCache.delete(`${pluginId}@${version}`);
 }
 
 async function fetchPluginText(path: string): Promise<string> {
