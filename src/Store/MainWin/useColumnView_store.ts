@@ -196,7 +196,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 				// Пропускаем обновление если содержимое не изменилось — избегаем лишних ре-рендеров и мерцания.
 				if (
 					oldItems.length === items.length &&
-					oldItems.every((item, i) => item.path === items[i].path)
+					oldItems.every((item: { path: string }, i: number) => item.path === items[i].path)
 				) return state;
 
 				const updatedCols = [...currentCols];

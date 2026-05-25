@@ -1,11 +1,12 @@
 {
 	"name": "fsmanagertauri",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"private": true,
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
 		"build": "tsc && vite build && tauri build",
+		"build:local": "tsc && vite build && tauri build --config \"{\\\"bundle\\\":{\\\"createUpdaterArtifacts\\\":false}}\"",
 		"tauri": "tauri",
 		"tauri:dev": "tauri dev",
 		"preview": "vite preview",

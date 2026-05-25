@@ -7,6 +7,8 @@ use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 
+use super::process_utils::HiddenConsole;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecCommandArgs {
@@ -112,7 +114,8 @@ fn exec_command_blocking(
         .args(cmd_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .hide_console();
 
     // Устанавливаем рабочую директорию
     if let Some(ref cwd) = args.cwd {

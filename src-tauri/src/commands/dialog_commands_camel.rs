@@ -1,6 +1,8 @@
 #![allow(non_snake_case, unused_variables)]
 
 use tauri::{Emitter, Manager};
+#[cfg(target_os = "windows")]
+use super::process_utils::HiddenConsole;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +166,7 @@ pub fn openFileWithDefaultApp(_app: tauri::AppHandle, path: String) -> Result<()
     {
         std::process::Command::new("cmd")
             .args(["/c", "start", "", &path])
+            .hide_console()
             .spawn()
             .map_err(|e| e.to_string())?;
     }

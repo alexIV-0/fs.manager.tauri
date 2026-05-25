@@ -5,12 +5,9 @@
 //   2. <resource_dir>/plugins/<rest>          — встроенные (в prod)
 //   3. <CARGO_MANIFEST_DIR>/../distr-plugins/<rest> — dev fallback
 //
-// Для .js файлов выполняется runtime rewrite:
-//   from "node:fs" → from "@plugin-api/fs"
-//   from "node:path" → from "@plugin-api/path"
-//   и т.д.
-//
-// Это позволяет плагинам, собранным под Node.js, работать в renderer'е через полифилы.
+// `node:*` импорты внутри плагинов резолвятся через <script type="importmap"> в HTML
+// главного документа (см. pluginApiImportmap в vite.config.ts). Здесь Rust отдаёт JS
+// как есть, ничего не переписывая.
 
 use std::fs;
 use std::path::PathBuf;
@@ -87,49 +84,6 @@ fn hex_digit(b: u8) -> Option<u8> {
     }
 }
 
-/// Заменяет Node-импорты на полные URL'ы наших полифилов.
-/// В dev — это Vite-dev-сервер (`http://localhost:1420/src/PluginAPI/*.ts`).
-/// Бровсер не знает про bare-specifiers вроде `@plugin-api/fs` без importmap,
-/// поэтому подставляем сразу абсолютный URL.
-fn rewrite_node_imports(src: &str) -> String {
-    // В dev — Vite-сервер. В prod URL'ы будут другие; пока поддерживаем только dev.
-    #[cfg(debug_assertions)]
-    let base = "http://localhost:1420/src/PluginAPI";
-    #[cfg(not(debug_assertions))]
-    let base = "/assets/PluginAPI"; // placeholder — для prod надо настроить отдельно
-
-    // Порядок важен: сначала более длинные ("node:fs/promises") до коротких ("node:fs"),
-    // чтобы не схватить часть длинной подстроки.
-    let modules: &[(&str, &str)] = &[
-        ("node:fs/promises", "fs-promises.ts"),
-        ("node:fs", "fs.ts"),
-        ("node:path", "path.ts"),
-        ("node:os", "os.ts"),
-        ("node:child_process", "child_process.ts"),
-        ("node:crypto", "crypto.ts"),
-        ("node:events", "events.ts"),
-        ("node:stream", "stream.ts"),
-        ("node:url", "url.ts"),
-        ("node:util", "util.ts"),
-    ];
-
-    let mut out = src.to_string();
-    for (from_mod, to_file) in modules {
-        let target = format!("{}/{}", base, to_file);
-        let from_dq = format!("\"{}\"", from_mod);
-        let to_dq = format!("\"{}\"", target);
-        let from_sq = format!("'{}'", from_mod);
-        let to_sq = format!("'{}'", target);
-        if out.contains(&from_dq) {
-            out = out.replace(&from_dq, &to_dq);
-        }
-        if out.contains(&from_sq) {
-            out = out.replace(&from_sq, &to_sq);
-        }
-    }
-    out
-}
-
 pub fn handle_plugin_request(
     app: &AppHandle,
     uri_path: &str,
@@ -172,18 +126,10 @@ pub fn handle_plugin_request(
         _ => "application/octet-stream",
     };
 
-    // Rewrite только для JS-файлов; .json/.map оставляем как есть.
-    let body = if ext == "js" || ext == "mjs" {
-        let text = String::from_utf8_lossy(&bytes);
-        rewrite_node_imports(&text).into_bytes()
-    } else {
-        bytes
-    };
-
     Response::builder()
         .header(header::CONTENT_TYPE, mime)
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(body)
+        .body(bytes)
         .unwrap()
 }
