@@ -42,6 +42,7 @@ export interface KeyingSettings {
 	lumakey: LumakeySettings;
 	despill: DespillSettings;
 	edge: EdgeSettings;
+	filePath?: string;
 }
 
 export function defaultKeyingSettings(): KeyingSettings {

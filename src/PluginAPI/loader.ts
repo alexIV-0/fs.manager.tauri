@@ -1,8 +1,20 @@
 // Plugin loader для renderer'а. Динамически импортирует JS-модуль плагина через
 // кастомный `plugin://` Tauri-протокол. Rust на лету переписывает `node:*` импорты
 // на `@plugin-api/*` полифилы.
+//
+// Платформенная разница: в Tauri v2 кастомные URI-схемы доступны как `plugin://localhost/...`
+// только на macOS/iOS. На Windows/Linux/Android WebView не поддерживает регистрацию
+// произвольных схем — Tauri проксирует их через `http://plugin.localhost/...`.
+// Используем `convertFileSrc(path, 'plugin')` — он строит правильный URL для каждой платформы.
+
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 const cache = new Map<string, any>();
+
+function pluginUrl(relPath: string): string {
+	// relPath: "<key>/<file>" — без ведущего слэша.
+	return convertFileSrc(relPath.replace(/^\/+/, ''), 'plugin');
+}
 
 /**
  * Загружает плагин и возвращает его module-объект.
@@ -17,13 +29,12 @@ export async function loadPlugin(pluginId: string, version: string): Promise<any
 
 	// Главный файл плагина — обычно `<id>.js` (см. plugin.json[main]).
 	// Просим Tauri через plugin:// — он зарезолвит путь и сам выберет main.
-	// Конвенция URL: plugin://localhost/<key>/<main-file>
 	// Для упрощения сначала читаем manifest, чтобы узнать main.
-	const manifestText = await fetchPluginText(`/${key}/plugin.json`);
+	const manifestText = await fetchPluginText(`${key}/plugin.json`);
 	const manifest = JSON.parse(manifestText);
 	const mainFile: string = manifest.main || `${pluginId}.js`;
 
-	const moduleUrl = `plugin://localhost/${key}/${mainFile}`;
+	const moduleUrl = pluginUrl(`${key}/${mainFile}`);
 	// /* @vite-ignore */ — Vite не должен пытаться bundle'ить runtime-плагины
 	const mod = await import(/* @vite-ignore */ moduleUrl);
 	cache.set(key, mod);
@@ -47,7 +58,7 @@ export function clearPluginCache(pluginId?: string, version?: string): void {
 }
 
 async function fetchPluginText(path: string): Promise<string> {
-	const url = `plugin://localhost${path}`;
+	const url = pluginUrl(path);
 	const res = await fetch(url);
 	if (!res.ok) throw new Error(`plugin:// fetch failed ${res.status} for ${path}`);
 	return await res.text();

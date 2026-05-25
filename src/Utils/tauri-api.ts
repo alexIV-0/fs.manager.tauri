@@ -73,6 +73,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	// IO
 	readFileSync: (filePath) => ({ filePath }),
 	readMediaPreview: (filePath) => ({ filePath }),
+	read_media_preview: (filePath) => ({ filePath }),
 	writeFile: (filePath, content) => ({ filePath, content }),
 	write_binary_file: (filePath: string, dataB64: string) => ({ filePath, dataB64 }),
 	getSomeFromFolder: (path, search?) => ({ path, ...(search ? { search } : {}) }),
@@ -238,6 +239,7 @@ const commandAliases: Record<string, string> = {
 	'preview:transcode-webm': 'preview_transcode_webm',
 	'preview:delete-temp': 'preview_delete_temp',
 	'preview:make-alpha-webm': 'preview_transcode_webm',
+	'read-media-preview': 'read_media_preview',
 	// Fonts
 	'fonts:get-list': 'fontsGetList',
 	'fonts:load-one': 'fontsLoadOne',

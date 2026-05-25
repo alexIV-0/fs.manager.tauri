@@ -18,6 +18,8 @@ export interface OverlaySettings {
 	landscape: OverlayFormatSettings;
 	portrait: OverlayFormatSettings;
 	square: OverlayFormatSettings;
+	fgFilePath?: string;
+	bgFilePath?: string;
 }
 
 // ── Дефолтные значения ──────────────────────────────────────────────────────

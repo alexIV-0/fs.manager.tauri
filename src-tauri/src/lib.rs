@@ -60,7 +60,7 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Failed to get app data dir");
 
-            let mut plugin_state = PluginManagerState::new(true, app_data_dir);
+            let mut plugin_state = PluginManagerState::new(cfg!(debug_assertions), app_data_dir);
 
             // Грузим все плагины ОДИН РАЗ на старте процесса.
             // Раньше каждое окно (main/nodeWin/previewWin/logWindow) дёргало

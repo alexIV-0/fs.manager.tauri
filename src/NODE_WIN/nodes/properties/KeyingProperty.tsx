@@ -88,7 +88,7 @@ function KeyingPropertyComponent({ property }: KeyingPropertyProps) {
 
 			{isOpen &&
 				createPortal(
-					<KeyingModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} nodeId={nodeId} />,
+					<KeyingModal value={property.controlProps.value} onSave={handleSave} onClose={handleClose} />,
 					document.body,
 				)}
 		</Stack>

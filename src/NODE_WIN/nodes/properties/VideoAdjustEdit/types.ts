@@ -39,6 +39,8 @@ export interface VideoAdjustSettings {
 		copies: number;          // 1–5
 		adjust: BgAdjustSettings;
 	};
+	fgFilePath?: string;
+	bgFilePath?: string;
 }
 
 export function defaultFgShadow(): FgShadowSettings {

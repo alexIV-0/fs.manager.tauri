@@ -1,11 +1,13 @@
 // src/NODE_WIN/nodes/properties/KeyingEdit/KeyingModal.tsx
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Typography } from '@mui/material';
 import { KeyingSettings, defaultKeyingSettings } from './types';
 import ModalShell from '../ModalShell';
 import KeyingPanel from './KeyingPanel';
 import KeyingPreview, { type PixelInfo } from './KeyingPreview';
+import { usePathStore } from '@/Store/Node/usePathStore';
+import { toAbsolutePath, toStoredPath } from '@/Utils/projectPath';
 
 const SHELL_CONFIG = {
 	defaultSize: { width: 1060, height: 680 },
@@ -20,10 +22,9 @@ interface KeyingModalProps {
 	value: string;
 	onSave: (v: string) => void;
 	onClose: () => void;
-	nodeId: string;
 }
 
-export default function KeyingModal({ value, onSave, onClose, nodeId }: KeyingModalProps) {
+export default function KeyingModal({ value, onSave, onClose }: KeyingModalProps) {
 	const [settings, setSettings] = useState<KeyingSettings>(() => {
 		if (value) {
 			try {
@@ -33,8 +34,21 @@ export default function KeyingModal({ value, onSave, onClose, nodeId }: KeyingMo
 		return defaultKeyingSettings();
 	});
 
-	const fileKey = `keying_filePath_${nodeId}`;
-	const [filePath, setFilePath] = useState(() => localStorage.getItem(fileKey) ?? '');
+	// Путь в settings.filePath хранится в stored-форме (relative к проекту если внутри,
+	// иначе absolute). UI работает с absolute, и только если файл реально существует.
+	const projectPath = usePathStore((s) => s.path);
+	const [effectiveFilePath, setEffectiveFilePath] = useState('');
+
+	useEffect(() => {
+		const saved = settings.filePath;
+		if (!saved) return;
+		const abs = toAbsolutePath(saved, projectPath);
+		(async () => {
+			const exists = await (window as any).electronAPI.invoke('checkFilePath', abs).catch(() => false);
+			if (exists) setEffectiveFilePath(abs);
+		})();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	const [eyedropperActive, setEyedropperActive] = useState(false);
 	const [eyedropperTarget, setEyedropperTarget] = useState<'chromakey' | 'colorkey' | 'despill'>('chromakey');
@@ -48,13 +62,10 @@ export default function KeyingModal({ value, onSave, onClose, nodeId }: KeyingMo
 		onClose();
 	}, [settings, onSave, onClose]);
 
-	const handleSelectFile = useCallback(
-		(p: string) => {
-			setFilePath(p);
-			localStorage.setItem(fileKey, p);
-		},
-		[fileKey],
-	);
+	const handleSelectFile = useCallback((p: string) => {
+		setEffectiveFilePath(p);
+		setSettings((prev) => ({ ...prev, filePath: toStoredPath(p, projectPath) }));
+	}, [projectPath]);
 
 	const handleEyedropperStart = useCallback((target: 'chromakey' | 'colorkey' | 'despill') => {
 		setEyedropperTarget(target);
@@ -87,7 +98,7 @@ export default function KeyingModal({ value, onSave, onClose, nodeId }: KeyingMo
 			}
 			canvasSlot={
 				<KeyingPreview
-					filePath={filePath}
+					filePath={effectiveFilePath}
 					settings={settings}
 					eyedropperActive={eyedropperActive}
 					onEyedropperPick={handleEyedropperPick}
@@ -99,7 +110,7 @@ export default function KeyingModal({ value, onSave, onClose, nodeId }: KeyingMo
 					settings={settings}
 					onChange={setSettings}
 					width={panelWidth}
-					filePath={filePath}
+					filePath={effectiveFilePath}
 					onSelectFile={handleSelectFile}
 					onEyedropperStart={handleEyedropperStart}
 					hoveredPixel={hoveredPixel}

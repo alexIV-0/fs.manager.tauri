@@ -54,6 +54,142 @@ mod ns_window_aspect {
 
 }
 
+// Windows-аналог macOS-ного setContentAspectRatio:.
+// macOS даёт OS-level aspect-constraint одним вызовом; на Windows такого API нет,
+// поэтому подключаемся к WM_SIZING через SetWindowSubclass и корректируем
+// предлагаемый RECT под нужное соотношение прямо во время drag'а.
+#[cfg(target_os = "windows")]
+mod win_aspect {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowRect, WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT,
+        WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WM_SIZING,
+    };
+
+    // Соотношение сторон (width/height) хранится глобально — в процессе одно
+    // preview-окно. f64 → биты в AtomicU64, 0 = ограничение снято.
+    static ASPECT_BITS: AtomicU64 = AtomicU64::new(0);
+    const SUBCLASS_ID: usize = 0xFAFA_F501;
+
+    /// Устанавливает aspect-constraint для окна и (пере)ставит subclass на текущий HWND.
+    /// SetWindowSubclass идемпотентен по паре (pfnSubclass, uIdSubclass), поэтому
+    /// безопасен при повторных вызовах. Пересоздание окна → новый HWND → новый subclass.
+    pub fn set_aspect_ratio(hwnd_raw: *mut core::ffi::c_void, ratio: f64) {
+        if !(ratio.is_finite() && ratio > 0.0) {
+            ASPECT_BITS.store(0, Ordering::Relaxed);
+            return;
+        }
+        ASPECT_BITS.store(ratio.to_bits(), Ordering::Relaxed);
+
+        if hwnd_raw.is_null() {
+            return;
+        }
+        unsafe {
+            let hwnd = HWND(hwnd_raw);
+            let _ = SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, 0);
+        }
+    }
+
+    unsafe extern "system" fn subclass_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _uidsubclass: usize,
+        _dwrefdata: usize,
+    ) -> LRESULT {
+        if msg == WM_SIZING {
+            let bits = ASPECT_BITS.load(Ordering::Relaxed);
+            if bits != 0 {
+                let ratio = f64::from_bits(bits);
+                if ratio.is_finite() && ratio > 0.0 && lparam.0 != 0 {
+                    let rect = &mut *(lparam.0 as *mut RECT);
+                    apply_aspect(hwnd, rect, wparam.0 as u32, ratio);
+                }
+            }
+        }
+        unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+    }
+
+    /// Подгоняет proposed window-RECT под aspect ratio CLIENT-области, удерживая
+    /// edge, который сейчас не тащит пользователь.
+    fn apply_aspect(hwnd: HWND, rect: &mut RECT, edge: u32, ratio: f64) {
+        let mut win_rect = RECT::default();
+        let mut cli_rect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut win_rect);
+            let _ = GetClientRect(hwnd, &mut cli_rect);
+        }
+        let frame_w = (win_rect.right - win_rect.left) - (cli_rect.right - cli_rect.left);
+        let frame_h = (win_rect.bottom - win_rect.top) - (cli_rect.bottom - cli_rect.top);
+
+        let proposed_w = (rect.right - rect.left) - frame_w;
+        let proposed_h = (rect.bottom - rect.top) - frame_h;
+        if proposed_w <= 0 || proposed_h <= 0 {
+            return;
+        }
+
+        let drives_width = match edge {
+            WMSZ_LEFT | WMSZ_RIGHT => true,
+            WMSZ_TOP | WMSZ_BOTTOM => false,
+            WMSZ_TOPLEFT | WMSZ_TOPRIGHT | WMSZ_BOTTOMLEFT | WMSZ_BOTTOMRIGHT => {
+                // Корнер — берём то измерение, по которому окно сейчас «уже» от нужной
+                // пропорции, чтобы коррекция шла в сторону расширения.
+                let cur_ratio = proposed_w as f64 / proposed_h.max(1) as f64;
+                cur_ratio < ratio
+            }
+            _ => return,
+        };
+
+        let (new_w, new_h) = if drives_width {
+            (proposed_w, ((proposed_w as f64) / ratio).round() as i32)
+        } else {
+            (((proposed_h as f64) * ratio).round() as i32, proposed_h)
+        };
+
+        let final_w = new_w + frame_w;
+        let final_h = new_h + frame_h;
+
+        match edge {
+            WMSZ_LEFT => {
+                rect.left = rect.right - final_w;
+                rect.bottom = rect.top + final_h;
+            }
+            WMSZ_RIGHT => {
+                rect.right = rect.left + final_w;
+                rect.bottom = rect.top + final_h;
+            }
+            WMSZ_TOP => {
+                rect.top = rect.bottom - final_h;
+                rect.right = rect.left + final_w;
+            }
+            WMSZ_BOTTOM => {
+                rect.bottom = rect.top + final_h;
+                rect.right = rect.left + final_w;
+            }
+            WMSZ_TOPLEFT => {
+                rect.left = rect.right - final_w;
+                rect.top = rect.bottom - final_h;
+            }
+            WMSZ_TOPRIGHT => {
+                rect.right = rect.left + final_w;
+                rect.top = rect.bottom - final_h;
+            }
+            WMSZ_BOTTOMLEFT => {
+                rect.left = rect.right - final_w;
+                rect.bottom = rect.top + final_h;
+            }
+            WMSZ_BOTTOMRIGHT => {
+                rect.right = rect.left + final_w;
+                rect.bottom = rect.top + final_h;
+            }
+            _ => {}
+        }
+    }
+}
+
 // Хранилище для последних данных окна Node
 pub struct NodeWindowState {
     pub last_data: Option<String>,
@@ -559,7 +695,8 @@ pub async fn preview_resize(
         }));
     }
 
-    // 3) Aspect-constraint (всегда) — только macOS-нативный, через FFI.
+    // 3) Aspect-constraint (всегда). На macOS — нативный setContentAspectRatio:.
+    //    На Windows — subclass HWND и перехват WM_SIZING, поведение эквивалентно.
     #[cfg(target_os = "macos")]
     {
         if let Some(ratio) = opts.aspect_ratio {
@@ -573,6 +710,17 @@ pub async fn preview_resize(
                     unsafe {
                         ns_window_aspect::set_content_aspect_ratio(ns, ratio_size);
                     }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(ratio) = opts.aspect_ratio {
+            if ratio > 0.0 {
+                if let Ok(hwnd) = preview_win.hwnd() {
+                    win_aspect::set_aspect_ratio(hwnd.0, ratio);
                 }
             }
         }
