@@ -28,18 +28,26 @@ jobs:
 
       - name: Determine next patch version
         id: bump
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
           CURRENT=$(node -e "console.log(require('./package.json').version)")
-          echo "Current version: $CURRENT"
+          echo "Current version in package.json: $CURRENT"
 
-          if git rev-parse "v$CURRENT" >/dev/null 2>&1; then
-            MAJOR=$(echo $CURRENT | cut -d. -f1)
-            MINOR=$(echo $CURRENT | cut -d. -f2)
-            PATCH=$(echo $CURRENT | cut -d. -f3)
-            NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          else
-            NEW_VERSION="$CURRENT"
-          fi
+          # Проверяем наличие релиза с таким тегом в публичном репо релизов.
+          # Источник истины именно он — там лежат все опубликованные версии.
+          # Если релиз уже есть — бампаем patch на 1 и идём вверх пока не найдём
+          # свободную версию (защита от двойных запусков на одну версию).
+          MAJOR=$(echo $CURRENT | cut -d. -f1)
+          MINOR=$(echo $CURRENT | cut -d. -f2)
+          PATCH=$(echo $CURRENT | cut -d. -f3)
+          NEW_VERSION="$CURRENT"
+
+          while gh release view "v$NEW_VERSION" --repo alexIV-0/fs.manager.releases >/dev/null 2>&1; do
+            echo "Release v$NEW_VERSION already exists, bumping patch"
+            PATCH=$((PATCH + 1))
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          done
 
           echo "New version: $NEW_VERSION"
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
