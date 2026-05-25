@@ -194,11 +194,210 @@ pub fn app_settings_patch(
 
 // ==================== Cleanup ====================
 
-/// Стаб для cleanup:auto-delete. Реальная очистка по retentionDays/autoDisableDays
-/// должна сканировать папки и удалять/отключать устаревшие. Пока no-op.
+/// Автоудаление старых результатов в локальной папке-зеркале.
+///
+/// Структура локальной папки строго фиксирована:
+///   localFolder/mainFolderName/projectName/findTime/...
+///
+/// Правила:
+/// - `findTime` (уровень 3) — удаляется целиком, если самый свежий файл в её
+///   поддереве старше `cleanup.retentionDays`. Возраст считается по
+///   max(mtime файлов в поддереве), а не по mtime самой папки — иначе удаление
+///   соседей бампало бы mtime родителя.
+/// - `projectName` (уровень 2) — удаляется, ТОЛЬКО если после чистки findTime
+///   в ней не осталось ни файлов, ни поддиректорий. По возрасту НЕ удаляется.
+/// - `mainFolderName` (уровень 1) — то же, что и `projectName`: только если
+///   полностью пустая после прохода.
+///
+/// Сами пустые `projectName`/`mainFolderName` создадутся снова при следующем
+/// скане, если в источнике появятся новые файлы.
+///
+/// Безопасность вызова: запускать ТОЛЬКО когда очередь обработки пуста и
+/// новый скан ещё не стартовал (см. runProcessing.ts). Этот вызов конкурирует
+/// с findAllFilesForProcess по тем же путям, и удаление их «из под ног»
+/// процессинга и было причиной поломок в Electron-версии.
 #[tauri::command]
-pub fn cleanup_auto_delete() -> Result<Value, String> {
-    Ok(json!({ "deleted": 0, "disabled": 0 }))
+pub fn cleanup_auto_delete(
+    app: tauri::AppHandle,
+    local_folder: String,
+) -> Result<Value, String> {
+    if local_folder.is_empty() {
+        return Ok(json!({ "deletedFindTime": 0, "deletedEmpty": 0 }));
+    }
+
+    let s_path = settings_path(&app)?;
+    let settings = read_json(&s_path, default_app_settings());
+    let retention_days = settings
+        .get("cleanup")
+        .and_then(|c| c.get("retentionDays"))
+        .and_then(|v| v.as_u64());
+    let Some(days) = retention_days else {
+        return Ok(json!({ "deletedFindTime": 0, "deletedEmpty": 0 }));
+    };
+    if days == 0 {
+        return Ok(json!({ "deletedFindTime": 0, "deletedEmpty": 0 }));
+    }
+
+    let cutoff = match std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(days * 24 * 60 * 60))
+    {
+        Some(t) => t,
+        None => return Ok(json!({ "deletedFindTime": 0, "deletedEmpty": 0 })),
+    };
+
+    let root = std::path::Path::new(&local_folder);
+    if !root.is_absolute() || !root.exists() || !root.is_dir() {
+        return Ok(json!({ "deletedFindTime": 0, "deletedEmpty": 0 }));
+    }
+
+    let (deleted_findtime, deleted_empty) = cleanup_local_tree(root, cutoff);
+    if deleted_findtime > 0 || deleted_empty > 0 {
+        println!(
+            "[cleanup_auto_delete] {} — removed findTime: {}, empty parents: {} (retention {}d)",
+            root.display(),
+            deleted_findtime,
+            deleted_empty,
+            days
+        );
+    }
+    Ok(json!({
+        "deletedFindTime": deleted_findtime,
+        "deletedEmpty": deleted_empty,
+    }))
+}
+
+/// Возвращает (удалённых findTime, удалённых пустых project/mainFolder).
+fn cleanup_local_tree(root: &std::path::Path, cutoff: std::time::SystemTime) -> (usize, usize) {
+    let mut deleted_findtime = 0usize;
+    let mut deleted_empty = 0usize;
+
+    let Ok(main_iter) = fs::read_dir(root) else {
+        return (0, 0);
+    };
+
+    for mf_entry in main_iter.flatten() {
+        if !is_real_dir(&mf_entry) {
+            continue;
+        }
+        let main_folder = mf_entry.path();
+
+        if let Ok(proj_iter) = fs::read_dir(&main_folder) {
+            for p_entry in proj_iter.flatten() {
+                if !is_real_dir(&p_entry) {
+                    continue;
+                }
+                let project_folder = p_entry.path();
+
+                if let Ok(ft_iter) = fs::read_dir(&project_folder) {
+                    for ft_entry in ft_iter.flatten() {
+                        if !is_real_dir(&ft_entry) {
+                            continue;
+                        }
+                        let find_time = ft_entry.path();
+                        let latest = max_mtime_in_subtree(&find_time);
+                        if latest < cutoff {
+                            match fs::remove_dir_all(&find_time) {
+                                Ok(_) => {
+                                    println!(
+                                        "[cleanup_auto_delete] removed findTime: {}",
+                                        find_time.display()
+                                    );
+                                    deleted_findtime += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "[cleanup_auto_delete] failed: {} — {}",
+                                        find_time.display(),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if is_dir_empty(&project_folder) {
+                    if fs::remove_dir(&project_folder).is_ok() {
+                        println!(
+                            "[cleanup_auto_delete] removed empty project: {}",
+                            project_folder.display()
+                        );
+                        deleted_empty += 1;
+                    }
+                }
+            }
+        }
+
+        if is_dir_empty(&main_folder) {
+            if fs::remove_dir(&main_folder).is_ok() {
+                println!(
+                    "[cleanup_auto_delete] removed empty mainFolder: {}",
+                    main_folder.display()
+                );
+                deleted_empty += 1;
+            }
+        }
+    }
+
+    (deleted_findtime, deleted_empty)
+}
+
+fn is_real_dir(entry: &fs::DirEntry) -> bool {
+    match entry.file_type() {
+        Ok(ft) => ft.is_dir() && !ft.is_symlink(),
+        Err(_) => false,
+    }
+}
+
+fn is_dir_empty(path: &std::path::Path) -> bool {
+    match fs::read_dir(path) {
+        Ok(mut it) => it.next().is_none(),
+        Err(_) => false, // нет доступа — не удаляем
+    }
+}
+
+/// max(mtime) по всем файлам в поддереве. Если файлов нет — mtime самой папки
+/// (чтобы пустая findTime не выглядела как «возраст с 1970 года»).
+fn max_mtime_in_subtree(dir: &std::path::Path) -> std::time::SystemTime {
+    let mut latest = std::time::SystemTime::UNIX_EPOCH;
+    let mut had_file = false;
+
+    fn walk(
+        dir: &std::path::Path,
+        latest: &mut std::time::SystemTime,
+        had_file: &mut bool,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                walk(&entry.path(), latest, had_file);
+            } else if ft.is_file() {
+                *had_file = true;
+                if let Ok(meta) = entry.metadata() {
+                    if let Ok(mt) = meta.modified() {
+                        if mt > *latest {
+                            *latest = mt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    walk(dir, &mut latest, &mut had_file);
+
+    if !had_file {
+        if let Ok(meta) = fs::metadata(dir) {
+            if let Ok(mt) = meta.modified() {
+                latest = mt;
+            }
+        }
+    }
+    latest
 }
 
 // ==================== Database ====================

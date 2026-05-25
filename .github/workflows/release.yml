@@ -117,17 +117,29 @@ jobs:
 
       - name: Collect macOS artifacts
         if: matrix.platform == 'macos-latest'
+        env:
+          VERSION: ${{ needs.bump-version.outputs.version }}
+          SUFFIX: ${{ matrix.artifact-suffix }}
         run: |
           mkdir artifacts
+          # DMG-инсталлеры — у них уже есть архитектурный суффикс
           find src-tauri/target -name "*.dmg" -exec cp {} artifacts/ \;
-          find src-tauri/target -name "*.tar.gz" -exec cp {} artifacts/ \;
+          # .app.tar.gz и .sig — tauri называет их fsManager.app.tar.gz без суффикса,
+          # поэтому aarch64 и x64 артефакты сталкиваются. Переименовываем при копировании.
+          for f in $(find src-tauri/target -name "fsManager.app.tar.gz"); do
+            cp "$f" "artifacts/fsManager_${VERSION}_${SUFFIX}.app.tar.gz"
+          done
+          for f in $(find src-tauri/target -name "fsManager.app.tar.gz.sig"); do
+            cp "$f" "artifacts/fsManager_${VERSION}_${SUFFIX}.app.tar.gz.sig"
+          done
 
       - name: Collect Windows artifacts
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts
-          Get-ChildItem -Recurse src-tauri\target\release\bundle -Include "*.exe" | Copy-Item -Destination artifacts\
+          # NSIS .exe + .sig — имена уже содержат версию, не пересекаются между матрицей
+          Get-ChildItem -Recurse src-tauri\target\release\bundle -Include "*.exe","*.exe.sig" | Copy-Item -Destination artifacts\
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -149,6 +161,58 @@ jobs:
 
       - name: List collected files
         run: find artifacts -type f | sort
+
+      # Собираем latest.json со склееными подписями для всех платформ.
+      # Этот файл читает native tauri-plugin-updater при вызове check().
+      # Без него update-чек возвращает 404 → "нет обновлений".
+      - name: Generate latest.json
+        env:
+          TAG: ${{ needs.bump-version.outputs.tag }}
+          VERSION: ${{ needs.bump-version.outputs.version }}
+        run: |
+          BASE="https://github.com/alexIV-0/fs.manager.releases/releases/download/$TAG"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          SIG_ARM_FILE="artifacts/fsManager_${VERSION}_aarch64.app.tar.gz.sig"
+          SIG_X64_FILE="artifacts/fsManager_${VERSION}_x86_64.app.tar.gz.sig"
+          SIG_WIN_FILE="artifacts/fsManager_${VERSION}_x64-setup.exe.sig"
+
+          # Если какого-то .sig нет — создаём пустой, чтобы jq не упал.
+          # Native updater на такой платформе откажет в установке (пустая подпись
+          # не проходит проверку minisign), но релиз опубликуется и остальные
+          # платформы будут работать.
+          for f in "$SIG_ARM_FILE" "$SIG_X64_FILE" "$SIG_WIN_FILE"; do
+            if [ ! -f "$f" ]; then
+              echo "::warning::missing signature file: $f — native updater для этой платформы не сработает"
+              touch "$f"
+            fi
+          done
+
+          # jq --rawfile читает файл целиком и экранирует его как валидную JSON-строку
+          # (включая переводы строк в multi-line .sig из minisign).
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "fsManager $VERSION" \
+            --arg pub_date "$PUB_DATE" \
+            --arg url_arm "$BASE/fsManager_${VERSION}_aarch64.app.tar.gz" \
+            --arg url_x64 "$BASE/fsManager_${VERSION}_x86_64.app.tar.gz" \
+            --arg url_win "$BASE/fsManager_${VERSION}_x64-setup.exe" \
+            --rawfile sig_arm "$SIG_ARM_FILE" \
+            --rawfile sig_x64 "$SIG_X64_FILE" \
+            --rawfile sig_win "$SIG_WIN_FILE" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": { signature: $sig_arm, url: $url_arm },
+                "darwin-x86_64":  { signature: $sig_x64, url: $url_x64 },
+                "windows-x86_64": { signature: $sig_win, url: $url_win }
+              }
+            }' > artifacts/latest.json
+
+          echo "Generated latest.json:"
+          cat artifacts/latest.json
 
       - name: Create release in public repo
         env:

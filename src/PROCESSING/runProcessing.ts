@@ -23,10 +23,10 @@ export let timeToWait = {
 	folders: 200, // задержка между папками внутри скана
 };
 
-function triggerCleanup(): void {
+function triggerCleanup(): Promise<unknown> {
 	const localFolder = localFolders_stor.getState().localFolder;
-	if (!localFolder) return;
-	window.electronAPI.invoke('cleanup:auto-delete', localFolder).catch(() => {});
+	if (!localFolder) return Promise.resolve();
+	return window.electronAPI.invoke('cleanup:auto-delete', localFolder).catch(() => {});
 }
 
 export async function runProcessing() {
@@ -54,9 +54,6 @@ export async function runProcessing() {
 			console.groupEnd();
 		}
 
-		// Cleanup старых папок после первого скана
-		triggerCleanup();
-
 		// ── Главный цикл: process → wait → scan → process → ... ──────────
 		// Цикл выходит ТОЛЬКО когда пользователь нажимает Stop (полный или мягкий).
 		// startProcessing внутри сам выходит, когда очередь пустая — это значит,
@@ -70,6 +67,15 @@ export async function runProcessing() {
 			await startProcessing();
 
 			if (!isScanningStore.getState().isScanning) break;
+
+			// Автоудаление старых findTime-папок запускаем ПАРАЛЛЕЛЬНО с ожиданием
+			// следующего скана. Очередь обработки уже пуста (startProcessing вышел),
+			// а новый скан стартует только после finalyWating + await cleanupPromise
+			// ниже — поэтому Rust-сторона свободно может удалять пути, не мешая
+			// сканеру и обработчику. Это окно — единственное безопасное место для
+			// cleanup; в Electron-версии его дёргали сразу после скана, когда пути
+			// уже лежали в очереди обработки, и это ломало процессинг.
+			const cleanupPromise = triggerCleanup();
 
 			// Пауза до следующего скана:
 			// если cycleStart→now было быстрым — ждём maxWait целиком,
@@ -89,10 +95,13 @@ export async function runProcessing() {
 				break;
 			}
 
+			// Дожидаемся завершения cleanup, если он вдруг затянулся дольше wait,
+			// чтобы новый скан не наступал на одновременно удаляющиеся папки.
+			await cleanupPromise;
+
 			// К этому моменту очередь гарантированно пуста (startProcessing всё обработал),
 			// поэтому сбрасываем registeredPaths чтобы повторно найти файлы в папках.
 			await findAllFilesForProcess(true);
-			triggerCleanup();
 		}
 	} catch (e: any) {
 		if (e.name === 'AbortError') {

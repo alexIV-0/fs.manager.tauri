@@ -10,6 +10,8 @@ import TabTypes from './tabs/TabTypes';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import type { AppSettings } from '@/types/appSettings';
 import { getVersion } from '@tauri-apps/api/app';
+import { plugin_Store } from '@/Store/MainWin/plugin_store';
+import { useStore } from 'zustand';
 
 const modalStyle = {
 	position: 'absolute',
@@ -90,6 +92,9 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 
 	const settings = appSettings_client((s) => s.settings);
 	const setFull = appSettings_client((s) => s.setFull);
+
+	const plugins = useStore(plugin_Store, (s) => s.plugins);
+	const hasUpdaterPlugin = plugins.some((p) => p.id === 'updater' && p.enabled && p.exists);
 	const loaded = appSettings_client((s) => s.loaded);
 	const load = appSettings_client((s) => s.load);
 	const [draft, setDraft] = useState<AppSettings>(settings);
@@ -169,7 +174,7 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 						<Tab disableRipple label='Paths' id='tab-1' aria-controls='tabpanel-1' icon={<FolderCog strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label='Types' id='tab-2' aria-controls='tabpanel-2' icon={<File strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label='Nodes' id='tab-3' aria-controls='tabpanel-3' icon={<Waypoints strokeWidth={0.8} size={42} />} />
-						<Tab disableRipple label='Plug & Update' id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label={hasUpdaterPlugin ? 'Plug & Update' : 'Plug'} id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
 					</Tabs>
 					<Button
 						variant='contained'

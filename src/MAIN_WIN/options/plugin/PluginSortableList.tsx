@@ -28,6 +28,11 @@ export const PluginSortableList: React.FC = () => {
 	const searchQuery = useStore(plugin_Store, (state) => state.searchQuery);
 	const isLoading = useStore(plugin_Store, (state) => state.isLoading);
 
+	const hasUpdaterPlugin = useMemo(
+		() => plugins.some((p) => p.id === 'updater' && p.enabled && p.exists),
+		[plugins],
+	);
+
 	// Получаем методы из стора
 	const { setSearchQuery, movePluginGroup, getFilteredGroups, addOrUpdatePlugin } = plugin_Store();
 
@@ -165,10 +170,12 @@ export const PluginSortableList: React.FC = () => {
 				overflow: 'hidden',
 			}}
 		>
-			{/* App updater accordion — above plugin search */}
-			<Box sx={{ px: 2, pt: 2, flexShrink: 0 }}>
-				<AppUpdaterAccordion />
-			</Box>
+			{/* App updater accordion — показывается только если установлен плагин updater */}
+			{hasUpdaterPlugin && (
+				<Box sx={{ px: 2, pt: 2, flexShrink: 0 }}>
+					<AppUpdaterAccordion />
+				</Box>
+			)}
 
 			{/* Шапка с поиском и добавлением */}
 			<Box

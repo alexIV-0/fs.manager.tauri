@@ -13,6 +13,8 @@ import { AlertCircle, CheckCircle, ChevronDown, Download, RefreshCw } from 'luci
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
 import { loadPlugin } from '@/PluginAPI/loader';
 import { getVersion } from '@tauri-apps/api/app';
+import { check as checkUpdate } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 
 interface GithubAsset {
 	name: string;
@@ -50,12 +52,43 @@ export const AppUpdaterAccordion: React.FC = () => {
 	const [error, setError] = useState<string | null>(null);
 	const [installing, setInstalling] = useState<string | null>(null);
 	const [installed, setInstalled] = useState<string | null>(null);
+	const [progress, setProgress] = useState<number | null>(null);
 
 	const modRef = useRef<UpdaterMod | null>(null);
 
 	useEffect(() => {
 		getVersion().then(setCurrentVersion).catch(() => {});
 	}, []);
+
+	// Тихая автопроверка последней версии при монтировании — чтобы в шапке аккордеона
+	// сразу показать "v{current} / v{latest}" без раскрытия. Ошибки игнорируем
+	// (например, нет сети) — в этом случае latest просто не покажется.
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			try {
+				if (!modRef.current) {
+					modRef.current = await loadPlugin('updater', PLUGIN_VERSION);
+				}
+				const data = await modRef.current!.fetchReleases(OWNER, REPO);
+				if (!cancelled) setReleases((prev) => (prev.length === 0 ? data : prev));
+			} catch {
+				/* silent */
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// Самый свежий не-prerelease релиз из загруженного списка.
+	const latestStable = releases.find((r) => !r.prerelease) ?? releases[0];
+	const latestTag = latestStable ? latestStable.tag_name.replace(/^v/, '') : '';
+	const hasUpdate =
+		!!latestTag &&
+		!!currentVersion &&
+		!!modRef.current &&
+		modRef.current.compareVersions(latestTag, currentVersion) > 0;
 
 	const loadReleases = useCallback(async () => {
 		setLoading(true);
@@ -81,6 +114,43 @@ export const AppUpdaterAccordion: React.FC = () => {
 		}
 	};
 
+	// Качаем подписанный бандл нативным апдейтером и накатываем его поверх
+	// текущей установки + релончим. Работает только если в репо лежит latest.json
+	// с подписями (см. tauri.conf.json/plugins/updater).
+	// Возвращает true если native установка прошла; false если latest.json нет
+	// или версия из latest.json не совпадает с запрошенным релизом — тогда
+	// падаем в fallback на скачивание DMG/EXE.
+	const tryNativeInstall = async (release: GithubRelease): Promise<boolean> => {
+		try {
+			const update = await checkUpdate();
+			if (!update) return false; // latest.json не настроен или нет апдейта
+			// Проверяем что native-апдейт указывает на ту же версию что выбрал юзер.
+			// Если в latest.json другая версия — не путаем юзера, fallback.
+			const nativeVer = update.version.replace(/^v/, '');
+			const wantVer = release.tag_name.replace(/^v/, '');
+			if (nativeVer !== wantVer) return false;
+
+			let total = 0;
+			let downloaded = 0;
+			await update.downloadAndInstall((event) => {
+				if (event.event === 'Started') {
+					total = event.data.contentLength ?? 0;
+					setProgress(0);
+				} else if (event.event === 'Progress') {
+					downloaded += event.data.chunkLength;
+					if (total > 0) setProgress(Math.min(100, Math.round((downloaded / total) * 100)));
+				} else if (event.event === 'Finished') {
+					setProgress(100);
+				}
+			});
+			await relaunch(); // приложение перезапустится — дальше код не выполнится
+			return true;
+		} catch (e) {
+			console.warn('[AppUpdater] native install failed, falling back:', e);
+			return false;
+		}
+	};
+
 	const handleInstall = async (release: GithubRelease) => {
 		if (!modRef.current) return;
 		const asset = modRef.current.getPlatformAsset(release.assets);
@@ -90,13 +160,23 @@ export const AppUpdaterAccordion: React.FC = () => {
 		}
 		setInstalling(release.tag_name);
 		setInstalled(null);
+		setProgress(null);
 		try {
+			// Сначала пробуем тихую native-установку (если есть latest.json + подпись).
+			const nativeOk = await tryNativeInstall(release);
+			if (nativeOk) {
+				setInstalled(release.tag_name);
+				return;
+			}
+			// Fallback: скачиваем DMG/EXE/AppImage и открываем системно.
+			setProgress(null);
 			await modRef.current.downloadAndOpen(asset.browser_download_url, asset.name);
 			setInstalled(release.tag_name);
 		} catch (e: any) {
 			setError(`Install failed: ${e?.message ?? e}`);
 		} finally {
 			setInstalling(null);
+			setProgress(null);
 		}
 	};
 
@@ -139,7 +219,17 @@ export const AppUpdaterAccordion: React.FC = () => {
 				</Typography>
 				{currentVersion && (
 					<Chip
-						label={`v${currentVersion}`}
+						label={
+							hasUpdate ? (
+								<Box component='span' sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+									<Box component='span'>{`v${currentVersion}`}</Box>
+									<Box component='span' sx={{ color: greyColor(40) }}>/</Box>
+									<Box component='span' sx={{ color: '#66bb6a', fontWeight: 600 }}>{`v${latestTag}`}</Box>
+								</Box>
+							) : (
+								`v${currentVersion}`
+							)
+						}
 						size='small'
 						sx={{
 							height: 18,
@@ -147,6 +237,7 @@ export const AppUpdaterAccordion: React.FC = () => {
 							bgcolor: greyColor(22),
 							color: greyColor(55),
 							border: 'none',
+							'& .MuiChip-label': { px: 0.75 },
 						}}
 					/>
 				)}
@@ -273,7 +364,31 @@ export const AppUpdaterAccordion: React.FC = () => {
 												}}
 											>
 												{isInstallingThis ? (
-													<CircularProgress size={14} sx={{ color: cyanColor(60) }} />
+													progress !== null ? (
+														<Box sx={{ position: 'relative', display: 'inline-flex' }}>
+															<CircularProgress
+																size={20}
+																variant='determinate'
+																value={progress}
+																sx={{ color: cyanColor(60) }}
+															/>
+															<Box
+																sx={{
+																	position: 'absolute',
+																	inset: 0,
+																	display: 'flex',
+																	alignItems: 'center',
+																	justifyContent: 'center',
+																	fontSize: '0.55rem',
+																	color: greyColor(70),
+																}}
+															>
+																{progress}
+															</Box>
+														</Box>
+													) : (
+														<CircularProgress size={14} sx={{ color: cyanColor(60) }} />
+													)
 												) : wasInstalled ? (
 													<CheckCircle size={14} />
 												) : (
@@ -288,7 +403,9 @@ export const AppUpdaterAccordion: React.FC = () => {
 					)}
 				</Box>
 
-				{/* After install hint */}
+				{/* After install hint — показывается только в fallback-режиме (без latest.json).
+				    При native установке приложение релончится автоматически и эта подсказка не успеет
+				    отрисоваться. */}
 				{installed && (
 					<Box sx={{ px: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}>
 						<Typography sx={{ fontSize: '0.7rem', color: greyColor(50) }}>
