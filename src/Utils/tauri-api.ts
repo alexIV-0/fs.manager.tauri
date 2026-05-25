@@ -192,7 +192,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	path_exists: (path: string) => ({ path }),
 	os_tmpdir: () => ({}),
 	hash_file: (path: string, algo?: string) => ({ path, algo }),
-	cleanup_auto_delete: () => ({}),
+	cleanup_auto_delete: (localFolder: string) => ({ localFolder }),
 	db_register_found: (payload: any) => ({ payload }),
 	// HTTP via Rust (no CORS)
 	// Tauri сопоставляет аргументы по имени параметра Rust-функции.
