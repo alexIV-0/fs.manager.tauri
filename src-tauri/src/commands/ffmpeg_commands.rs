@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 use super::settings_commands::AppSettingsState;
+use super::process_utils::HiddenConsole;
 
 // ==================== PATH RESOLUTION ====================
 
@@ -37,7 +38,7 @@ fn find_binary(name: &str) -> String {
     #[cfg(target_os = "windows")]
     let which_cmd = "where";
 
-    if let Ok(output) = Command::new(which_cmd).arg(name).output() {
+    if let Ok(output) = Command::new(which_cmd).arg(name).hide_console().output() {
         let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !found.is_empty() && PathBuf::from(&found).exists() {
             return found;
@@ -106,6 +107,7 @@ pub async fn ffprobe_get_info(
                 "-of", "json",
                 &file_path,
             ])
+            .hide_console()
             .output()
             .map_err(|e| format!("ffprobe not found or failed to start: {}", e))?;
 
@@ -142,6 +144,7 @@ fn ffmpeg_get_video_thumbnail_with_path(file_path: String, timestamp_sec: Option
             "-pix_fmt", "rgba",
             tmp_path.to_str().unwrap_or(""),
         ])
+        .hide_console()
         .output()
         .map_err(|e| format!("ffmpeg not found or failed to start: {}", e))?;
 
@@ -202,6 +205,7 @@ pub async fn ffmpeg_exec_with_progress(
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .hide_console()
             .spawn()
             .map_err(|e| format!("ffmpeg not found or failed to start: {}", e))?;
 

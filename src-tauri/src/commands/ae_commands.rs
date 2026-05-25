@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
+use super::process_utils::HiddenConsole;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AEResult {
     pub success: bool,
@@ -207,6 +210,7 @@ fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<(), String> {
     {
         Command::new(ae_path)
             .args(["-r", &script_str])
+            .hide_console()
             .spawn()
             .map_err(|e| format!("Failed to launch AE: {}", e))?;
     }

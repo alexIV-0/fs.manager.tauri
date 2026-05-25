@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "tsc && vite build && tauri build",
+		"build:local": "tsc && vite build && tauri build --config \"{\\\"bundle\\\":{\\\"createUpdaterArtifacts\\\":false}}\"",
 		"tauri": "tauri",
 		"tauri:dev": "tauri dev",
 		"preview": "vite preview",

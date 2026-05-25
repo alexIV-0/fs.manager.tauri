@@ -7,17 +7,17 @@ import { defGray } from './grayColor';
  *  Нужно потому что `typeOfFile_store` (file_types) хранит записи типа
  *  `{name:'ai', color:null}` — раньше null затирал валидный цвет из
  *  typeOfNodes_store (там `ai: #2d84ffff`), и ноды становились серыми. */
-function assignIfColored(acc: Record<string, string | null | undefined>, name: string, color: string | null | undefined) {
+function assignIfColored(acc: Record<string, string | null>, name: string, color: string | null | undefined) {
 	if (color === null || color === undefined || color === '') {
 		// Не перетираем существующее непустое значение пустотой.
-		if (!(name in acc) || !acc[name]) acc[name] = color ?? null;
+		if (!(name in acc) || !acc[name]) acc[name] = null;
 		return;
 	}
 	acc[name] = color;
 }
 
 export function rebuildColorTypes() {
-	const colorMap: Record<string, string | null | undefined> = {};
+	const colorMap: Record<string, string | null> = {};
 
 	for (const item of typeOfdata_store.getState().patternStore) {
 		assignIfColored(colorMap, item.name, item.color);
