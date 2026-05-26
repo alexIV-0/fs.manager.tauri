@@ -301,7 +301,9 @@ async function downloadOutputs(
 		sendToMW('log', { text: `   URL: ${fileUrl}` });
 
 		const startTime = Date.now();
-		const size = await http.download(fileUrl, targetPath, { headers });
+		await http.download(fileUrl, targetPath, { headers });
+		const stat = await fs.stat(targetPath);
+		const size = stat.size;
 		const durationMs = Date.now() - startTime;
 
 		sendToMW('log', {
