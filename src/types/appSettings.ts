@@ -47,6 +47,11 @@ export interface LoggingSettings {
 	bufferSize: number;
 }
 
+export interface LogsArchiveSettings {
+	// Сколько дней хранить архивные лог-файлы (logs/YYYY-MM-DD.jsonl). 0 — не удалять.
+	retentionDays: number;
+}
+
 export interface AppSettings {
 	version: number;
 	processing: ProcessingSettings;
@@ -55,6 +60,7 @@ export interface AppSettings {
 	storage: StorageSettings;
 	cleanup: CleanupSettings;
 	logging: LoggingSettings;
+	logs: LogsArchiveSettings;
 }
 
 export type AppSettingsPatch = {
@@ -126,6 +132,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 	},
 	logging: {
 		bufferSize: 5000,
+	},
+	logs: {
+		retentionDays: 2,
 	},
 };
 

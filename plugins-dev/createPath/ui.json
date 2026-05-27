@@ -17,7 +17,7 @@
 				"controlProps": {
 					"label": "Path",
 					"tooltip": "Path",
-					"options": ["#pathPattern", "#folders", "CustomFolder...", "#historyValue(targetPath)"],
+					"options": ["#pathPattern", "#folders", "Custom Folder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": ["$localFolder", "$mainFolderName", "$projectName", "$findTime"]

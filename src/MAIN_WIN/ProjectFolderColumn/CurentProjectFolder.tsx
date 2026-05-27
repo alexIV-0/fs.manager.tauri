@@ -7,6 +7,8 @@ import { DragData } from '../hooks/useDnDContext';
 import { greyColor } from '@/Store/Color/grayColor';
 import { Plus } from 'lucide-react';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
+import { columnBorder } from '../columnFocusStyle';
 import { options_store } from '@/Store/MainWin/options_store';
 import { CurrentFileItem } from '../FileExplorerColumn/CurentFileItem';
 import { CurentFolderItem } from '../FileExplorerColumn/CurentFolderItem';
@@ -30,6 +32,8 @@ export function CurentProjectFolder() {
 
 	// ✅ ПРАВИЛЬНО - используем хук в компоненте
 	const { refreshAffectedColumns } = useColumnView_Store();
+	// Рамка всей 3-й колонки подсвечивается, когда в фокусе любая из её панелей (gd/local)
+	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'gd' || s.focusedColumn === 'local');
 	const { optionsObj, updateOptions } = options_store();
 
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -206,6 +210,11 @@ export function CurentProjectFolder() {
 				sx={{
 					...mainBoxStyle,
 					flex: 1,
+					// Рамка меняет цвет, когда фокус на gd/local (см. columnFocusStyle.ts)
+					border: columnBorder(isColumnFocused),
+					// Сдвиг на -1px: схлопываем стык с колонкой проектов в одну линию.
+					ml: '-1px',
+					zIndex: isColumnFocused ? 2 : 1,
 					overflow: 'hidden',
 					cursor: activeItem ? 'grabbing' : 'default',
 					display: 'flex',

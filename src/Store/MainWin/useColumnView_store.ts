@@ -1,6 +1,7 @@
 // stores/useColumnViewStore.ts
 import { create } from 'zustand';
 import { calcColumnWidth, COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent } from '../helpers/readDirContent';
+import { useColumnFocus_store } from './columnFocus_store';
 
 interface ColumnInstance {
 	columns: any[];
@@ -34,6 +35,10 @@ interface UniversalColumnViewState {
 	toggleMultiSelect: (instanceType: 'gd' | 'local', colIndex: number, path: string) => void;
 	setMultiSelectedPaths: (instanceType: 'gd' | 'local', paths: string[], anchor: { colIndex: number; path: string }) => void;
 	clearMultiSelection: (instanceType: 'gd' | 'local') => void;
+	// Делает панель (gd/local) активной для клавиатуры: ставит фокус и
+	// синхронизирует lastSelectedItem с уже выбранным элементом этой панели
+	// (или с первым элементом корневой колонки, если ничего не выбрано).
+	focusInstance: (instanceType: 'gd' | 'local') => void;
 }
 
 export const useColumnView_Store = create<UniversalColumnViewState>((set, get) => ({
@@ -103,6 +108,9 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 		const { columns } = instance;
 
 		const updatedCols = columns.map((col, i) => (i === colIndex ? { ...col, selected: item.name } : col));
+
+		// Любой выбор в панели делает её фокусной колонкой для клавиатуры.
+		useColumnFocus_store.getState().setFocusedColumn(instanceType);
 
 		set((state) => ({
 			lastActiveInstance: instanceType,
@@ -392,6 +400,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 	},
 
 	toggleMultiSelect: (instanceType: 'gd' | 'local', colIndex: number, path: string) => {
+		useColumnFocus_store.getState().setFocusedColumn(instanceType);
 		set((state) => {
 			const prev = state.instances[instanceType].multiSelectedPaths;
 			// When starting a new multi-selection, include the single-selected item from the same column
@@ -419,6 +428,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 	},
 
 	setMultiSelectedPaths: (instanceType: 'gd' | 'local', paths: string[], anchor: { colIndex: number; path: string }) => {
+		useColumnFocus_store.getState().setFocusedColumn(instanceType);
 		set((state) => ({
 			lastActiveInstance: instanceType,
 			instances: {
@@ -442,6 +452,43 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 					multiSelectAnchor: null,
 				},
 			},
+		}));
+	},
+
+	focusInstance: (instanceType: 'gd' | 'local') => {
+		useColumnFocus_store.getState().setFocusedColumn(instanceType);
+
+		const { columns } = get().instances[instanceType];
+
+		// Ищем самую глубокую колонку с уже выбранным элементом, чтобы
+		// клавиатура продолжила навигацию с того места, где её оставили.
+		let target: { colIndex: number; item: any } | null = null;
+		columns.forEach((col, i) => {
+			if (col.selected) {
+				const it = col.items.find((x: any) => x.name === col.selected);
+				if (it) target = { colIndex: i, item: it };
+			}
+		});
+
+		// Ничего не выбрано — встаём на первый элемент корневой колонки.
+		if (!target && columns[0]?.items?.length) {
+			target = { colIndex: 0, item: columns[0].items[0] };
+		}
+
+		set((state) => ({
+			lastActiveInstance: instanceType,
+			lastSelectedItem: target ?? state.lastSelectedItem,
+			instances: target
+				? {
+						...state.instances,
+						[instanceType]: {
+							...state.instances[instanceType],
+							columns: state.instances[instanceType].columns.map((col, i) =>
+								i === target!.colIndex ? { ...col, selected: target!.item.name } : col,
+							),
+						},
+					}
+				: state.instances,
 		}));
 	},
 }));

@@ -741,52 +741,19 @@ pub async fn preview_resize(
 
 // ==================== DEVTOOLS ====================
 
+/// Toggles the Web Inspector for the window that invoked the command.
+/// `window` is injected by Tauri — it's the caller's own webview, so F12 in any
+/// window opens that window's devtools. The inspector methods are compiled in
+/// because `tauri` is built with the `devtools` feature (see Cargo.toml).
 #[tauri::command]
-pub async fn open_devtools(_app: tauri::AppHandle) -> Result<bool, String> {
-    // В Tauri v2 DevTools можно открыть только через браузер
-    // Пытаемся открыть Safari с инструкцией на macOS
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        
-        // Пробуем открыть Safari и показать Web Inspector через AppleScript
-        let script = r#"
-            tell application "Safari"
-                activate
-                tell application "System Events"
-                    keystroke "i" using {command down, option down}
-                end tell
-            end tell
-        "#;
-        
-        let result = Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .output();
-        
-        match result {
-            Ok(_) => {
-                println!("[DevTools] Attempted to open Safari Web Inspector via AppleScript");
-                println!("[DevTools] If it didn't work, press Cmd+Option+I manually");
-            }
-            Err(e) => {
-                println!("[DevTools] Failed to open via AppleScript: {}", e);
-                println!("[DevTools] Press Cmd+Option+I to open DevTools manually");
-            }
-        }
+pub fn open_devtools(window: tauri::WebviewWindow) -> Result<bool, String> {
+    if window.is_devtools_open() {
+        window.close_devtools();
+        Ok(false)
+    } else {
+        window.open_devtools();
+        Ok(true)
     }
-    
-    #[cfg(target_os = "windows")]
-    {
-        println!("[DevTools] Press Ctrl+Shift+I or F12 to open DevTools");
-    }
-    
-    #[cfg(target_os = "linux")]
-    {
-        println!("[DevTools] Press Ctrl+Shift+I to open DevTools");
-    }
-    
-    Ok(true)
 }
 
 // ==================== LOG WINDOW ====================
@@ -1065,6 +1032,35 @@ fn normalize_item_group(payload: &mut serde_json::Value) {
     }
 }
 
+/// Сколько завершённых item'ов держим в горячем буфере (RAM). Активные (queued/running)
+/// не ограничиваем. Старые завершённые уже лежат в архиве на диске — их можно открыть
+/// во вкладке «Архив». Это и не даёт окну логов вешать программу при больших сессиях.
+const HOT_BUFFER_FINISHED_LIMIT: usize = 40;
+
+/// Обрезает st.items: оставляет все активные (queued/running) + последние N завершённых,
+/// удаляя самые старые завершённые. Порядок остальных элементов сохраняется.
+fn trim_hot_buffer(items: &mut Vec<serde_json::Value>) {
+    let is_active = |it: &serde_json::Value| {
+        matches!(
+            it.get("status").and_then(|v| v.as_str()),
+            Some("queued") | Some("running")
+        )
+    };
+    let finished_total = items.iter().filter(|it| !is_active(it)).count();
+    if finished_total <= HOT_BUFFER_FINISHED_LIMIT {
+        return;
+    }
+    let mut to_drop = finished_total - HOT_BUFFER_FINISHED_LIMIT;
+    items.retain(|it| {
+        if to_drop > 0 && !is_active(it) {
+            to_drop -= 1;
+            false
+        } else {
+            true
+        }
+    });
+}
+
 /// Item поставлен в очередь — добавляется в LogState и эмитит событие item-start (с status="queued").
 #[tauri::command]
 pub fn log_window_emit_item_queued(
@@ -1135,6 +1131,8 @@ pub fn log_window_emit_item_end(
     db_state: tauri::State<Mutex<super::db_analytics::DbState>>,
     payload: serde_json::Value,
 ) -> Result<(), String> {
+    // Завершённую лог-группу архивируем на диск и обрезаем горячий буфер в RAM.
+    let mut finished_group: Option<serde_json::Value> = None;
     if let Ok(mut st) = state.lock() {
         if let Some(item_id) = payload.get("itemId").and_then(|v| v.as_str()) {
             if let Some(it) = st.items.iter_mut().find(|it| {
@@ -1147,8 +1145,15 @@ pub fn log_window_emit_item_end(
                         }
                     }
                 }
+                finished_group = Some(it.clone());
             }
         }
+        trim_hot_buffer(&mut st.items);
+    }
+
+    // Архивация — вне блокировки state, чтобы не держать мьютекс на время записи в файл.
+    if let Some(group) = &finished_group {
+        super::log_archive::append_item(&app, group);
     }
 
     if let Some(item_id) = payload.get("itemId").and_then(|v| v.as_str()) {

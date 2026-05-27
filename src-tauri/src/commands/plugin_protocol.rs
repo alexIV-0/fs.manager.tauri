@@ -1,9 +1,9 @@
 // Кастомный URI-протокол `plugin://` для загрузки плагинов из renderer'а через `import()`.
 //
 // Resolver ищет файл по приоритету:
-//   1. <app_data_dir>/plugins/<rest>          — user-installed плагины
-//   2. <resource_dir>/plugins/<rest>          — встроенные (в prod)
-//   3. <CARGO_MANIFEST_DIR>/../distr-plugins/<rest> — dev fallback
+//   1. <CARGO_MANIFEST_DIR>/../distr-plugins/<rest> — dev (только debug, имеет приоритет)
+//   2. <app_data_dir>/plugins/<rest>          — user-installed плагины (prod)
+//   3. <resource_dir>/plugins/<rest>          — встроенные (prod)
 //
 // `node:*` импорты внутри плагинов резолвятся через <script type="importmap"> в HTML
 // главного документа (см. pluginApiImportmap в vite.config.ts). Здесь Rust отдаёт JS
@@ -24,23 +24,9 @@ fn resolve_plugin_path(app: &AppHandle, rel_path: &str) -> Option<PathBuf> {
         return None;
     }
 
-    // 1. User-installed plugins
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        let p = data_dir.join("plugins").join(rel);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-
-    // 2. Bundled resources (prod)
-    if let Ok(res_dir) = app.path().resource_dir() {
-        let p = res_dir.join("plugins").join(rel);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-
-    // 3. Dev path: <project_root>/distr-plugins/<rel>
+    // В dev distr-plugins имеет приоритет: иначе при наличии prod-установки
+    // плагин с тем же id@version подтянулся бы из app_data, а не из папки проекта.
+    // Это согласует резолвер с PluginManagerState, который в dev читает только distr-plugins.
     #[cfg(debug_assertions)]
     {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -48,6 +34,22 @@ fn resolve_plugin_path(app: &AppHandle, rel_path: &str) -> Option<PathBuf> {
             .join("..")
             .join("distr-plugins")
             .join(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    // User-installed plugins (prod)
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        let p = data_dir.join("plugins").join(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    // Bundled resources (prod)
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let p = res_dir.join("plugins").join(rel);
         if p.is_file() {
             return Some(p);
         }

@@ -20,11 +20,7 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"video",
-					"audio",
-					"image"
-				],
+				"acceptedTypes": ["video", "audio", "image"],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -34,19 +30,14 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
-					"options": [
-						"#filePattern",
-						"CustomFolder..."
-					],
+					"options": ["#filePattern", "Custom Folder..."],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": [
-					"path"
-				],
+				"acceptedTypes": ["path"],
 				"required": false
 			},
 			{
@@ -55,23 +46,13 @@
 				"controlProps": {
 					"label": "Final Extension",
 					"tooltip": "Какое расширение будет у финального файла?. Указывается формат без точки. т.е. просто mp4 или wav",
-					"options": [
-						"mp4",
-						"wav",
-						"mp3",
-						"png",
-						"jpeg"
-					],
+					"options": ["mp4", "wav", "mp3", "png", "jpeg"],
 					"multiSelect": false,
-					"value": [
-						"mp4"
-					]
+					"value": ["mp4"]
 				},
 				"isInput": false,
 				"outputType": "typeByExtension",
-				"acceptedTypes": [
-					"path"
-				],
+				"acceptedTypes": ["path"],
 				"required": true
 			},
 			{

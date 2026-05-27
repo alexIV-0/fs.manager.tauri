@@ -13,6 +13,10 @@ import MyToolTip from './CustomTooltip';
 const WORD_SPLIT_REGEX = /[\s\[\]\{\}\(\)"'`.,\-_/\\:;!?]+/;
 const EMPTY_ARRAY: string[] = [];
 
+// Текст в "режиме пути": начинается с ./ ../ или содержит разделитель.
+// В этом режиме автокомплит показывает только папки (#folders) и навигирует по ним.
+const isPathLike = (t: string) => /[\\/]/.test(t) || /^\s*\.\.?/.test(t);
+
 function getActiveWord(value: string, cursor: number) {
 	let start = cursor;
 	let end = cursor;
@@ -73,6 +77,12 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 	const boxRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const editingChipRef = useRef<HTMLDivElement | null>(null);
+	const itemRefs = useRef<(HTMLElement | null)[]>([]);
+
+	// При навигации стрелками подкручиваем список так, чтобы выделенный пункт был виден.
+	useEffect(() => {
+		if (highlightedIndex >= 0) itemRefs.current[highlightedIndex]?.scrollIntoView({ block: 'nearest' });
+	}, [highlightedIndex]);
 
 	useEffect(() => {
 		if (!settings) return;
@@ -104,18 +114,26 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 	/** Универсальная фильтрация */
 	const filterOptions = useCallback(
 		async (text: string, cursor: number) => {
-			// #historyValue резолвится через useResolveOptions (с переданным propertyId)
-			const options = await resolveOptions(settings.options ?? []);
+			// Режим навигации по пути: как только пользователь вводит ./ ../ или любой '/',
+			// показываем ТОЛЬКО папки (через #folders), скрывая токены, Custom Folder... и историю —
+			// как файловый автокомплит в VSCode.
+			const isPathMode = isPathLike(text);
+			const rawOpts = settings.options ?? [];
+			const optsToResolve = isPathMode ? rawOpts.filter((o) => o === '#folders') : rawOpts;
+
+			// #historyValue резолвится через useResolveOptions (с переданным propertyId).
+			// text прокидываем для относительной навигации #folders (../ от папки проекта).
+			const options = await resolveOptions(optsToResolve, chips, text);
 
 			// Обновляем кэш системных опций (без #historyValue) для проверки при сохранении
-			const sysOnlyOpts = (settings.options ?? []).filter((o) => !/^#historyValue(\(.+\))?$/.test(o));
-			const sysResolved = await resolveOptions(sysOnlyOpts);
+			const sysOnlyOpts = rawOpts.filter((o) => !/^#historyValue(\(.+\))?$/.test(o));
+			const sysResolved = await resolveOptions(sysOnlyOpts, chips, text);
 			systemOptionsRef.current = new Set(sysResolved);
 
-			// Элементы из истории могут уже присутствовать среди resolved options (через #historyValue).
-			// Дополнительно вставляем те, которых ещё нет — для корректной работы deletableSet.
+			// В режиме пути историю не показываем. Иначе — элементы из истории могут уже присутствовать
+			// среди resolved options (через #historyValue); добавляем недостающие для deletableSet.
 			const optionsSet = new Set(options);
-			const historyOnly = historyItems.filter((h) => !optionsSet.has(h));
+			const historyOnly = isPathMode ? [] : historyItems.filter((h) => !optionsSet.has(h));
 			const allOptions = [...historyOnly, ...options];
 			const historySet = new Set(historyItems);
 
@@ -136,7 +154,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 			updateHighlightedIndex(-1);
 			setShowDropdown(filtered.length > 0);
 		},
-		[settings.options, historyItems, resolveOptions],
+		[settings.options, historyItems, resolveOptions, chips],
 	);
 
 	/** Добавление чипа */
@@ -153,8 +171,10 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 
 	/** Универсальная замена слова/значения */
 	const handleSelectOption = async (replacement: string, commit = false) => {
-		// Обработка специальных опций
-		if (replacement === 'Custom Folder...') {
+		// Обработка специальных опций.
+		// Канонический формат из PluginBuilder (SPECIAL_OPTIONS) — без пробела: 'CustomFolder...'.
+		// Пробельную форму оставляем для совместимости со старыми конфигами.
+		if (replacement === 'CustomFolder...' || replacement === 'Custom Folder...') {
 			const singleFolderPath = await window.electronAPI.invoke('selectFolders', {
 				multiSelect: false,
 			});
@@ -167,7 +187,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 			return;
 		}
 
-		if (replacement === 'Custom File...') {
+		if (replacement === 'CustomFile...' || replacement === 'Custom File...') {
 			const singleFilePath = await window.electronAPI.invoke('selectFiles', {
 				multiSelect: false,
 			});
@@ -180,20 +200,27 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 			return;
 		}
 
+		// В режиме пути Tab (commit=false) «заходит» в папку: дописываем '/' к имени,
+		// чтобы следующее разрешение показало её содержимое. Enter (commit=true) фиксирует
+		// чип как есть (../folderName). '../' уже оканчивается на '/'.
+		const withNavSlash = (baseText: string, repl: string) =>
+			!commit && isPathLike(baseText) && !repl.endsWith('/') ? `${repl}/` : repl;
+
 		// Обычная обработка для остальных опций
 		if (dropdownType === 'input') {
 			if (!inputRef.current) return;
 			const cursor = inputRef.current.selectionStart ?? inputValue.length;
 			const { start, end } = getActiveWord(inputValue, cursor);
-			const newValue = inputValue.slice(0, start) + replacement + inputValue.slice(end);
+			const repl = withNavSlash(inputValue, replacement);
+			const newValue = inputValue.slice(0, start) + repl + inputValue.slice(end);
 
 			if (commit) {
 				addChip(newValue);
 			} else {
 				setInputValue(newValue);
-				filterOptions(newValue, start + replacement.length);
+				filterOptions(newValue, start + repl.length);
 				requestAnimationFrame(() => {
-					const pos = start + replacement.length;
+					const pos = start + repl.length;
 					inputRef.current?.setSelectionRange(pos, pos);
 				});
 			}
@@ -203,7 +230,8 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 
 			const cursor = chipInput.selectionStart ?? editingChipValue.length;
 			const { start, end } = getActiveWord(editingChipValue, cursor);
-			const newValue = editingChipValue.slice(0, start) + replacement + editingChipValue.slice(end);
+			const repl = withNavSlash(editingChipValue, replacement);
+			const newValue = editingChipValue.slice(0, start) + repl + editingChipValue.slice(end);
 
 			const next = [...chips];
 			next[editingChipIndex] = newValue;
@@ -217,9 +245,9 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 				setShowDropdown(false);
 				setDropdownType(null);
 			} else {
-				filterOptions(newValue, start + replacement.length);
+				filterOptions(newValue, start + repl.length);
 				requestAnimationFrame(() => {
-					const pos = start + replacement.length;
+					const pos = start + repl.length;
 					chipInput.setSelectionRange(pos, pos);
 				});
 			}
@@ -450,6 +478,9 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 							{filteredOptions.map((opt, i) => (
 								<ListItem key={opt} disablePadding>
 									<ListItemButton
+										ref={(el) => {
+											itemRefs.current[i] = el;
+										}}
 										selected={i === highlightedIndex}
 										onMouseDown={(e) => {
 											e.preventDefault();

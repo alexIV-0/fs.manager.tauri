@@ -22,6 +22,10 @@ import {
 	topShadowStyle,
 } from '../mainStyles';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
+import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
+import { columnBorder } from '../columnFocusStyle';
 import { ProjectFolderItem } from './ProjectFolderItem';
 import { getUniqueFolderName } from '@/Utils/getUniqueFolderName';
 import { saveToLocalStorage } from '@/Utils/loadSaveToLS';
@@ -70,6 +74,77 @@ export function ProjectFolderColumn() {
 	const cycleSortMode = () => {
 		setSortMode((prev) => (prev === 'manual' ? 'asc' : prev === 'asc' ? 'desc' : 'manual'));
 	};
+
+	// ==============================
+	// 🔹 Навигация с клавиатуры (когда фокус на колонке проектов)
+	// ==============================
+	const isFocused = () => useColumnFocus_store.getState().focusedColumn === 'project';
+	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'project');
+
+	const moveProjectSelection = (delta: number) => {
+		if (displayedFolders.length === 0) return;
+		const curIdx = displayedFolders.indexOf(activeProjectFolder || '');
+		const nextIdx = curIdx === -1 ? 0 : Math.min(displayedFolders.length - 1, Math.max(0, curIdx + delta));
+		const next = displayedFolders[nextIdx];
+		setActiveFolders_store.getState().setActiveProjectFolder(next);
+		setActiveFolders_store.getState().setScrollToProjectFolder(next);
+	};
+
+	useKeyboardShortcut({
+		key: 'ArrowDown',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			moveProjectSelection(1);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowUp',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			moveProjectSelection(-1);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowLeft',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			useColumnFocus_store.getState().setFocusedColumn('main');
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowRight',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			useColumnView_Store.getState().focusInstance('gd');
+		},
+	});
+
+	// Enter — переименование выбранной проектной папки
+	useKeyboardShortcut({
+		key: 'Enter',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused() || !activeProjectFolder) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			setActiveFolders_store.getState().setRenameProjectRequest(activeProjectFolder);
+		},
+	});
 
 	const onOffAllAutomation = () => {
 		if (onOffVal) {
@@ -163,10 +238,16 @@ export function ProjectFolderColumn() {
 	return (
 		<Box
 			ref={boxRef}
+			onMouseDown={() => useColumnFocus_store.getState().setFocusedColumn('project')}
 			sx={{
 				...mainBoxStyle,
 				width: optionsObj.projectFolderWidth,
-
+				// Рамка меняет цвет, когда колонка в фокусе (см. columnFocusStyle.ts)
+				border: columnBorder(isColumnFocused),
+				// Сдвиг на -1px: левая рамка накладывается на правую рамку соседней
+				// колонки → на стыке одна линия вместо двух.
+				ml: '-1px',
+				zIndex: isColumnFocused ? 2 : 1,
 				// pointerEvents: isScanning ? 'none' : 'auto',
 			}}
 		>

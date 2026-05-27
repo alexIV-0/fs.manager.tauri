@@ -5,11 +5,27 @@ import { PatternKeys } from '@/types/searchType';
 import { useCallback } from 'react';
 import { joinPath } from '@/Utils/joinPath';
 
+// Резолвит относительный путь (с ./ ../) против абсолютной базы. Браузеро-безопасно
+// (без node:path). Сохраняет стиль сепаратора базы (POSIX '/' или Windows '\').
+function resolveRelativePath(base: string, rel: string): string {
+	const sep = base.includes('\\') ? '\\' : '/';
+	const baseParts = base.split(/[\\/]+/); // ['', 'Users', ...] для POSIX сохраняет ведущий ''
+	for (const part of rel.split(/[\\/]+/)) {
+		if (part === '' || part === '.') continue;
+		if (part === '..') {
+			if (baseParts.length > 1) baseParts.pop();
+		} else {
+			baseParts.push(part);
+		}
+	}
+	return baseParts.join(sep) || sep;
+}
+
 export function useResolveOptions(propertyId?: string) {
 	const path = usePathStore((s) => s.path);
 
 	const resolveOptions = useCallback(
-		async (rawOptions: string[], currentChips?: string[]): Promise<string[]> => {
+		async (rawOptions: string[], currentChips?: string[], currentText?: string): Promise<string[]> => {
 			const resolved = await Promise.all(
 				rawOptions.map(async (item) => {
 					if (typeof item !== 'string' || !item.startsWith('#')) {
@@ -39,12 +55,39 @@ export function useResolveOptions(propertyId?: string) {
 						}
 
 						case 'folders': {
-							const excluded = ['in', 'out'];
-							const result = (await window.electronAPI.invoke('getSomeFromFolder', path, [{ type: 'folders', ext: [] }])) as any;
+							if (!path) return [];
 
-							const folders: string[] = Array.isArray(result) ? result : (result?.folders ?? []);
+							// VSCode-подобная навигация: директорию берём из уже введённого текста
+							// (всё до последнего '/'), относительно папки проекта ($projectPathGD).
+							// '../' поднимает на уровень выше, '../../' — на два и т.д.
+							// Хвост после '/' отфильтрует подстрочный фильтр в автокомплите.
+							const text = currentText ?? '';
+							const lastSlash = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+							const dirPart = lastSlash >= 0 ? text.slice(0, lastSlash) : '';
 
-							return folders.filter((f: string) => !excluded.includes(f.toLowerCase()));
+							const atRoot = dirPart === '' || dirPart === '.';
+							const resolvedDir = atRoot ? path : resolveRelativePath(path, dirPart);
+
+							// getSomeFromFolder бросает Err для несуществующей/недоступной папки.
+							// Ловим, чтобы одна неудачная директория не уронила весь список опций.
+							let folders: string[] = [];
+							try {
+								const result = (await window.electronAPI.invoke('getSomeFromFolder', resolvedDir, [
+									{ type: 'folders', ext: [] },
+								])) as any;
+								folders = Array.isArray(result) ? result : (result?.folders ?? []);
+							} catch (e) {
+								console.warn('[#folders] не удалось прочитать папку:', resolvedDir, e);
+							}
+
+							// IN/OUT прячем только в корне проекта — в других папках они валидны.
+							if (atRoot) {
+								const excluded = ['in', 'out'];
+								folders = folders.filter((f: string) => !excluded.includes(f.toLowerCase()));
+							}
+
+							// '../' первым пунктом — чтобы можно было подняться кликом, а не только вводом.
+							return ['../', ...folders];
 						}
 
 						case 'recursiveFF': {

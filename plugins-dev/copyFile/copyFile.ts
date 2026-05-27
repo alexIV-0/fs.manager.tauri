@@ -6,18 +6,40 @@
 import path from 'path';
 import { fs, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 
 export { onLoad } from '../_template/tauri';
 
 export async function copyFileFunc(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
-	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
+	// Сегменты, заданные пользователем (папка/имя), либо дефолтное имя.
+	const targetSegments: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
-	if (_item.import.targetPath?.length) {
-		curPath.unshift(..._item.import.targetPath);
+	// Если последний сегмент — это «папка» (абсолютный путь или относительный ./ ../),
+	// то имя файла не задано — дописываем стандартное (как обещает тултип Target Path).
+	// Если же последний сегмент — обычное имя/токен ($fileName и т.п.), оставляем как есть.
+	const lastResolved = formatNameByPattern({ string: targetSegments[targetSegments.length - 1], description: _description });
+	if (path.isAbsolute(lastResolved) || /^\.\.?[\\/]/.test(lastResolved)) {
+		targetSegments.push('$clearName ($random(3))');
+	}
+
+	// Выбор базы по первому сегменту:
+	//  - АБСОЛЮТНЫЙ путь ("Custom Folder...") — используем как есть, иначе path.join
+	//    приклеил бы его к дефолтному префиксу и получился бы несуществующий путь;
+	//  - относительный ./ ../ — отсчитываем от папки проекта ($projectPathGD);
+	//  - иначе (имена папок / пусто) — input targetPath или локальная папка обработки.
+	const firstResolved = formatNameByPattern({ string: targetSegments[0], description: _description });
+
+	let curPath: string[];
+	if (path.isAbsolute(firstResolved)) {
+		curPath = targetSegments;
+	} else if (/^\.\.?[\\/]/.test(firstResolved)) {
+		curPath = ['$projectPathGD', ...targetSegments];
+	} else if (_item.import.targetPath?.length) {
+		curPath = [..._item.import.targetPath, ...targetSegments];
 	} else {
-		curPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
+		curPath = ['$localFolder', '$mainFolderName', '$projectName', '$findTime', ...targetSegments];
 	}
 
 	for (const fileFrom of _item.import.inputFile as string[]) {

@@ -413,6 +413,10 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 	send('log', { level: 'info', text: `→ Loop "${stepId}": ${inputArray.length} item(s)`, itemId: ctx.itemId, stepId });
 
 	const accumulator: any[] = [];
+	// Любое падение итерации поднимаем наверх как падение всего шага, чтобы
+	// processItem пометил item как error и (при deleteAfter) перенёс оригинал
+	// в errors. Раньше loop всегда возвращал true и ошибка проглатывалась.
+	let anyIterationFailed = false;
 
 	for (let i = 0; i < inputArray.length; i++) {
 		if (ctx.signal.aborted) {
@@ -449,6 +453,7 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 		ctx.accumulatedCost += innerCtx.accumulatedCost;
 
 		if (!iterationOk) {
+			anyIterationFailed = true;
 			send('log', { level: 'warn', text: `  [${i + 1}/${inputArray.length}] failed`, itemId: ctx.itemId, stepId });
 			continue;
 		}
@@ -464,6 +469,13 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 
 	ctx.results.set(stepId, accumulator);
 	stepObj.output = accumulator;
+
+	if (anyIterationFailed) {
+		send('node:error', { nodeId: stepId, message: `Loop "${stepId}": one or more iterations failed`, itemId: ctx.itemId });
+		send('error', { step: stepId, message: `Loop "${stepId}": one or more iterations failed`, itemId: ctx.itemId, stepId });
+		return false;
+	}
+
 	send('node:done', { nodeId: stepId, output: accumulator, itemId: ctx.itemId });
 	return true;
 }

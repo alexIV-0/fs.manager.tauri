@@ -45,6 +45,7 @@ fn default_app_settings() -> Value {
             "onlineDb": { "enabled": false, "url": "", "templateId": "database-sync" }
         },
         "cleanup": { "retentionDays": null, "autoDisableDays": null },
+        "logs": { "retentionDays": 2 },
         "logging": { "bufferSize": 5000 }
     })
 }

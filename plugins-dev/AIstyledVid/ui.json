@@ -30,7 +30,7 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
-					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
+					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
