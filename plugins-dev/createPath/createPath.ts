@@ -30,11 +30,16 @@ export async function createPathFunc(_item: ItemType, _description: any) {
 		curPath.unshift('$projectPathGD');
 	}
 
-	const pathMerge = path.join(...curPath);
-	const pathByPattern = formatNameByPattern({
-		string: pathMerge,
-		description: _description,
-	});
+	// Соединяем простым '/', НЕ через path.join: иначе '..' схлопнулся бы против
+	// нераскрытого токена ('$projectPathGD' + '../foo' => 'foo'). Раскрываем токены,
+	// затем path.normalize схлопывает '..' уже против реального пути.
+	const pathMerge = curPath.filter((s) => s != null && s !== '').join('/');
+	const pathByPattern = path.normalize(
+		formatNameByPattern({
+			string: pathMerge,
+			description: _description,
+		}),
+	);
 
 	let finalPath = pathByPattern;
 

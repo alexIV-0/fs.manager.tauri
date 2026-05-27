@@ -10,8 +10,9 @@
 //   • Frame border + checkerboard background around canvas frame
 
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { VideoAdjustSettings, buildCanvasFilter, defaultFgShadow } from './types';
+import { VideoAdjustSettings, defaultFgShadow } from './types';
 import { toFileUrl } from '@/Utils/mediaUtils';
+import { applyBlur, applyColorAdjust } from '@/Utils/canvasFilters';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 import PreviewToolbar, { type PreviewToolbarHandle } from '../PreviewToolbar';
 
@@ -173,36 +174,52 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 		if (bgV && bgV.readyState >= 2 && bgV.videoWidth > 0) {
 			const bgCopies = Math.max(1, s.bg.copies);
 			const adj       = s.bg.adjust;
-			const filterStr = buildCanvasFilter(adj);
-			const blurPad   = adj.blur > 0 ? Math.ceil(adj.blur * 2.5) : 0;
 
-			for (let i = 0; i < bgCopies; i++) {
-				const cellX = isPortrait ? 0                              : Math.round(i * fw / bgCopies);
-				const cellY = isPortrait ? Math.round(i * fh / bgCopies) : 0;
-				const cellW = isPortrait ? fw                             : Math.round(fw / bgCopies);
-				const cellH = isPortrait ? Math.round(fh / bgCopies)      : fh;
+			// ctx.filter is a no-op in WKWebView, so blur/colour are applied by pixel
+			// helpers (taint-safe — the source <video> has crossOrigin="anonymous").
+			// When no adjustment is active, draw straight to the main canvas (fast path).
+			const hasColor = (adj.brightness || 0) !== 0 || adj.contrast !== 1 || adj.saturation !== 1;
+			const hasFilter = adj.blur > 0 || hasColor;
 
-				const padW       = cellW + blurPad * 2;
-				const padH       = cellH + blurPad * 2;
-				const coverScale = Math.max(padW / bgV.videoWidth, padH / bgV.videoHeight);
-				const renderW    = bgV.videoWidth  * coverScale;
-				const renderH    = bgV.videoHeight * coverScale;
-				const renderX    = cellX + (cellW - renderW) / 2;
-				const renderY    = cellY + (cellH - renderH) / 2;
+			const bgOff = hasFilter ? document.createElement('canvas') : null;
+			if (bgOff) { bgOff.width = fw; bgOff.height = fh; }
+			const bctx = bgOff ? bgOff.getContext('2d') : ctx;
+			if (bctx) {
+				for (let i = 0; i < bgCopies; i++) {
+					const cellX = isPortrait ? 0                              : Math.round(i * fw / bgCopies);
+					const cellY = isPortrait ? Math.round(i * fh / bgCopies) : 0;
+					const cellW = isPortrait ? fw                             : Math.round(fw / bgCopies);
+					const cellH = isPortrait ? Math.round(fh / bgCopies)      : fh;
 
-				ctx.save();
-				ctx.beginPath();
-				ctx.rect(cellX, cellY, cellW, cellH);
-				ctx.clip();
-				if (filterStr) ctx.filter = filterStr;
-				if (adj.hFlip) {
-					ctx.translate(renderX + renderW / 2, renderY + renderH / 2);
-					ctx.scale(-1, 1);
-					ctx.drawImage(bgV, -renderW / 2, -renderH / 2, renderW, renderH);
-				} else {
-					ctx.drawImage(bgV, renderX, renderY, renderW, renderH);
+					const coverScale = Math.max(cellW / bgV.videoWidth, cellH / bgV.videoHeight);
+					const renderW    = bgV.videoWidth  * coverScale;
+					const renderH    = bgV.videoHeight * coverScale;
+					const renderX    = cellX + (cellW - renderW) / 2;
+					const renderY    = cellY + (cellH - renderH) / 2;
+
+					bctx.save();
+					bctx.beginPath();
+					bctx.rect(cellX, cellY, cellW, cellH);
+					bctx.clip();
+					if (adj.hFlip) {
+						bctx.translate(renderX + renderW / 2, renderY + renderH / 2);
+						bctx.scale(-1, 1);
+						bctx.drawImage(bgV, -renderW / 2, -renderH / 2, renderW, renderH);
+					} else {
+						bctx.drawImage(bgV, renderX, renderY, renderW, renderH);
+					}
+					bctx.restore();
 				}
-				ctx.restore();
+
+				if (bgOff) {
+					applyBlur(bgOff, adj.blur);
+					applyColorAdjust(bgOff, {
+						brightnessMul: 1 + (adj.brightness || 0),
+						contrast: adj.contrast,
+						saturation: adj.saturation,
+					});
+					ctx.drawImage(bgOff, 0, 0);
+				}
 			}
 		}
 
@@ -383,8 +400,8 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 			style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#111111' }}
 		>
 			{/* Hidden video elements */}
-			{fgUrl && <video ref={fgVideoRef} src={fgUrl} loop muted playsInline style={{ display: 'none' }} />}
-			{bgUrl && <video ref={bgVideoRef} src={bgUrl} loop muted playsInline style={{ display: 'none' }} />}
+			{fgUrl && <video ref={fgVideoRef} crossOrigin='anonymous' src={fgUrl} loop muted playsInline style={{ display: 'none' }} />}
+			{bgUrl && <video ref={bgVideoRef} crossOrigin='anonymous' src={bgUrl} loop muted playsInline style={{ display: 'none' }} />}
 
 			{/* Preview area with pan/zoom */}
 			<div

@@ -36,7 +36,15 @@ export interface ColumnViewState {
 const dirCache = new Map<string, { items: FileItem[]; ts: number }>();
 const CACHE_TTL = 30_000;
 
+// 🔻 Главный рубильник prefetch-кеша.
+// false  → кеш полностью отключён: папки всегда читаются с диска заново,
+//          никаких «призрачных» файлов после перемещения/удаления.
+// true   → prefetch при наведении + кеш на CACHE_TTL мс (быстрее открытие).
+// Чтобы вернуть кеш — поставить true (и при желании снизить CACHE_TTL до 3000).
+const CACHE_ENABLED = false;
+
 export function getCachedDir(folderPath: string): FileItem[] | null {
+	if (!CACHE_ENABLED) return null;
 	const entry = dirCache.get(folderPath);
 	if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.items;
 	return null;
@@ -47,6 +55,7 @@ export function invalidateDirCache(folderPath: string): void {
 }
 
 export function prefetchDir(folderPath: string): void {
+	if (!CACHE_ENABLED) return;
 	if (!getCachedDir(folderPath)) {
 		readDirContent(folderPath); // fire and forget
 	}

@@ -13,6 +13,7 @@ import './index.css';
 import { loadAllUINodes, type CollectedUINode } from '@/Utils/loadAllUINodes';
 import { buildNodeDefinitions } from './definitions';
 import { joinPath } from '@/Utils/joinPath';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 
 import SaveButton from './layout/SaveButton';
 import TopPanel from './layout/TopPanel';
@@ -28,6 +29,9 @@ function NodeApp() {
 	const [isLoading, setIsLoading] = useState(true);
 	const [initError, setInitError] = useState<string | null>(null);
 	const [pluginUINodes, setPluginUINodes] = useState<CollectedUINode[]>([]);
+
+	// F12 toggles this window's DevTools (dev/devtools builds). Mirrors PreviewApp.
+	useKeyboardShortcut({ key: 'F12', skipOnInput: false, callback: () => window.electronAPI.openDevTools() });
 
 	useEffect(() => {
 		let isMounted = true;

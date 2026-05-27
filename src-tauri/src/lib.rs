@@ -5,6 +5,7 @@ mod commands;
 use commands::{
     fs_commands::*,
     window_commands::*,
+    log_archive::*,
     watch_commands::*,
     processing_commands::*,
     plugin_commands::*,
@@ -37,7 +38,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         // Кастомный `plugin://` протокол для динамической загрузки плагинов через import().
-        // Resolver: app_data/plugins → resource/plugins → distr-plugins (dev).
+        // Resolver: distr-plugins (dev, приоритет) → app_data/plugins → resource/plugins.
         // На лету переписывает Node-импорты в плагинах на наши @plugin-api/* полифилы.
         .register_uri_scheme_protocol("plugin", |ctx, request| {
             let app = ctx.app_handle().clone();
@@ -351,6 +352,10 @@ pub fn run() {
             log_window_emit_item_end,
             log_window_emit_item_queued,
             log_window_emit_abort_queued,
+            log_archive_list_days,
+            log_archive_get_day,
+            log_archive_cleanup,
+            log_archive_clear,
             intercept_console,
             restore_console,
             // File watcher

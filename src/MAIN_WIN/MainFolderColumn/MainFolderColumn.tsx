@@ -8,9 +8,11 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
+import { columnBorder } from '../columnFocusStyle';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 
-import { greyColor } from '@/Store/Color/grayColor';
 import { FolderItem } from './FolderItem';
 import { SortableItem } from './SortableItem';
 import {
@@ -50,6 +52,54 @@ export function MainFolderColumn() {
 	};
 	const { activeMainFolder, activeProjectFolder, setActiveProjectFolder, setMainFolderId } = setActiveFolders_store();
 	const boxRef = useRef<HTMLDivElement>(null);
+
+	// ==============================
+	// 🔹 Навигация с клавиатуры (когда фокус на главной колонке)
+	// ==============================
+	const isFocused = () => useColumnFocus_store.getState().focusedColumn === 'main';
+	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'main');
+
+	const moveMainSelection = (delta: number) => {
+		if (displayedFolders.length === 0) return;
+		const curIdx = displayedFolders.findIndex((f) => f.id === activeMainFolder);
+		const nextIdx = curIdx === -1 ? 0 : Math.min(displayedFolders.length - 1, Math.max(0, curIdx + delta));
+		const next = displayedFolders[nextIdx];
+		setMainFolderId(next.id);
+		setActiveFolders_store.getState().setScrollToMainFolder(next.id);
+	};
+
+	useKeyboardShortcut({
+		key: 'ArrowDown',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			moveMainSelection(1);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowUp',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			moveMainSelection(-1);
+		},
+	});
+
+	useKeyboardShortcut({
+		key: 'ArrowRight',
+		skipOnInput: true,
+		callback: (e) => {
+			if ((e as any).__navHandled || !isFocused()) return;
+			e.preventDefault();
+			(e as any).__navHandled = true;
+			useColumnFocus_store.getState().setFocusedColumn('project');
+		},
+	});
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, {
@@ -166,10 +216,15 @@ export function MainFolderColumn() {
 	return (
 		<Box
 			ref={boxRef}
+			onMouseDown={() => useColumnFocus_store.getState().setFocusedColumn('main')}
 			sx={{
 				...mainBoxStyle,
 				width: optionsObj.mainFolderWidth,
-				border: `1px solid ${greyColor(80)}`,
+				// Рамка меняет цвет, когда колонка в фокусе (см. columnFocusStyle.ts)
+				border: columnBorder(isColumnFocused),
+				// Фокусная колонка рисуется поверх соседних, чтобы её голубая рамка
+				// перекрывала серую рамку соседа на стыке (колонки сдвинуты на -1px).
+				zIndex: isColumnFocused ? 2 : 1,
 				// pointerEvents: isScanning ? 'none' : 'auto',
 			}}
 		>

@@ -25,9 +25,17 @@ import { initializePlugins } from '@/Store/MainWin/plugin_store';
 import { MainFolderColumn } from './MainFolderColumn/MainFolderColumn';
 import MyButton from './Universal/myButton';
 import MyDivider from './Universal/myDivider';
+import { useColumnTabNavigation } from './hooks/useColumnTabNavigation';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 
 export default function AppMain() {
 	const isRunningRef = useRef(false);
+
+	// Tab / Shift+Tab — переключение фокуса между колонками
+	useColumnTabNavigation();
+
+	// F12 toggles this window's DevTools (dev/devtools builds). Mirrors PreviewApp.
+	useKeyboardShortcut({ key: 'F12', skipOnInput: false, callback: () => window.electronAPI.openDevTools() });
 
 	const { setMainFolderId } = setActiveFolders_store();
 	const { mainFolderArr } = mainFolders_stor();

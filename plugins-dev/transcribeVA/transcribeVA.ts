@@ -49,7 +49,9 @@ async function detectLanguage(bin: string, modelPath: string, audioFile: string,
 			'--language', 'auto',
 			'--duration', String(duration),
 			'--threads', String(threads),
-			'--print-special',
+			// `--print-special` намеренно выключен: whisper-cli и без него печатает
+			// "auto-detected language: xx", а с ним льёт тысячи [_TT_*] токенов в stderr —
+			// это затапливало webview-listener и вешало UI (см. exec_commands.rs throttle).
 		];
 		try {
 			const result = await exec(bin, args, { nodeId });

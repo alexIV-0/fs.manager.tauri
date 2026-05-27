@@ -1,4 +1,5 @@
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { prefetchDir } from '@/Store/helpers/readDirContent';
 import { ListItem, Checkbox, ListItemText, IconButton, TextField } from '@mui/material';
@@ -22,6 +23,8 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 
 	const activeMainFolder = setActiveFolders_store((s) => s.activeMainFolder);
 	const scrollToProjectFolder = setActiveFolders_store((s) => s.scrollToProjectFolder);
+	const renameProjectRequest = setActiveFolders_store((s) => s.renameProjectRequest);
+	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'project');
 
 	const { folders, addFolder, removeFolder } = useFoldersFromLS(activeMainFolder || '');
 
@@ -51,6 +54,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 
 	const handleMainClick = () => {
 		setActiveFolders_store.getState().setActiveProjectFolder(name);
+		useColumnFocus_store.getState().setFocusedColumn('project');
 	};
 
 	const handleMouseEnter = () => {
@@ -84,15 +88,24 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 		}
 	}, [scrollToProjectFolder, name]);
 
+	// Запрос на переименование по Enter из ProjectFolderColumn — входим в режим
+	// редактирования и сбрасываем запрос, чтобы он не сработал повторно.
+	useEffect(() => {
+		if (renameProjectRequest === name && !isEditing) {
+			startEditing();
+			setActiveFolders_store.getState().setRenameProjectRequest(null);
+		}
+	}, [renameProjectRequest, name, isEditing, startEditing]);
+
 	return (
 		<ListItem
 			ref={listItemRef}
 			disablePadding
 			sx={{
 				height: '34px',
-				backgroundColor: isActive ? '#ffffff1b' : 'transparent',
+				backgroundColor: isActive ? (isColumnFocused ? '#007bff4c' : 'rgba(255,255,255,0.08)') : 'transparent',
 				position: 'relative',
-				'&:hover': { backgroundColor: '#ffffff0b' },
+				'&:hover': { backgroundColor: isActive && isColumnFocused ? '#007bff5c' : '#ffffff0b' },
 				'&:hover .removeProjectButton': { opacity: 1 },
 			}}
 			onClick={handleMainClick}
@@ -120,6 +133,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 						width: '100%',
 						overflow: 'hidden',
 						cursor: 'pointer',
+						...(isActive && isColumnFocused && { '& .MuiListItemText-primary': { color: '#64afffff', fontWeight: 600 } }),
 					}}
 				>
 					{name}

@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
+
+// Не чаще одного processing-event на строку stdout/stderr раз в EMIT_THROTTLE_MS.
+// Long-running CLI (whisper-cli и т.п.) выдают тысячи строк в секунду — без троттлинга
+// они затапливают WebView2 message-pump и UI окон зависает ("Not Responding").
+const EMIT_THROTTLE_MS: u64 = 150;
 
 use super::process_utils::HiddenConsole;
 
@@ -152,9 +157,17 @@ fn exec_command_blocking(
     let stdout_reader = BufReader::new(child.stdout.take().unwrap());
     let stderr_reader = BufReader::new(child.stderr.take().unwrap());
 
+    // Общий throttle-таймер на оба stream'а: ProcessingEventListener в nodeWin
+    // дёргает setStatusText на каждом `log` событии → re-render. Без троттлинга
+    // тысячи строк/сек подвешивают webview. Логи всё равно льются в logWindow
+    // отдельным каналом (sendToMW из плагина → log-window:emit-item-log).
+    let started = Instant::now();
+    let last_emit_ms = Arc::new(AtomicU64::new(0));
+
     // Читаем stdout в отдельном потоке
     let app_clone = app.clone();
     let node_id_clone = args.node_id.clone();
+    let last_emit_stdout = Arc::clone(&last_emit_ms);
     let stdout_handle = thread::spawn(move || {
         let mut output = String::new();
         for line in stdout_reader.lines() {
@@ -165,7 +178,18 @@ fn exec_command_blocking(
                     output.push('\n');
 
                     if let Some(ref node_id) = node_id_clone {
-                        let _ = app_clone.emit(
+                        let now_ms = started.elapsed().as_millis() as u64;
+                        let last = last_emit_stdout.load(Ordering::Relaxed);
+                        if now_ms.saturating_sub(last) < EMIT_THROTTLE_MS {
+                            continue;
+                        }
+                        last_emit_stdout.store(now_ms, Ordering::Relaxed);
+
+                        // emit_to("nodeWin", ...) вместо broadcast: только nodeWin
+                        // реально потребляет эти события (статусбар активной ноды).
+                        // main/logWindow/previewWin не должны платить за каждый line.
+                        let _ = app_clone.emit_to(
+                            "nodeWin",
                             "processing-event",
                             serde_json::json!({
                                 "type": "log",
@@ -188,6 +212,7 @@ fn exec_command_blocking(
     // Читаем stderr в отдельном потоке
     let app_clone2 = app.clone();
     let node_id_clone2 = args.node_id.clone();
+    let last_emit_stderr = Arc::clone(&last_emit_ms);
     let stderr_handle = thread::spawn(move || {
         let mut output = String::new();
         for line in stderr_reader.lines() {
@@ -198,12 +223,18 @@ fn exec_command_blocking(
                     output.push('\n');
 
                     if let Some(ref node_id) = node_id_clone2 {
-                        let level = if line.to_lowercase().contains("error") {
-                            "error"
-                        } else {
-                            "warn"
-                        };
-                        let _ = app_clone2.emit(
+                        let is_error = line.to_lowercase().contains("error");
+                        let now_ms = started.elapsed().as_millis() as u64;
+                        let last = last_emit_stderr.load(Ordering::Relaxed);
+                        // Ошибки пропускаем без троттлинга — их обычно мало и они важны.
+                        if !is_error && now_ms.saturating_sub(last) < EMIT_THROTTLE_MS {
+                            continue;
+                        }
+                        last_emit_stderr.store(now_ms, Ordering::Relaxed);
+
+                        let level = if is_error { "error" } else { "warn" };
+                        let _ = app_clone2.emit_to(
+                            "nodeWin",
                             "processing-event",
                             serde_json::json!({
                                 "type": "log",

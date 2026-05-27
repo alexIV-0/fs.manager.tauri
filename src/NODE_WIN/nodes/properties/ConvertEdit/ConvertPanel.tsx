@@ -909,9 +909,21 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 	const compatVideoCodecs = VIDEO_CODECS_FOR_CONTAINER[ext] ?? VIDEO_CODECS;
 	const compatAudioCodecs = outputMode === 'audio' ? (AUDIO_CODECS_FOR_EXT[ext] ?? AUDIO_CODECS) : AUDIO_CODECS;
 
-	const fileInputRef = useRef<HTMLInputElement>(null);
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
+
+	// Native Tauri file dialog — returns an absolute path. A web <input type=file>
+	// can't: in WKWebView the File object has no `.path`, so the preview would get a
+	// bare filename and fail to load. Mirrors VideoAdjustPanel.
+	const selectPreviewFile = useCallback(() => {
+		(window as any).electronAPI
+			.invoke('selectFiles', {
+				multiSelect: false,
+				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'mp3', 'wav', 'aac', 'flac'] }],
+			})
+			.then((paths: string[]) => { if (paths?.length > 0) onSelectFile(paths[0]); })
+			.catch(() => {});
+	}, [onSelectFile]);
 
 	const sectionLabel = (text: string) => (
 		<Typography sx={{ fontSize: 10, color: labelColor, mb: 0.8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{text}</Typography>
@@ -1035,26 +1047,12 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 			{/* ── FILE ───────────────────────────────────────────────── */}
 			<Box sx={{ p: 1.5, pb: 1 }}>
 				{sectionLabel('Preview File')}
-				<input
-					ref={fileInputRef}
-					type='file'
-					accept='video/*,image/*,audio/*'
-					style={{ display: 'none' }}
-					onChange={(e) => {
-						const file = e.target.files?.[0];
-						if (file) {
-							const p = (window as any).electronAPI?.getPathForFile?.(file) ?? (file as any).path ?? file.name;
-							onSelectFile(p);
-						}
-						e.target.value = '';
-					}}
-				/>
 				<Tooltip title='Select file for conversion preview' placement='left'>
 					<Button
 						size='small'
 						fullWidth
 						startIcon={<FolderOpen size={13} />}
-						onClick={() => fileInputRef.current?.click()}
+						onClick={selectPreviewFile}
 						sx={{
 							textTransform: 'none',
 							justifyContent: 'flex-start',

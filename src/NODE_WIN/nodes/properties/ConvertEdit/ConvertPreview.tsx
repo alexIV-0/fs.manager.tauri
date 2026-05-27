@@ -2,13 +2,15 @@
 //
 // Left panel: original video/image playback + converted frame preview.
 // - Video plays via <video> for navigation (pick the right frame)
-// - Converted preview is a static PNG from ffmpeg via IPC
+// - Converted preview is rendered live on a <canvas> (client-side, no ffmpeg) —
+//   same approach as the ffSwitch (VideoAdjust) preview. See convertPreviewCanvas.ts.
 // - Toggle between "Original" and "Converted" modes
 // - Zoom: scroll wheel, Pan: middle mouse drag, Double-click: fit to view
 
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { toFileUrl } from '@/Utils/mediaUtils';
-import { ConvertSettings, buildPreviewFilterString, FALLBACK_IMAGE_FORMATS } from './types';
+import { ConvertSettings, FALLBACK_IMAGE_FORMATS } from './types';
+import { renderConvertPreview } from './convertPreviewCanvas';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import ConvertHandleOverlay from './ConvertHandleOverlay';
@@ -30,19 +32,21 @@ interface ConvertPreviewProps {
 }
 
 export default function ConvertPreview({ filePath, settings, onTimecodeChange, onSettingsChange, onOrigSizeDetected }: ConvertPreviewProps) {
-	const containerRef   = useRef<HTMLDivElement>(null);
-	const previewAreaRef = useRef<HTMLDivElement>(null);
-	const videoRef       = useRef<HTMLVideoElement>(null);
-	const toolbarRef     = useRef<PreviewToolbarHandle>(null);
-	const rafRef         = useRef<number>(0);
-	const durationRef    = useRef(0);
+	const containerRef    = useRef<HTMLDivElement>(null);
+	const previewAreaRef  = useRef<HTMLDivElement>(null);
+	const videoRef        = useRef<HTMLVideoElement>(null);
+	const imgRef          = useRef<HTMLImageElement>(null);
+	const convertedCanvasRef = useRef<HTMLCanvasElement>(null);
+	const toolbarRef      = useRef<PreviewToolbarHandle>(null);
+	const rafRef          = useRef<number>(0);
+	const durationRef     = useRef(0);
 
-	const [playing,      setPlaying]      = useState(false);
-	const [mode,         setMode]         = useState<'original' | 'converted'>('original');
-	const [convertedImg, setConvertedImg] = useState<string>('');
-	const [loading,      setLoading]      = useState(false);
+	const [playing, setPlaying] = useState(false);
+	const [mode,    setMode]    = useState<'original' | 'converted'>('original');
+	const modeRef = useRef(mode);
+	modeRef.current = mode;
 
-	// ── Image size of the converted PNG ────────────────────────────────────
+	// ── Converted output size (from the rendered canvas) ───────────────────
 	const [convertedSize, setConvertedSize] = useState<{ w: number; h: number } | null>(null);
 	const convertedSizeRef = useRef(convertedSize);
 	convertedSizeRef.current = convertedSize;
@@ -67,10 +71,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 
 	// ── Store + derived outputMode ─────────────────────────────────────────
 	const fileTypes    = typeOfFile_store((s) => s.patternStore);
-	const fileTypesRef = useRef(fileTypes);
-	fileTypesRef.current = fileTypes;
 
-	// Computed at render time so both the overlay and requestConvertPreview can use it
+	// Computed at render time so both the overlay and the canvas renderer can use it
 	const imageExts  = fileTypes.find((e) => e.id === 'image')?.path ?? FALLBACK_IMAGE_FORMATS;
 	const audioExts  = fileTypes.find((e) => e.id === 'audio')?.path ?? [];
 	const outputExt  = settings.outputExtension.toLowerCase();
@@ -87,11 +89,16 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const fileExt    = filePath.split('.').pop()?.toLowerCase() ?? '';
 	const isImage    = IMAGE_EXTS.has(fileExt);
 
+	const settingsRef = useRef(settings);
+	settingsRef.current = settings;
+
 	// Reset sizes and auto-fit guard on file change
 	useEffect(() => {
 		setOrigImageSize(null);
 		origImageSizeRef.current = null;
 		setOrigVideoSize(null);
+		setConvertedSize(null);
+		convertedSizeRef.current = null;
 		hasAutoFitRef.current = false;
 	}, [filePath]);
 
@@ -103,8 +110,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		const v     = videoRef.current;
 		const kSize = convertedSizeRef.current;
 		const oSize = origImageSizeRef.current;
-		const srcW  = kSize?.w ?? oSize?.w ?? v?.videoWidth  ?? 0;
-		const srcH  = kSize?.h ?? oSize?.h ?? v?.videoHeight ?? 0;
+		const srcW  = (modeRef.current === 'converted' ? kSize?.w : undefined) ?? oSize?.w ?? v?.videoWidth  ?? kSize?.w ?? 0;
+		const srcH  = (modeRef.current === 'converted' ? kSize?.h : undefined) ?? oSize?.h ?? v?.videoHeight ?? kSize?.h ?? 0;
 		if (!srcW || !srcH) return;
 		const scale = Math.min((area.clientWidth - 20) / srcW, (area.clientHeight - 20) / srcH);
 		const t = {
@@ -116,12 +123,12 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		setTransform(t);
 	}, []);
 
-	// ── Autoplay on file load ───────────────────────────────────────────────
+	// ── Video metadata / size detection ───────────────────────────────────
 
 	const [playbackError, setPlaybackError] = useState(false);
 
 	useEffect(() => {
-		if (!fileUrl) return;
+		if (!fileUrl || isImage) return;
 		const v = videoRef.current;
 		if (!v) return;
 		setPlaybackError(false);
@@ -129,7 +136,10 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 			durationRef.current = v.duration;
 			setOrigVideoSize({ w: v.videoWidth, h: v.videoHeight });
 			onOrigSizeDetected?.(v.videoWidth, v.videoHeight);
-			// No autoplay — user starts playback manually.
+			// A hidden, paused video doesn't reliably decode a frame for the canvas in
+			// WKWebView. Autoplay (muted+loop) keeps decoded frames flowing — same proven
+			// approach as the ffSwitch/VideoAdjust preview. User can pause/seek afterwards.
+			v.play().catch(() => { /* ignore autoplay rejection */ });
 			if (!hasAutoFitRef.current) {
 				hasAutoFitRef.current = true;
 				requestAnimationFrame(fitToView);
@@ -142,7 +152,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 			v.removeEventListener('loadedmetadata', onMeta);
 			v.removeEventListener('error', onError);
 		};
-	}, [fileUrl, fitToView]);
+	}, [fileUrl, isImage, fitToView, onOrigSizeDetected]);
 
 	// ── Sync playing state ─────────────────────────────────────────────────
 
@@ -160,7 +170,50 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		};
 	}, [fileUrl]);
 
-	// ── RAF loop for progress bar ──────────────────────────────────────────
+	// ── Draw converted frame onto the canvas (client-side, no ffmpeg) ──────
+
+	const drawConverted = useCallback(() => {
+		const cvs = convertedCanvasRef.current;
+		if (!cvs) return;
+
+		let source: CanvasImageSource | null = null;
+		let sw = 0;
+		let sh = 0;
+		if (isImage) {
+			const im = imgRef.current;
+			if (im && im.complete && im.naturalWidth > 0) { source = im; sw = im.naturalWidth; sh = im.naturalHeight; }
+		} else {
+			const v = videoRef.current;
+			if (v && v.readyState >= 2 && v.videoWidth > 0) { source = v; sw = v.videoWidth; sh = v.videoHeight; }
+		}
+		if (!source) return;
+
+		const rendered = renderConvertPreview(source, sw, sh, settingsRef.current, outputModeRef.current);
+		if (!rendered) return;
+
+		if (cvs.width !== rendered.width || cvs.height !== rendered.height) {
+			cvs.width = rendered.width;
+			cvs.height = rendered.height;
+		}
+		const ctx = cvs.getContext('2d');
+		if (!ctx) return;
+		ctx.clearRect(0, 0, cvs.width, cvs.height);
+		ctx.drawImage(rendered, 0, 0);
+
+		const prev = convertedSizeRef.current;
+		if (!prev || prev.w !== rendered.width || prev.h !== rendered.height) {
+			const size = { w: rendered.width, h: rendered.height };
+			convertedSizeRef.current = size;
+			setConvertedSize(size);
+			// Re-fit on first load or when output dimensions change.
+			if (!hasAutoFitRef.current || !prev || prev.w !== size.w || prev.h !== size.h) {
+				hasAutoFitRef.current = true;
+				requestAnimationFrame(() => fitToView());
+			}
+		}
+	}, [isImage, fitToView]);
+
+	// ── RAF loop: progress bar + live converted render ─────────────────────
 
 	useEffect(() => {
 		const loop = () => {
@@ -168,88 +221,19 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 			if (v && v.duration > 0) {
 				toolbarRef.current?.update(v.currentTime, v.duration);
 			}
+			if (modeRef.current === 'converted') drawConverted();
 			rafRef.current = requestAnimationFrame(loop);
 		};
 		rafRef.current = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(rafRef.current);
-	}, []);
+	}, [drawConverted]);
 
-	// ── Update offscreen tracking when converted image arrives ─────────────
-
-	useEffect(() => {
-		if (!convertedImg) {
-			setConvertedSize(null);
-			return;
-		}
-		const img   = new Image();
-		img.onload  = () => {
-			const size = { w: img.naturalWidth, h: img.naturalHeight };
-			const prev = convertedSizeRef.current;
-			setConvertedSize(size);
-			convertedSizeRef.current = size;
-			// Re-fit when: first load OR output dimensions changed (e.g. Frame size changed).
-			// Do NOT re-fit for filter changes that keep the same dimensions (blur, eq, etc.).
-			const dimsChanged = !prev || prev.w !== size.w || prev.h !== size.h;
-			if (!hasAutoFitRef.current || dimsChanged) {
-				hasAutoFitRef.current = true;
-				requestAnimationFrame(() => fitToView());
-			}
-		};
-		img.src = convertedImg;
-	}, [convertedImg, fitToView]);
-
-	// ── Request converted preview via IPC ──────────────────────────────────
-
-	const filePathRef  = useRef(filePath);
-	const settingsRef  = useRef(settings);
-	filePathRef.current  = filePath;
-	settingsRef.current  = settings;
-
-	const origVideoSizeRef = useRef(origVideoSize);
-	origVideoSizeRef.current = origVideoSize;
-
-	const requestConvertPreview = useCallback(async () => {
-		const fp = filePathRef.current;
-		const s  = settingsRef.current;
-		if (!fp) return;
-
-		// Resolve frame.mode='original' → fixed source dims so Position / cover-fill work consistently.
-		const srcW = origVideoSizeRef.current?.w ?? origImageSizeRef.current?.w ?? 0;
-		const srcH = origVideoSizeRef.current?.h ?? origImageSizeRef.current?.h ?? 0;
-		const resolved: ConvertSettings = s.video.frame.mode === 'original' && srcW > 0 && srcH > 0
-			? { ...s, video: { ...s.video, frame: { ...s.video.frame, mode: 'fixed', width: srcW, height: srcH } } }
-			: s;
-
-		const filterString = buildPreviewFilterString(resolved, outputModeRef.current);
-		const v  = videoRef.current;
-		const tc = v ? v.currentTime : 0;
-		setLoading(true);
-
-		try {
-			const result = await (window as any).electronAPI.invoke('convert-preview', {
-				filePath: fp,
-				timecode: tc,
-				filterString: filterString || 'null',
-			});
-			setConvertedImg(result || '');
-		} catch {
-			setConvertedImg('');
-		} finally {
-			setLoading(false);
-		}
-	}, []);
-
-	// Auto-switch to converted mode and refresh when settings change
+	// Auto-switch to converted mode when settings change so the user sees the effect.
 	const settingsStr = JSON.stringify(settings);
 	useEffect(() => {
 		if (!filePath) return;
 		setMode('converted');
-		requestConvertPreview();
-	}, [settingsStr, filePath]); // eslint-disable-line react-hooks/exhaustive-deps
-
-	useEffect(() => {
-		if (mode === 'converted') requestConvertPreview();
-	}, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [settingsStr, filePath]);
 
 	// ── Seek ───────────────────────────────────────────────────────────────
 
@@ -353,6 +337,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		imageRendering: 'auto',
 	};
 
+	const hasConverted = mode === 'converted' && !!convertedSize;
+
 	// ── Render ─────────────────────────────────────────────────────────────
 
 	return (
@@ -370,7 +356,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				onDoubleClick={fitToView}
 			>
 				{/* Frame background — checkerboard + border */}
-				{fileUrl && (origW > 0 || !!convertedImg) && (
+				{fileUrl && (origW > 0 || hasConverted) && (
 					<div style={{
 						position: 'absolute',
 						left: transform.offsetX,
@@ -398,9 +384,11 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 					/>
 				)}
 
-				{/* Static image (original mode) */}
-				{fileUrl && isImage && mode === 'original' && (
+				{/* Static image — always mounted (display source for both modes) */}
+				{fileUrl && isImage && (
 					<img
+						ref={imgRef}
+						crossOrigin='anonymous'
 						src={fileUrl}
 						onLoad={(e) => {
 							const img  = e.currentTarget;
@@ -413,19 +401,24 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 								requestAnimationFrame(() => fitToView());
 							}
 						}}
-						style={{ ...mediaStyle, zIndex: 1 }}
+						style={mode === 'original'
+							? { ...mediaStyle, zIndex: 1 }
+							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
+						}
 						alt='Original'
 					/>
 				)}
 
-				{/* Video element — always mounted for timecode/dimensions */}
+				{/* Video element — always mounted for timecode/dimensions/converted source */}
 				{fileUrl && !isImage && (
 					<video
 						ref={videoRef}
+						crossOrigin='anonymous'
 						src={fileUrl}
 						loop
 						muted
 						playsInline
+						preload='auto'
 						style={mode === 'original'
 							? { ...mediaStyle, zIndex: 1 }
 							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
@@ -433,24 +426,16 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 					/>
 				)}
 
-				{/* Converted preview — checkerboard shows alpha through transparent pixels */}
-				{mode === 'converted' && convertedImg && (
-					<img
-						src={convertedImg}
-						style={{ ...mediaStyle, ...checkerboardStyle, zIndex: 1 }}
-						alt='Converted preview'
-					/>
-				)}
-
-				{mode === 'converted' && loading && (
-					<div style={{
-						position: 'absolute', inset: 0, zIndex: 2,
-						display: 'flex', alignItems: 'center', justifyContent: 'center',
-						color: 'rgba(255,255,255,0.5)', fontSize: 12, pointerEvents: 'none',
-					}}>
-						Processing…
-					</div>
-				)}
+				{/* Converted preview — live canvas; checkerboard shows alpha through transparent pixels */}
+				<canvas
+					ref={convertedCanvasRef}
+					style={{
+						...mediaStyle,
+						...checkerboardStyle,
+						zIndex: 1,
+						display: hasConverted ? 'block' : 'none',
+					}}
+				/>
 
 				{mode === 'original' && !isImage && fileUrl && playbackError && (
 					<div style={{
@@ -468,7 +453,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 					<div style={{
 						position: 'absolute', inset: 0, zIndex: 2,
 						display: 'flex', alignItems: 'center', justifyContent: 'center',
-						color: 'rgba(0,0,0,0.4)', fontSize: 13, pointerEvents: 'none',
+						color: 'rgba(255,255,255,0.3)', fontSize: 13, pointerEvents: 'none',
 					}}>
 						Select file to preview
 					</div>
@@ -477,7 +462,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				{/* Zoom indicator */}
 				<div style={{
 					position: 'absolute', bottom: 4, right: 8, zIndex: 3,
-					color: 'rgba(0,0,0,0.4)', fontSize: 10, fontFamily: 'monospace', pointerEvents: 'none',
+					color: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: 'monospace', pointerEvents: 'none',
 				}}>
 					{Math.round(transform.scale * 100)}%
 				</div>
@@ -493,19 +478,6 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				showFrameStep
 				onStepFrame={stepFrame}
 				height={isImage ? CONTROLS_H / 2 : CONTROLS_H}
-				rightSlot={
-					<button
-						onClick={requestConvertPreview}
-						style={{
-							padding: '2px 8px', borderRadius: 3,
-							border: '1px solid #333', background: '#252525', color: '#888',
-							cursor: 'pointer', fontSize: 10, outline: 'none',
-						}}
-						title='Refresh converted frame at current timecode'
-					>
-						↺ Refresh
-					</button>
-				}
 				bottomSlot={
 					<div style={{ display: 'flex', gap: 4 }}>
 						{(['original', 'converted'] as const).map((m) => (

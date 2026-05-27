@@ -43,7 +43,7 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла.",
-					"options": ["#filePattern", "CustomFolder...", "#historyValue(targetPath)"],
+					"options": ["#filePattern", "Custom Folder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []

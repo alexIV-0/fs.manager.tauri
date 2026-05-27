@@ -20,10 +20,15 @@ export async function getFileFromFolder(_item: any, _description: any): Promise<
 		curPath.unshift('$projectPathGD');
 	}
 
-	let pathByPattern = formatNameByPattern({
-		string: path.join(...curPath),
-		description: _description,
-	});
+	// Соединяем простым '/', НЕ через path.join: иначе '..' схлопнулся бы против
+	// нераскрытого токена ('$projectPathGD' + '../foo' => 'foo'). Раскрываем токены,
+	// затем path.normalize схлопывает '..' уже против реального пути.
+	let pathByPattern = path.normalize(
+		formatNameByPattern({
+			string: curPath.filter((s) => s != null && s !== '').join('/'),
+			description: _description,
+		}),
+	);
 	sendToMW('statusbar', { text: `${_description.infoText}: [get File from Folder]\n${pathByPattern}` });
 
 	// Если включён поиск по тегу из имени файла или случайной подпапке —

@@ -3,6 +3,7 @@ import { ListRestart, X } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { reloadFolders } from '@/PROCESSING/reloadFolders';
 import { loadFromLocalStorage } from '@/Utils/loadSaveToLS';
 
@@ -20,6 +21,7 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 	const listItemRef = useRef<HTMLLIElement>(null);
 
 	const scrollToMainFolder = setActiveFolders_store((s) => s.scrollToMainFolder);
+	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'main');
 
 	useEffect(() => {
 		window.electronAPI.invoke('pathBasename', obj.path).then((name) => setName(name as string));
@@ -67,6 +69,7 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 
 	const handleMainClick = () => {
 		setActiveFolders_store.getState().setMainFolderId(obj.id);
+		useColumnFocus_store.getState().setFocusedColumn('main');
 	};
 
 	const handleChekboxClick = (e: React.MouseEvent) => {
@@ -98,7 +101,16 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 			style={{ '--hover-bg': idleHighlight ? 'rgba(255, 213, 0, 0.28)' : '#ffffff0b' } as React.CSSProperties}
 			sx={{
 				height: '34px',
-				backgroundColor: isActive && idleHighlight ? 'rgba(255, 213, 0, 0.32)' : isActive ? '#ffffff1b' : idleHighlight ? 'rgba(255, 213, 0, 0.18)' : 'transparent',
+				backgroundColor:
+					isActive && idleHighlight
+						? 'rgba(255, 213, 0, 0.32)'
+						: isActive
+							? isColumnFocused
+								? '#007bff4c'
+								: 'rgba(255,255,255,0.08)'
+							: idleHighlight
+								? 'rgba(255, 213, 0, 0.18)'
+								: 'transparent',
 				position: 'relative',
 				'&:hover': {
 					backgroundColor: 'var(--hover-bg)',
@@ -117,6 +129,7 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 					width: '100%',
 					overflow: 'hidden',
 					cursor: 'pointer',
+					...(isActive && isColumnFocused && { '& .MuiListItemText-primary': { color: '#64afffff', fontWeight: 600 } }),
 				}}
 			>
 				{name}

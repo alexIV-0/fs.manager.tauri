@@ -31,7 +31,7 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - файл будет сохранен в ту же папку с рандомным именем",
-					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
+					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []

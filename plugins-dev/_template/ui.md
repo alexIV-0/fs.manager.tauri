@@ -320,7 +320,7 @@
 "controlProps": {
   "label": "Target Path",
   "tooltip": "Куда сохранить файл",
-  "options": ["#pathPattern", "#folders", "CustomFolder..."],
+  "options": ["#pathPattern", "#folders", "Custom Folder..."],
   "multiSelect": true,
   "optionsOnly": false,
   "allowDuplicates": true,
@@ -354,10 +354,10 @@
 **Пример использования:**
 
 ```json
-"options": ["#pathPattern", "CustomFolder..."]
+"options": ["#pathPattern", "Custom Folder..."]
 ```
 
-→ При открытии списка пользователь увидит все доступные `$`-переменные плюс пункт "CustomFolder..." для ввода своего пути.
+→ При открытии списка пользователь увидит все доступные `$`-переменные плюс пункт "Custom Folder..." для ввода своего пути.
 
 ```json
 "options": ["#typeOfFile", "folders"]
@@ -615,7 +615,7 @@
 				"controlProps": {
 					"label": "Output Path",
 					"tooltip": "Путь для сохранения. Используй $clearName, $findTime и т.д.",
-					"options": ["#filePattern", "CustomFolder..."],
+					"options": ["#filePattern", "Custom Folder..."],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []

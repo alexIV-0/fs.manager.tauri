@@ -1,15 +1,17 @@
 // src/NODE_WIN/nodes/properties/KeyingEdit/KeyingPreview.tsx
 //
-// Left panel: original video playback + keyed frame preview.
+// Left panel: original video/image playback + keyed frame preview.
 // - Video plays via <video> for navigation (find the right frame)
-// - Keyed preview is a static PNG from ffmpeg via IPC
+// - Keyed preview is rendered live on a <canvas> (client-side, no ffmpeg) —
+//   same approach as the Convert / ffSwitch previews. See keyingPreviewCanvas.ts.
 // - Toggle between "Original" and "Keying" modes
 // - Eyedropper: click on original frame → pick color
 // - Zoom: scroll wheel, Pan: middle mouse drag, Double-click: fit to view
 
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { toFileUrl } from '@/Utils/mediaUtils';
-import { KeyingSettings, buildKeyingFilterString } from './types';
+import { KeyingSettings } from './types';
+import { renderKeyingPreview } from './keyingPreviewCanvas';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 import PreviewToolbar, { type PreviewToolbarHandle } from '../PreviewToolbar';
 
@@ -41,18 +43,21 @@ export default function KeyingPreview({
 	const containerRef   = useRef<HTMLDivElement>(null);
 	const previewAreaRef = useRef<HTMLDivElement>(null);
 	const videoRef       = useRef<HTMLVideoElement>(null);
+	const imgRef         = useRef<HTMLImageElement>(null);
+	const keyingCanvasRef = useRef<HTMLCanvasElement>(null);
 	const toolbarRef     = useRef<PreviewToolbarHandle>(null);
 	const rafRef         = useRef<number>(0);
 	const durationRef    = useRef(0);
 
 	const [playing, setPlaying] = useState(false);
 	const [mode, setMode] = useState<'original' | 'keying'>('original');
-	const [keyedImage, setKeyedImage] = useState<string>('');
-	const [loading, setLoading] = useState(false);
+	const modeRef = useRef(mode);
+	modeRef.current = mode;
 
-	// ── Offscreen canvas для чтения пикселей keyed-превью ───────────────────
-	const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+	// ── Keyed output size (from the rendered canvas) ────────────────────────
 	const [keyedImageSize, setKeyedImageSize] = useState<{ w: number; h: number } | null>(null);
+	const keyedImageSizeRef = useRef(keyedImageSize);
+	keyedImageSizeRef.current = keyedImageSize;
 
 	// ── Zoom / Pan state ─────────────────────────────────────────────────────
 
@@ -77,10 +82,10 @@ export default function KeyingPreview({
 	const origImageSizeRef = useRef(origImageSize);
 	origImageSizeRef.current = origImageSize;
 
-	// ── Fit to container ─────────────────────────────────────────────────────
+	const settingsRef = useRef(settings);
+	settingsRef.current = settings;
 
-	const keyedImageSizeRef = useRef(keyedImageSize);
-	keyedImageSizeRef.current = keyedImageSize;
+	// ── Fit to container ─────────────────────────────────────────────────────
 
 	const fitToView = useCallback(() => {
 		const area = previewAreaRef.current;
@@ -88,22 +93,18 @@ export default function KeyingPreview({
 
 		const v = videoRef.current;
 		const kSize = keyedImageSizeRef.current;
-
-		// Приоритет: keyed-PNG → оригинальная картинка → видеокадр
 		const oSize = origImageSizeRef.current;
-		const srcW = kSize?.w ?? oSize?.w ?? v?.videoWidth ?? 0;
-		const srcH = kSize?.h ?? oSize?.h ?? v?.videoHeight ?? 0;
+		const srcW = (modeRef.current === 'keying' ? kSize?.w : undefined) ?? oSize?.w ?? v?.videoWidth ?? kSize?.w ?? 0;
+		const srcH = (modeRef.current === 'keying' ? kSize?.h : undefined) ?? oSize?.h ?? v?.videoHeight ?? kSize?.h ?? 0;
 		if (!srcW || !srcH) return;
 
 		const areaW = area.clientWidth;
 		const areaH = area.clientHeight;
-		const vidW = srcW;
-		const vidH = srcH;
-		const scale = Math.min((areaW - 20) / vidW, (areaH - 20) / vidH);
+		const scale = Math.min((areaW - 20) / srcW, (areaH - 20) / srcH);
 		const t = {
 			scale,
-			offsetX: (areaW - vidW * scale) / 2,
-			offsetY: (areaH - vidH * scale) / 2,
+			offsetX: (areaW - srcW * scale) / 2,
+			offsetY: (areaH - srcH * scale) / 2,
 		};
 		transformRef.current = t;
 		setTransform(t);
@@ -113,13 +114,15 @@ export default function KeyingPreview({
 	useEffect(() => {
 		setOrigImageSize(null);
 		origImageSizeRef.current = null;
+		setKeyedImageSize(null);
+		keyedImageSizeRef.current = null;
 		hasAutoFitRef.current = false;
 	}, [filePath]);
 
 	// ── Autoplay + fit on file load ──────────────────────────────────────────
 
 	useEffect(() => {
-		if (!fileUrl) return;
+		if (!fileUrl || isImage) return;
 		const v = videoRef.current;
 		if (!v) return;
 		const onMeta = () => {
@@ -132,7 +135,7 @@ export default function KeyingPreview({
 		};
 		v.addEventListener('loadedmetadata', onMeta, { once: true });
 		return () => v.removeEventListener('loadedmetadata', onMeta);
-	}, [fileUrl, fitToView]);
+	}, [fileUrl, isImage, fitToView]);
 
 	// ── Sync playing state ────────────────────────────────────────────────────
 
@@ -150,7 +153,49 @@ export default function KeyingPreview({
 		};
 	}, [fileUrl]);
 
-	// ── RAF loop for progress bar ─────────────────────────────────────────────
+	// ── Draw keyed frame onto the canvas (client-side, no ffmpeg) ───────────
+
+	const drawKeyed = useCallback(() => {
+		const cvs = keyingCanvasRef.current;
+		if (!cvs) return;
+
+		let source: CanvasImageSource | null = null;
+		let sw = 0;
+		let sh = 0;
+		if (isImage) {
+			const im = imgRef.current;
+			if (im && im.complete && im.naturalWidth > 0) { source = im; sw = im.naturalWidth; sh = im.naturalHeight; }
+		} else {
+			const v = videoRef.current;
+			if (v && v.readyState >= 2 && v.videoWidth > 0) { source = v; sw = v.videoWidth; sh = v.videoHeight; }
+		}
+		if (!source) return;
+
+		const rendered = renderKeyingPreview(source, sw, sh, settingsRef.current);
+		if (!rendered) return;
+
+		if (cvs.width !== rendered.width || cvs.height !== rendered.height) {
+			cvs.width = rendered.width;
+			cvs.height = rendered.height;
+		}
+		const ctx = cvs.getContext('2d');
+		if (!ctx) return;
+		ctx.clearRect(0, 0, cvs.width, cvs.height);
+		ctx.drawImage(rendered, 0, 0);
+
+		const prev = keyedImageSizeRef.current;
+		if (!prev || prev.w !== rendered.width || prev.h !== rendered.height) {
+			const size = { w: rendered.width, h: rendered.height };
+			keyedImageSizeRef.current = size;
+			setKeyedImageSize(size);
+			if (!hasAutoFitRef.current || !prev || prev.w !== size.w || prev.h !== size.h) {
+				hasAutoFitRef.current = true;
+				requestAnimationFrame(() => fitToView());
+			}
+		}
+	}, [isImage, fitToView]);
+
+	// ── RAF loop: progress bar + live keyed render ─────────────────────────
 
 	useEffect(() => {
 		const loop = () => {
@@ -158,92 +203,25 @@ export default function KeyingPreview({
 			if (v && v.duration > 0) {
 				toolbarRef.current?.update(v.currentTime, v.duration);
 			}
+			if (modeRef.current === 'keying') drawKeyed();
 			rafRef.current = requestAnimationFrame(loop);
 		};
 		rafRef.current = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(rafRef.current);
-	}, []);
-
-	// ── Request keyed preview from ffmpeg ─────────────────────────────────────
-
-	// Use refs to always have latest values without stale closures
-	const filePathRef  = useRef(filePath);
-	const settingsRef  = useRef(settings);
-	filePathRef.current  = filePath;
-	settingsRef.current  = settings;
-
-	const requestKeyingPreview = useCallback(async () => {
-		const fp = filePathRef.current;
-		const s  = settingsRef.current;
-		if (!fp) return;
-
-		const filterString = buildKeyingFilterString(s);
-		if (!filterString) { setKeyedImage(''); return; }
-
-		const v = videoRef.current;
-		const tc = v ? v.currentTime : 0;
-		setLoading(true);
-
-		try {
-			const result = await (window as any).electronAPI.invoke('keying-preview', {
-				filePath: fp,
-				timecode: tc,
-				filterString,
-			});
-			setKeyedImage(result || '');
-		} catch {
-			setKeyedImage('');
-		} finally {
-			setLoading(false);
-		}
-	}, []); // stable — uses refs
-
-	// ── Обновляем offscreen canvas когда приходит новый keyed кадр ─────────
-	useEffect(() => {
-		if (!keyedImage) {
-			offscreenCanvasRef.current = null;
-			setKeyedImageSize(null);
-			onPixelHover?.(null);
-			return;
-		}
-		const img = new Image();
-		img.onload = () => {
-			const canvas = document.createElement('canvas');
-			canvas.width  = img.naturalWidth;
-			canvas.height = img.naturalHeight;
-			canvas.getContext('2d')?.drawImage(img, 0, 0);
-			offscreenCanvasRef.current = canvas;
-			setKeyedImageSize({ w: img.naturalWidth, h: img.naturalHeight });
-			// Only auto-fit on first load per file (static images don't trigger loadedmetadata)
-			if (!hasAutoFitRef.current) {
-				hasAutoFitRef.current = true;
-				requestAnimationFrame(() => fitToView());
-			}
-		};
-		img.src = keyedImage;
-	}, [keyedImage, fitToView]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [drawKeyed]);
 
 	// Сбрасываем hover при уходе с keying-режима
 	useEffect(() => {
 		if (mode !== 'keying') onPixelHover?.(null);
 	}, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-	// ── Auto-switch to keying mode and refresh preview when settings change ──
+	// ── Auto-switch to keying mode when settings change ─────────────────────
 
 	const settingsStr = JSON.stringify(settings);
 	useEffect(() => {
 		if (!filePath) return;
-		// Auto-switch to keying mode so user immediately sees the effect
 		setMode('keying');
-		requestKeyingPreview();
-	}, [settingsStr, filePath]); // eslint-disable-line react-hooks/exhaustive-deps
-
-	// Also refresh when switching to keying mode manually
-	useEffect(() => {
-		if (mode === 'keying') {
-			requestKeyingPreview();
-		}
-	}, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [settingsStr, filePath]);
 
 	// ── Seek ──────────────────────────────────────────────────────────────────
 
@@ -344,41 +322,55 @@ export default function KeyingPreview({
 		fitToView();
 	}, [fitToView]);
 
-	// ── Eyedropper click ─────────────────────────────────────────────────────
+	// ── Eyedropper click — read pixel from the source frame ──────────────────
 
 	const handlePreviewClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
 		if (!eyedropperActive) return;
-		const v = videoRef.current;
-		if (!v || !v.videoWidth) return;
+		let source: CanvasImageSource | null = null;
+		let sw = 0;
+		let sh = 0;
+		if (isImage) {
+			const im = imgRef.current;
+			if (im && im.complete && im.naturalWidth > 0) { source = im; sw = im.naturalWidth; sh = im.naturalHeight; }
+		} else {
+			const v = videoRef.current;
+			if (v && v.videoWidth > 0) { source = v; sw = v.videoWidth; sh = v.videoHeight; }
+		}
+		if (!source) return;
 		const area = previewAreaRef.current;
 		if (!area) return;
 		const rect = area.getBoundingClientRect();
 		const { scale, offsetX, offsetY } = transformRef.current;
 		const localX = Math.round((e.clientX - rect.left - offsetX) / scale);
 		const localY = Math.round((e.clientY - rect.top - offsetY) / scale);
-		if (localX < 0 || localX >= v.videoWidth || localY < 0 || localY >= v.videoHeight) return;
+		if (localX < 0 || localX >= sw || localY < 0 || localY >= sh) return;
 		const canvas = document.createElement('canvas');
-		canvas.width = v.videoWidth;
-		canvas.height = v.videoHeight;
+		canvas.width = sw;
+		canvas.height = sh;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
-		ctx.drawImage(v, 0, 0);
-		const pixel = ctx.getImageData(localX, localY, 1, 1).data;
+		ctx.drawImage(source, 0, 0);
+		let pixel: Uint8ClampedArray;
+		try {
+			pixel = ctx.getImageData(localX, localY, 1, 1).data;
+		} catch {
+			return; // tainted
+		}
 		const r = pixel[0].toString(16).padStart(2, '0');
 		const g = pixel[1].toString(16).padStart(2, '0');
 		const b = pixel[2].toString(16).padStart(2, '0');
 		onEyedropperPick(`#${r}${g}${b}`);
-	}, [eyedropperActive, onEyedropperPick]);
+	}, [eyedropperActive, isImage, onEyedropperPick]);
 
-	// ── Mouse move — читаем RGBA из keyed-превью через offscreen canvas ──────
+	// ── Mouse move — читаем RGBA из keyed-превью через canvas ────────────────
 
 	const rafHoverRef = useRef<number>(0);
 	const handlePreviewMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
 		if (mode !== 'keying' || !onPixelHover) return;
 		cancelAnimationFrame(rafHoverRef.current);
 		rafHoverRef.current = requestAnimationFrame(() => {
-			const canvas = offscreenCanvasRef.current;
-			if (!canvas) { onPixelHover(null); return; }
+			const canvas = keyingCanvasRef.current;
+			if (!canvas || canvas.width === 0) { onPixelHover(null); return; }
 			const area = previewAreaRef.current;
 			if (!area) return;
 			const rect = area.getBoundingClientRect();
@@ -406,10 +398,6 @@ export default function KeyingPreview({
 	const vidW = v?.videoWidth || 1920;
 	const vidH = v?.videoHeight || 1080;
 
-	// Реальные размеры контента:
-	// keying-режим → размеры keyed-PNG из ffmpeg
-	// original-режим + картинка → размеры оригинала
-	// original-режим + видео → videoWidth/videoHeight
 	const displayW = (mode === 'keying' && keyedImageSize)
 		? keyedImageSize.w
 		: (origImageSize?.w ?? vidW);
@@ -425,6 +413,8 @@ export default function KeyingPreview({
 		height: displayH * transform.scale,
 		imageRendering: 'auto',
 	};
+
+	const hasKeyed = mode === 'keying' && !!keyedImageSize;
 
 	// ── Render ────────────────────────────────────────────────────────────────
 
@@ -463,9 +453,11 @@ export default function KeyingPreview({
 					}} />
 				)}
 
-				{/* Original: для картинок — <img>, для видео — <video> */}
-				{fileUrl && isImage && mode === 'original' && (
+				{/* Static image — always mounted (display source for both modes) */}
+				{fileUrl && isImage && (
 					<img
+						ref={imgRef}
+						crossOrigin='anonymous'
 						src={fileUrl}
 						onLoad={(e) => {
 							const img = e.currentTarget;
@@ -477,7 +469,10 @@ export default function KeyingPreview({
 								requestAnimationFrame(() => fitToView());
 							}
 						}}
-						style={mediaStyle}
+						style={mode === 'original'
+							? mediaStyle
+							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
+						}
 						alt='Original'
 					/>
 				)}
@@ -486,6 +481,7 @@ export default function KeyingPreview({
 				{fileUrl && !isImage && (
 					<video
 						ref={videoRef}
+						crossOrigin='anonymous'
 						src={fileUrl}
 						loop
 						muted
@@ -497,28 +493,16 @@ export default function KeyingPreview({
 					/>
 				)}
 
-				{mode === 'keying' && keyedImage && (
-					<img
-						src={keyedImage}
-						style={{ ...mediaStyle, ...checkerboardStyle }}
-						alt='Keying preview'
-					/>
-				)}
-
-				{mode === 'keying' && loading && (
-					<div style={{
-						position: 'absolute',
-						inset: 0,
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						color: 'rgba(255,255,255,0.5)',
-						fontSize: 12,
+				{/* Keyed preview — live canvas; checkerboard shows alpha through transparent pixels */}
+				<canvas
+					ref={keyingCanvasRef}
+					style={{
+						...mediaStyle,
+						...checkerboardStyle,
+						display: hasKeyed ? 'block' : 'none',
 						pointerEvents: 'none',
-					}}>
-						Processing...
-					</div>
-				)}
+					}}
+				/>
 
 				{!fileUrl && (
 					<div style={{

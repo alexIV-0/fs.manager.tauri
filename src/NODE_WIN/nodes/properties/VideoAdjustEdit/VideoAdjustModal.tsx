@@ -7,6 +7,7 @@ import VideoAdjustPanel from './VideoAdjustPanel';
 import VideoAdjustPreview from './VideoAdjustPreview';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { toAbsolutePath, toStoredPath } from '@/Utils/projectPath';
+import { toFileUrl } from '@/Utils/mediaUtils';
 
 const SHELL_CONFIG = {
 	defaultSize: { width: 1000, height: 640 },
@@ -58,10 +59,9 @@ export default function VideoAdjustModal({ value, onSave, onClose }: VideoAdjust
 	const handleFgFile = useCallback((p: string) => {
 		setEffectiveFgPath(p);
 		setSettings((prev) => ({ ...prev, fgFilePath: toStoredPath(p, projectPath) }));
-		const norm = p.replace(/\\/g, '/');
-		const url = norm.startsWith('/') ? `file://${norm}` : `file:///${norm}`;
+		// В Tauri WebView не грузит file://-URL — нужен asset-протокол через convertFileSrc.
 		const v = document.createElement('video');
-		v.src = url;
+		v.src = toFileUrl(p);
 		v.onloadedmetadata = () => {
 			if (v.videoWidth > 0 && v.videoHeight > 0) {
 				fgVideoDimRef.current = { w: v.videoWidth, h: v.videoHeight };

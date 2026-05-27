@@ -272,6 +272,14 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 					unit='записей'
 					min={100}
 				/>
+				<MySettingRow
+					label='Хранение архива логов'
+					tooltip='Завершённые обработки сохраняются в файлы за день (logs/ГГГГ-ММ-ДД.jsonl) и доступны во вкладке «Архив» окна логов. Файлы старше указанного числа дней удаляются после каждого скана. 0 — не удалять.'
+					type='number'
+					value={settings.logs?.retentionDays ?? 2}
+					onChange={(v) => patch({ logs: { retentionDays: Math.max(0, v) } })}
+					unit='дней'
+				/>
 			</Section>
 
 			{/* ============ РАСПИСАНИЕ СКАНИРОВАНИЯ ============ */}

@@ -73,8 +73,11 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				if (offSet.has(projectName)) continue;
 				const outPath = joinPath(curMainFolder.path, projectName, 'OUT');
 				const info: any = await window.electronAPI.invoke('getFileInfo', outPath);
-				if (!info || !info.isDirectory) continue;
-				if (info.modifiedMs < cutoffMs) {
+				// getFileInfo (Rust FileInfo) сериализуется в snake_case: is_dir / modified (ms).
+				const isDir = info?.is_dir ?? info?.isDirectory ?? false;
+				const modifiedMs: number | undefined = info?.modified ?? info?.modifiedMs;
+				if (!isDir) continue;
+				if (typeof modifiedMs === 'number' && modifiedMs < cutoffMs) {
 					offSet.add(projectName);
 					console.log(`[autoDisable] ${mainFolderName}/${projectName} — OUT idle > ${autoDisableDays}d`);
 				}

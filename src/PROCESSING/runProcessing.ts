@@ -24,9 +24,13 @@ export let timeToWait = {
 };
 
 function triggerCleanup(): Promise<unknown> {
+	// Чистим архив логов (файлы старше logs.retentionDays) в том же безопасном окне,
+	// что и автоудаление папок — когда очередь обработки пуста.
+	const logsCleanup = window.electronAPI.invoke('logs:cleanup').catch(() => {});
 	const localFolder = localFolders_stor.getState().localFolder;
-	if (!localFolder) return Promise.resolve();
-	return window.electronAPI.invoke('cleanup:auto-delete', localFolder).catch(() => {});
+	if (!localFolder) return logsCleanup;
+	const foldersCleanup = window.electronAPI.invoke('cleanup:auto-delete', localFolder).catch(() => {});
+	return Promise.all([logsCleanup, foldersCleanup]);
 }
 
 export async function runProcessing() {

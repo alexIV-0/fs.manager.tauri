@@ -31,10 +31,21 @@ function KeyingPanel({ settings, onChange, width, filePath, onSelectFile, onEyed
 	const btnBg = greyColor(20);
 	const btnActiveBg = greyColor(38);
 
-	const fileInputRef = useRef<HTMLInputElement>(null);
-
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
+
+	// Native Tauri file dialog — returns an absolute path. A web <input type=file>
+	// can't: in WKWebView the File object has no `.path`, so the preview would get a
+	// bare filename and fail to load. Mirrors VideoAdjustPanel.
+	const selectPreviewFile = useCallback(() => {
+		(window as any).electronAPI
+			.invoke('selectFiles', {
+				multiSelect: false,
+				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff'] }],
+			})
+			.then((paths: string[]) => { if (paths?.length > 0) onSelectFile(paths[0]); })
+			.catch(() => {});
+	}, [onSelectFile]);
 
 	const { chromakey, colorkey, lumakey, despill, edge } = settings;
 
@@ -113,22 +124,7 @@ function KeyingPanel({ settings, onChange, width, filePath, onSelectFile, onEyed
 			<Box sx={{ p: 1.5, pb: 1 }}>
 				<SectionLabel>File</SectionLabel>
 
-				<input
-					ref={fileInputRef}
-					type='file'
-					accept='video/*,image/*'
-					style={{ display: 'none' }}
-					onChange={(e) => {
-						const file = e.target.files?.[0];
-						if (file) {
-							const p = (window as any).electronAPI?.getPathForFile?.(file) ?? (file as any).path ?? file.name;
-							onSelectFile(p);
-						}
-						e.target.value = '';
-					}}
-				/>
-
-				<FilePickerButton filePath={filePath} onClick={() => fileInputRef.current?.click()} tooltipTitle='Select video/image for keying preview'>
+				<FilePickerButton filePath={filePath} onClick={selectPreviewFile} tooltipTitle='Select video/image for keying preview'>
 					{filePath ? fileBasename(filePath) : 'Select file...'}
 				</FilePickerButton>
 			</Box>

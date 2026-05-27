@@ -8,6 +8,7 @@ import { DraggableFileItem } from './DraggableFileItem';
 import { DraggableFolderItem } from './DraggableFolderItem';
 import { DroppableColumn } from './DroppableColumn';
 import { COLUMN_DEFAULT_WIDTH, useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useMenuItems } from '../hooks/useMenuItems';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
@@ -56,10 +57,12 @@ export function ColumnFolderView({
 
 	const handleRbMouseDown = useCallback((e: React.MouseEvent, colIndex: number) => {
 		if (e.button !== 0) return;
+		// Клик в любом месте панели делает её фокусной колонкой (в т.ч. по пустому месту).
+		useColumnFocus_store.getState().setFocusedColumn(sourceType);
 		if ((e.target as Element).closest('[data-item-path]')) return;
 		e.preventDefault();
 		rbState.current = { colIndex, startX: e.clientX, startY: e.clientY };
-	}, []);
+	}, [sourceType]);
 
 	useEffect(() => {
 		const onMove = (e: MouseEvent) => {
@@ -113,7 +116,7 @@ export function ColumnFolderView({
 	}, [sourceType]);
 
 	const addItemToColumn = useColumnView_Store((s) => s.addItemToColumn);
-	const lastActiveInstance = useColumnView_Store((s) => s.lastActiveInstance);
+	const focusedColumn = useColumnFocus_store((s) => s.focusedColumn);
 	const lastSelectedColIndex = useColumnView_Store((s) => s.lastSelectedItem?.colIndex ?? -1);
 	const multiAnchorColIndex = useColumnView_Store((s) => s.instances[sourceType].multiSelectAnchor?.colIndex ?? -1);
 	const cbType = clipboardFs_store((s) => s.type);
@@ -283,20 +286,43 @@ export function ColumnFolderView({
 		}, 30);
 	};
 
+	// Один и тот же KeyboardEvent приходит во все window-слушатели. Когда обработчик
+	// меняет фокусную колонку (граничный переход), слушатель соседней колонки на том
+	// же нажатии не должен сработать повторно — помечаем событие флагом.
+	const navHandled = (e: KeyboardEvent) => (e as any).__navHandled === true;
+	const markNav = (e: KeyboardEvent) => {
+		(e as any).__navHandled = true;
+	};
+
 	useKeyboardShortcut({
 		key: 'ArrowUp',
 		skipOnInput: true,
 		callback: (e) => {
+			if (navHandled(e)) return;
+			if (useColumnFocus_store.getState().focusedColumn !== sourceType) return;
 			const state = useColumnView_Store.getState();
-			if (state.lastActiveInstance !== sourceType) return;
 			const { lastSelectedItem } = state;
 			if (!lastSelectedItem) return;
 			const { colIndex, item } = lastSelectedItem;
 			const col = state.instances[sourceType].columns[colIndex];
 			if (!col) return;
 			const idx = col.items.findIndex((i: any) => i.path === item.path);
-			if (idx <= 0) return;
+			if (idx <= 0) {
+				// В самом верху local — уходим в низ корневой колонки gd.
+				if (sourceType === 'local') {
+					const gdRoot = state.instances.gd.columns[0];
+					const last = gdRoot?.items?.[gdRoot.items.length - 1];
+					if (last) {
+						e.preventDefault();
+						markNav(e);
+						state.selectItem('gd', 0, last);
+						scrollItemIntoView(last.path);
+					}
+				}
+				return;
+			}
 			e.preventDefault();
+			markNav(e);
 			selectItem(colIndex, col.items[idx - 1]);
 			scrollItemIntoView(col.items[idx - 1].path);
 		},
@@ -306,16 +332,32 @@ export function ColumnFolderView({
 		key: 'ArrowDown',
 		skipOnInput: true,
 		callback: (e) => {
+			if (navHandled(e)) return;
+			if (useColumnFocus_store.getState().focusedColumn !== sourceType) return;
 			const state = useColumnView_Store.getState();
-			if (state.lastActiveInstance !== sourceType) return;
 			const { lastSelectedItem } = state;
 			if (!lastSelectedItem) return;
 			const { colIndex, item } = lastSelectedItem;
 			const col = state.instances[sourceType].columns[colIndex];
 			if (!col) return;
 			const idx = col.items.findIndex((i: any) => i.path === item.path);
-			if (idx === -1 || idx >= col.items.length - 1) return;
+			if (idx === -1) return;
+			if (idx >= col.items.length - 1) {
+				// В самом низу gd — уходим в первую колонку local (первый элемент).
+				if (sourceType === 'gd') {
+					const localRoot = state.instances.local.columns[0];
+					const first = localRoot?.items?.[0];
+					if (first) {
+						e.preventDefault();
+						markNav(e);
+						state.selectItem('local', 0, first);
+						scrollItemIntoView(first.path);
+					}
+				}
+				return;
+			}
 			e.preventDefault();
+			markNav(e);
 			selectItem(colIndex, col.items[idx + 1]);
 			scrollItemIntoView(col.items[idx + 1].path);
 		},
@@ -325,13 +367,15 @@ export function ColumnFolderView({
 		key: 'ArrowRight',
 		skipOnInput: true,
 		callback: (e) => {
+			if (navHandled(e)) return;
+			if (useColumnFocus_store.getState().focusedColumn !== sourceType) return;
 			const state = useColumnView_Store.getState();
-			if (state.lastActiveInstance !== sourceType) return;
 			const { lastSelectedItem } = state;
 			if (!lastSelectedItem) return;
 			const { colIndex, item } = lastSelectedItem;
 			if (!item.isDir) return;
 			e.preventDefault();
+			markNav(e);
 			const cols = state.instances[sourceType].columns;
 			if (cols.length > colIndex + 1) {
 				const nextCol = cols[colIndex + 1];
@@ -349,13 +393,21 @@ export function ColumnFolderView({
 		key: 'ArrowLeft',
 		skipOnInput: true,
 		callback: (e) => {
+			if (navHandled(e)) return;
+			if (useColumnFocus_store.getState().focusedColumn !== sourceType) return;
 			const state = useColumnView_Store.getState();
-			if (state.lastActiveInstance !== sourceType) return;
 			const { lastSelectedItem } = state;
 			if (!lastSelectedItem) return;
 			const { colIndex } = lastSelectedItem;
-			if (colIndex === 0) return;
+			if (colIndex === 0) {
+				// Левее корневой колонки содержимого — переходим в колонку проектов.
+				e.preventDefault();
+				markNav(e);
+				useColumnFocus_store.getState().setFocusedColumn('project');
+				return;
+			}
 			e.preventDefault();
+			markNav(e);
 			const cols = state.instances[sourceType].columns;
 			const prevCol = cols[colIndex - 1];
 			const prevItem = prevCol?.items.find((i: any) => i.name === prevCol.selected) ?? prevCol?.items[0];
@@ -539,7 +591,7 @@ export function ColumnFolderView({
 														path={item.path}
 														isSelected={col.selected === item.name}
 														isActiveSelection={
-															sourceType === lastActiveInstance &&
+															sourceType === focusedColumn &&
 															i === (multiSelectedPaths.length > 0 ? multiAnchorColIndex : lastSelectedColIndex)
 														}
 														isMultiSelected={multiSelectedPaths.includes(item.path)}
@@ -563,7 +615,7 @@ export function ColumnFolderView({
 														path={item.path}
 														isSelected={col.selected === item.name}
 														isActiveSelection={
-															sourceType === lastActiveInstance &&
+															sourceType === focusedColumn &&
 															i === (multiSelectedPaths.length > 0 ? multiAnchorColIndex : lastSelectedColIndex)
 														}
 														isMultiSelected={multiSelectedPaths.includes(item.path)}

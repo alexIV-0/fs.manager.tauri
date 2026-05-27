@@ -671,17 +671,18 @@ export const statusBar = {
 	},
 };
 
-// ─── sendToMW: прямой broadcast в UI через Rust IPC ──────────────────────────
-// Раньше требовался runtime-инжект через onLoad(api), но loader.ts его не дёргал
-// и события терялись. Сейчас sendToMW сразу проксирует на Tauri-команды, которые
-// эмитят `processing-event` — main_win и node_win получают через onProcessingEvent.
+// ─── sendToMW: маршрутизация в processItem через module-local binding ───────
+// Каждый плагин-бандл имеет свою копию этого файла (esbuild bundle:true), значит
+// своё `_bound`. processItem.ts перед вызовом плагина дёргает pluginModule.onLoad({ sendToMW }),
+// который запоминает per-execution sendToMW в `_bound`. Чтобы избежать гонок при
+// MAX_PARALLEL > 1 и нескольких одновременных вызовах ОДНОГО плагина — loader.ts
+// делает cache-bust по execToken и создаёт свежий module-instance на каждый вызов.
+
+let _bound: ((type: string, payload: any) => void) | undefined;
 
 export function sendToMW(type: string, payload: any): void {
-	// Если processItem выставил контекстный отправитель — используем его.
-	// Это гарантирует, что логи попадут в log_win с правильными itemId/stepId.
-	const tauriSend = (globalThis as any).__pluginSendToMW as ((t: string, p: any) => void) | undefined;
-	if (tauriSend) {
-		tauriSend(type, payload);
+	if (_bound) {
+		_bound(type, payload);
 		return;
 	}
 	// Fallback (вне processing-контекста): прямой IPC.
@@ -695,9 +696,8 @@ export function sendToMW(type: string, payload: any): void {
 	}
 }
 
-// Сохраняем onLoad как no-op для обратной совместимости с экспортами плагинов:
-// каждый плагин делает `export { onLoad } from '../_template/tauri'` — без этого
-// при сборке появится unresolved import.
-export function onLoad(_apiCtx: any): void {
-	// Старый интерфейс injection'а больше не нужен — sendToMW работает через IPC.
+export function onLoad(apiCtx: any): void {
+	if (apiCtx && typeof apiCtx.sendToMW === 'function') {
+		_bound = apiCtx.sendToMW;
+	}
 }

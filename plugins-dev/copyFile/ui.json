@@ -29,8 +29,8 @@
 				"controlType": "autocomplete",
 				"controlProps": {
 					"label": "Target Path",
-					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
-					"options": ["#pathPattern", "CustomFolder...", "#historyValue(targetPath)"],
+					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано. Можно указать абсолютный путь (Custom Folder...) или относительный от папки проекта: ../ — на уровень выше, ../../ — на два и т.д.",
+					"options": ["#pathPattern", "#folders", "Custom Folder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []

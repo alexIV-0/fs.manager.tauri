@@ -9,6 +9,8 @@ import {
 	IconButton,
 	InputAdornment,
 	Stack,
+	Tab,
+	Tabs,
 	TextField,
 	ThemeProvider,
 	Tooltip,
@@ -19,6 +21,8 @@ import {
 import {
 	AlertCircle,
 	AlertTriangle,
+	Archive,
+	CalendarDays,
 	CheckCircle,
 	ChevronDown,
 	ChevronRight,
@@ -27,6 +31,7 @@ import {
 	Folder,
 	Inbox,
 	Loader,
+	RefreshCw,
 	Search,
 	Trash2,
 	X,
@@ -83,6 +88,22 @@ function fmtCost(n: number): string {
 	if (n <= 0) return '$0';
 	return n < 1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`;
 }
+
+function fmtBytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface ArchiveDay {
+	date: string;
+	items: number;
+	bytes: number;
+}
+
+// Сколько завершённых item'ов держим во вкладке «Текущие» (RAM). Должно совпадать с
+// HOT_BUFFER_FINISHED_LIMIT на Rust-стороне. Старые завершённые остаются в «Архиве» (на диске).
+const LIVE_FINISHED_LIMIT = 40;
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
@@ -375,6 +396,9 @@ const ItemAccordion = React.memo(function ItemAccordion({
 			elevation={0}
 			expanded={expanded}
 			onChange={onToggle}
+			// unmountOnExit: пока item свёрнут, его логи НЕ висят в DOM. Это главное лекарство
+			// от зависания — рендерятся только строки логов раскрытых элементов.
+			slotProps={{ transition: { unmountOnExit: true } }}
 			sx={{
 				border: '1px solid',
 				borderColor,
@@ -672,11 +696,27 @@ export default function LogApp() {
 	const [search, setSearch] = useState('');
 	const [errorsOnly, setErrorsOnly] = useState(false);
 
+	// Вкладки: «Текущие» — горячий буфер сессии (RAM); «Архив» — лог-файлы по дням с диска.
+	const [tab, setTab] = useState<'live' | 'archive'>('live');
+	const [archiveDays, setArchiveDays] = useState<ArchiveDay[]>([]);
+	const [archiveDate, setArchiveDate] = useState<string | null>(null);
+	const [archiveItems, setArchiveItems] = useState<ProcessingItemGroup[]>([]);
+	const [archiveLoading, setArchiveLoading] = useState(false);
+	const [archiveExpanded, setArchiveExpanded] = useState<Set<string>>(new Set());
+
 	const itemsMap = useRef<Map<string, ProcessingItemGroup>>(new Map());
 
+	// Дебаунс через requestAnimationFrame: при шторме log-событий пересобираем массив
+	// и ре-рендерим дерево максимум раз в кадр (~16мс), а не на каждую строку лога.
+	const syncRaf = useRef<number | null>(null);
 	const syncState = useCallback(() => {
-		setItems(Array.from(itemsMap.current.values()));
+		if (syncRaf.current != null) return;
+		syncRaf.current = requestAnimationFrame(() => {
+			syncRaf.current = null;
+			setItems(Array.from(itemsMap.current.values()));
+		});
 	}, []);
+	useEffect(() => () => { if (syncRaf.current != null) cancelAnimationFrame(syncRaf.current); }, []);
 
 	// ── IPC ──────────────────────────────────────────────────────────────────
 
@@ -777,6 +817,17 @@ export default function LogApp() {
 					// Игнорируем ошибки при получении списка ошибок
 				}
 			}
+
+			// Обрезаем горячий буфер: оставляем активные + последние N завершённых.
+			// Старые завершённые уже на диске (вкладка «Архив») — так live-вкладка не растёт без предела.
+			const map = itemsMap.current;
+			const finishedIds: string[] = [];
+			for (const [id, g] of map) {
+				if (g.status !== 'running' && g.status !== 'queued') finishedIds.push(id);
+			}
+			const excess = finishedIds.length - LIVE_FINISHED_LIMIT;
+			for (let i = 0; i < excess; i++) map.delete(finishedIds[i]);
+
 			syncState();
 		};
 
@@ -809,10 +860,12 @@ export default function LogApp() {
 	});
 
 	const activeItems = visibleItems.filter((g) => g.status === 'running' || g.status === 'queued');
-	const archiveItems = visibleItems.filter((g) => g.status !== 'running' && g.status !== 'queued');
+	// Завершённые в текущей сессии (горячий буфер RAM, до HOT_BUFFER_FINISHED_LIMIT штук).
+	// Полная история — во вкладке «Архив» (читается с диска по дням).
+	const sessionDoneItems = visibleItems.filter((g) => g.status !== 'running' && g.status !== 'queued');
 
 	const activeHierarchy = groupByHierarchy(activeItems);
-	const archiveHierarchy = groupByHierarchy(archiveItems);
+	const sessionDoneHierarchy = groupByHierarchy(sessionDoneItems);
 
 	const stats = {
 		total: items.length,
@@ -827,23 +880,74 @@ export default function LogApp() {
 		setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 	}, []);
 
+	const handleToggleArchiveExpand = useCallback((id: string) => {
+		setArchiveExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+	}, []);
+
+	const loadArchiveDays = useCallback(async () => {
+		const api = (window as any).electronAPI;
+		try {
+			const days = await api.invoke('logs:list-days');
+			setArchiveDays(Array.isArray(days) ? days : []);
+		} catch {
+			setArchiveDays([]);
+		}
+	}, []);
+
+	const openArchiveDay = useCallback(async (date: string) => {
+		const api = (window as any).electronAPI;
+		setArchiveLoading(true);
+		setArchiveDate(date);
+		setArchiveExpanded(new Set());
+		try {
+			const groups = await api.invoke('logs:get-day', date);
+			setArchiveItems(
+				(Array.isArray(groups) ? groups : []).map((g: any) => ({ ...g, itemLogs: g.itemLogs ?? [] })),
+			);
+		} catch {
+			setArchiveItems([]);
+		} finally {
+			setArchiveLoading(false);
+		}
+	}, []);
+
+	const handleSelectTab = useCallback((next: 'live' | 'archive') => {
+		setTab(next);
+		if (next === 'archive') loadArchiveDays();
+	}, [loadArchiveDays]);
+
+	const handleClearArchive = useCallback(async () => {
+		const api = (window as any).electronAPI;
+		await api.invoke('logs:clear-archive').catch(() => {});
+		setArchiveItems([]);
+		setArchiveDate(null);
+		loadArchiveDays();
+	}, [loadArchiveDays]);
+
 	const handleToggleLevel = (level: string) => {
 		setLevelFilter((prev) => { const n = new Set(prev); n.has(level) ? n.delete(level) : n.add(level); return n; });
 	};
 
-	const renderHierarchy = (hierarchy: Map<string, Map<string, ProcessingItemGroup[]>>) =>
+	const renderHierarchy = (
+		hierarchy: Map<string, Map<string, ProcessingItemGroup[]>>,
+		expandedSet: Set<string>,
+		onToggle: (id: string) => void,
+	) =>
 		Array.from(hierarchy.entries()).map(([mf, projects]) => (
 			<MainFolderGroup
 				key={mf}
 				mainFolderName={mf}
 				projects={projects}
-				expandedItems={expanded}
-				onToggleItem={handleToggleExpand}
+				expandedItems={expandedSet}
+				onToggleItem={onToggle}
 				levelFilter={levelFilter}
 				sourceFilter={sourceFilter}
 				search={search}
 			/>
 		));
+
+	const archiveVisibleItems = archiveItems.filter((g) => !errorsOnly || g.errorCount > 0);
+	const archiveFileHierarchy = groupByHierarchy(archiveVisibleItems);
 
 	// ── Render ───────────────────────────────────────────────────────────────
 
@@ -937,42 +1041,106 @@ export default function LogApp() {
 								<Download size={15} />
 							</IconButton>
 						</Tooltip>
-						<Tooltip title="Очистить">
-							<IconButton size="small" onClick={() => (window as any).electronAPI.invoke('log-window:clear')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
-								<Trash2 size={15} />
-							</IconButton>
-						</Tooltip>
+						{tab === 'live' ? (
+							<Tooltip title="Очистить текущие">
+								<IconButton size="small" onClick={() => (window as any).electronAPI.invoke('log-window:clear')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
+									<Trash2 size={15} />
+								</IconButton>
+							</Tooltip>
+						) : (
+							<>
+								<Tooltip title="Обновить список дней">
+									<IconButton size="small" onClick={loadArchiveDays} sx={{ color: 'text.secondary', flexShrink: 0 }}>
+										<RefreshCw size={15} />
+									</IconButton>
+								</Tooltip>
+								<Tooltip title="Очистить весь архив">
+									<IconButton size="small" onClick={handleClearArchive} sx={{ color: 'text.secondary', flexShrink: 0 }}>
+										<Trash2 size={15} />
+									</IconButton>
+								</Tooltip>
+							</>
+						)}
 					</Stack>
 				</Box>
 
+				{/* ── Tabs ── */}
+				<Tabs
+					value={tab}
+					onChange={(_, v) => handleSelectTab(v)}
+					sx={{ minHeight: 34, flexShrink: 0, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', '& .MuiTab-root': { minHeight: 34, py: 0, fontSize: 12, textTransform: 'none' } }}
+				>
+					<Tab value="live" icon={<Zap size={13} />} iconPosition="start" label="Текущие" />
+					<Tab value="archive" icon={<Archive size={13} />} iconPosition="start" label="Архив" />
+				</Tabs>
+
 				{/* ── Content ── */}
 				<Box sx={{ flex: 1, overflowY: 'auto', bgcolor: 'background.default' }}>
-					{items.length === 0 ? (
-						<Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 1, color: 'text.disabled' }}>
-							<Zap size={36} style={{ opacity: 0.2 }} />
-							<Typography variant="body2">Запустите обработку — логи появятся здесь</Typography>
-						</Box>
-					) : (
-						<Box sx={{ p: 1 }}>
-							{/* В обработке */}
-							<SectionHeader
-								icon={<Loader size={13} style={{ color: '#58a6ff', animation: activeItems.length > 0 ? 'spin 1s linear infinite' : undefined }} />}
-								title="В обработке"
-								count={activeItems.length}
-							/>
-							{activeItems.length === 0
-								? <EmptyState text="Нет активных задач" />
-								: <Box sx={{ mt: 0.5, mb: 1 }}>{renderHierarchy(activeHierarchy)}</Box>}
+					{tab === 'live' ? (
+						items.length === 0 ? (
+							<Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 1, color: 'text.disabled' }}>
+								<Zap size={36} style={{ opacity: 0.2 }} />
+								<Typography variant="body2">Запустите обработку — логи появятся здесь</Typography>
+							</Box>
+						) : (
+							<Box sx={{ p: 1 }}>
+								{/* В обработке */}
+								<SectionHeader
+									icon={<Loader size={13} style={{ color: '#58a6ff', animation: activeItems.length > 0 ? 'spin 1s linear infinite' : undefined }} />}
+									title="В обработке"
+									count={activeItems.length}
+								/>
+								{activeItems.length === 0
+									? <EmptyState text="Нет активных задач" />
+									: <Box sx={{ mt: 0.5, mb: 1 }}>{renderHierarchy(activeHierarchy, expanded, handleToggleExpand)}</Box>}
 
-							{/* Архив — всегда виден */}
-							<SectionHeader
-								icon={<Inbox size={13} style={{ color: '#8b949e' }} />}
-								title="Архив"
-								count={archiveItems.length}
-							/>
-							{archiveItems.length === 0
-								? <EmptyState text="Завершённые задачи появятся здесь" />
-								: <Box sx={{ mt: 0.5 }}>{renderHierarchy(archiveHierarchy)}</Box>}
+								{/* Завершено в этой сессии (RAM) */}
+								<SectionHeader
+									icon={<Inbox size={13} style={{ color: '#8b949e' }} />}
+									title="Завершено (сессия)"
+									count={sessionDoneItems.length}
+								/>
+								{sessionDoneItems.length === 0
+									? <EmptyState text="Завершённые задачи появятся здесь, полная история — во вкладке «Архив»" />
+									: <Box sx={{ mt: 0.5 }}>{renderHierarchy(sessionDoneHierarchy, expanded, handleToggleExpand)}</Box>}
+							</Box>
+						)
+					) : (
+						/* ── Archive tab ── */
+						<Box sx={{ p: 1 }}>
+							{archiveDays.length === 0 ? (
+								<Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, color: 'text.disabled', py: 6 }}>
+									<Archive size={36} style={{ opacity: 0.2 }} />
+									<Typography variant="body2">Архив пуст — завершённые обработки сохраняются сюда по дням</Typography>
+								</Box>
+							) : (
+								<>
+									{/* Список дней */}
+									<Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+										{archiveDays.map((d) => (
+											<Chip
+												key={d.date}
+												icon={<CalendarDays size={13} />}
+												label={`${d.date} · ${d.items} · ${fmtBytes(d.bytes)}`}
+												size="small"
+												onClick={() => openArchiveDay(d.date)}
+												variant={archiveDate === d.date ? 'filled' : 'outlined'}
+												sx={{ fontSize: 11, height: 24, cursor: 'pointer' }}
+											/>
+										))}
+									</Stack>
+
+									{archiveLoading ? (
+										<Box sx={{ px: 1 }}><LinearProgress sx={{ height: 3 }} /></Box>
+									) : archiveDate == null ? (
+										<EmptyState text="Выберите день, чтобы открыть логи" />
+									) : archiveVisibleItems.length === 0 ? (
+										<EmptyState text="За этот день записей нет" />
+									) : (
+										<Box sx={{ mt: 0.5 }}>{renderHierarchy(archiveFileHierarchy, archiveExpanded, handleToggleArchiveExpand)}</Box>
+									)}
+								</>
+							)}
 						</Box>
 					)}
 				</Box>
