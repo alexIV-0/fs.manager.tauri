@@ -187,6 +187,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	log_window_emit_node_update: (payload: any) => ({ payload }),
 	log_window_emit_item_end: (payload: any) => ({ payload }),
 	log_window_emit_item_queued: (payload: any) => ({ payload }),
+	log_window_emit_substep_batch: (payload: any) => ({ payload }),
 	log_window_emit_abort_queued: () => ({}),
 	log_archive_list_days: () => ({}),
 	log_archive_get_day: (date: string) => ({ date }),
@@ -281,6 +282,7 @@ const commandAliases: Record<string, string> = {
 	'log-window:emit-node-update': 'log_window_emit_node_update',
 	'log-window:emit-item-end': 'log_window_emit_item_end',
 	'log-window:item-queued': 'log_window_emit_item_queued',
+	'log-window:emit-substep-batch': 'log_window_emit_substep_batch',
 	'log-window:abort-queued': 'log_window_emit_abort_queued',
 	'logs:list-days': 'log_archive_list_days',
 	'logs:get-day': 'log_archive_get_day',
@@ -331,7 +333,12 @@ function tauriOn(channel: string, listener: Listener): void {
 	}
 	eventListeners.get(channel)!.add(listener);
 
+	// Резервируем слот СИНХРОННО — иначе второй tauriOn (например, при StrictMode
+	// mount→cleanup→remount) успеет проскочить проверку `!has(channel)` пока первый
+	// listen() ещё в полёте, и зарегистрируется ДВА Tauri-подписчика на один канал.
+	// Результат — все события приходят дважды.
 	if (!unlistenFns.has(channel)) {
+		unlistenFns.set(channel, []);
 		const p = currentWebviewWindow.listen(channel, (event) => {
 			const listeners = eventListeners.get(channel);
 			if (listeners) {
@@ -341,12 +348,13 @@ function tauriOn(channel: string, listener: Listener): void {
 		pendingListens.add(p);
 		p.then((unlisten) => {
 			pendingListens.delete(p);
-			if (!unlistenFns.has(channel)) {
-				unlistenFns.set(channel, []);
-			}
 			unlistenFns.get(channel)!.push(unlisten);
 		}).catch((err) => {
 			pendingListens.delete(p);
+			// Subscribe не получился — освобождаем слот, чтобы следующий tauriOn мог попробовать заново.
+			if (unlistenFns.get(channel)?.length === 0) {
+				unlistenFns.delete(channel);
+			}
 			console.error(`[Tauri listen] failed to subscribe to '${channel}':`, err);
 		});
 	}

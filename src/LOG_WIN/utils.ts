@@ -48,6 +48,18 @@ export function progress(steps: StepInfo[]): number {
 	return Math.round((steps.filter((s) => s.status === 'done' || s.status === 'error').length / steps.length) * 100);
 }
 
+// Рекурсивный поиск шага по stepId (steps + subSteps loop'ов).
+export function findStepDeep(steps: StepInfo[], stepId: string): StepInfo | undefined {
+	for (const s of steps) {
+		if (s.stepId === stepId) return s;
+		if (s.subSteps && s.subSteps.length > 0) {
+			const found = findStepDeep(s.subSteps, stepId);
+			if (found) return found;
+		}
+	}
+	return undefined;
+}
+
 // Суммирует реальное время выполнения шагов (pool wait не учитывается,
 // т.к. node:start отправляется только ПОСЛЕ acquirePool).
 export function sumStepMs(steps: StepInfo[]): number {
@@ -76,13 +88,15 @@ export function msToElapsed(ms: number): string {
 export function effectiveCounts(group: ProcessingItemGroup): { errors: number; warns: number } {
 	let errs = 0;
 	let warns = 0;
-	for (const s of group.steps) {
+	const visit = (s: StepInfo) => {
 		if (s.status === 'error') errs++;
 		for (const l of s.logs) {
 			if (l.level === 'error') errs++;
 			else if (l.level === 'warn') warns++;
 		}
-	}
+		if (s.subSteps) for (const sub of s.subSteps) visit(sub);
+	};
+	for (const s of group.steps) visit(s);
 	for (const l of group.itemLogs ?? []) {
 		if (l.level === 'error') errs++;
 		else if (l.level === 'warn') warns++;

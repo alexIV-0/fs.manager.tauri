@@ -25,6 +25,10 @@ export interface StepInfo {
 	cost?: string;
 	costUnit?: 'HH' | 'MM' | 'ss' | 'run' | 'fromSite';
 	finalCost?: number;
+	// Для шагов с nodeType='loop' — подшаги, добавляются батчами по одному на итерацию
+	// из executeLoop через событие log-window:substep-batch. stepId внутри имеет суффикс
+	// '#<iter>' (1-based), label — префикс '[k/N]'.
+	subSteps?: StepInfo[];
 }
 
 export interface ProcessingItemGroup {

@@ -3,7 +3,21 @@ import { usePathStore } from '@/Store/Node/usePathStore';
 import { userInputHistory_store } from '@/Store/Node/userInputHistory_store';
 import { PatternKeys } from '@/types/searchType';
 import { useCallback } from 'react';
+import { useNodeId, useReactFlow } from '@xyflow/react';
 import { joinPath } from '@/Utils/joinPath';
+
+// Поднимается по цепочке parentId. true, если хотя бы один предок — Loop-нода.
+// Используется, чтобы скрывать $loopIndex из автокомплита у нод вне циклов.
+function isInsideLoop(nodeId: string | null, getNode: (id: string) => any): boolean {
+	if (!nodeId) return false;
+	let cur = getNode(nodeId);
+	while (cur?.parentId) {
+		const parent = getNode(cur.parentId);
+		if ((parent?.data as any)?.executionType === 'loop') return true;
+		cur = parent;
+	}
+	return false;
+}
 
 // Резолвит относительный путь (с ./ ../) против абсолютной базы. Браузеро-безопасно
 // (без node:path). Сохраняет стиль сепаратора базы (POSIX '/' или Windows '\').
@@ -23,6 +37,10 @@ function resolveRelativePath(base: string, rel: string): string {
 
 export function useResolveOptions(propertyId?: string) {
 	const path = usePathStore((s) => s.path);
+	// useNodeId() возвращает id ноды, в чьём render-дереве вызван хук. null, если
+	// хук дёрнут вне ноды (например, в инспекторе) — тогда $loopIndex просто не появится.
+	const nodeId = useNodeId();
+	const { getNode } = useReactFlow();
 
 	const resolveOptions = useCallback(
 		async (rawOptions: string[], currentChips?: string[], currentText?: string): Promise<string[]> => {
@@ -51,7 +69,13 @@ export function useResolveOptions(propertyId?: string) {
 						case 'pathPattern':
 						case 'filePattern': {
 							const customNames = pathPattern_store.getState().patternStore.map((p) => `$${p.name}`);
-							return [...Object.values(PatternKeys).map((key) => `$${key}`), '$random(', ...customNames];
+							// $loopIndex показываем только если нода реально внутри луп-ноды
+							// (рантайм-значение есть только там; снаружи токен резолвится в '').
+							const insideLoop = isInsideLoop(nodeId, getNode);
+							const keys = Object.values(PatternKeys).filter(
+								(k) => k !== PatternKeys.loopIndex || insideLoop,
+							);
+							return [...keys.map((key) => `$${key}`), '$random(', ...customNames];
 						}
 
 						case 'folders': {
@@ -145,7 +169,7 @@ export function useResolveOptions(propertyId?: string) {
 
 			return resolved.flat();
 		},
-		[path, propertyId],
+		[path, propertyId, nodeId, getNode],
 	);
 
 	return { resolveOptions };

@@ -3,7 +3,7 @@ import { Box, CssBaseline, Tab, Tabs, ThemeProvider, createTheme } from '@mui/ma
 import { Archive, Zap } from 'lucide-react';
 import { themeOptions } from '../theme/themeOptions';
 import type { ArchiveDay, LogEntry, ProcessingItemGroup, SourceFilter, StepInfo, TabKey } from './types';
-import { LIVE_FINISHED_LIMIT, effectiveCounts, groupByHierarchy } from './utils';
+import { LIVE_FINISHED_LIMIT, effectiveCounts, findStepDeep, groupByHierarchy } from './utils';
 import { ArchiveView } from './components/ArchiveView';
 import { LiveView } from './components/LiveView';
 import { Toolbar } from './components/Toolbar';
@@ -76,24 +76,19 @@ export default function LogApp() {
 			if (!group) return;
 
 			// Дедупликация по id — на случай если лог пришёл и в history, и live
-			const alreadyInStep = entry.stepId ? group.steps.some((s) => s.logs.some((l) => l.id === entry.id)) : false;
+			const step = entry.stepId ? findStepDeep(group.steps, entry.stepId) : undefined;
+			const alreadyInStep = step ? step.logs.some((l) => l.id === entry.id) : false;
 			const alreadyInItem = (group.itemLogs ?? []).some((l) => l.id === entry.id);
 			if (alreadyInStep || alreadyInItem) return;
 
 			if (entry.level === 'error') group.errorCount++;
 			if (entry.level === 'warn') group.warnCount++;
 
-			if (entry.stepId) {
-				const step = group.steps.find((s) => s.stepId === entry.stepId);
-				if (step) {
-					step.logs = [...step.logs, entry];
-					if (entry.level === 'error') step.errorCount++;
-				} else {
-					// stepId не совпал — кладём в itemLogs
-					group.itemLogs = [...(group.itemLogs ?? []), entry];
-				}
+			if (step) {
+				step.logs = [...step.logs, entry];
+				if (entry.level === 'error') step.errorCount++;
 			} else {
-				// нет stepId — item-уровень
+				// stepId не указан или не найден (в т.ч. в subSteps) — item-уровень
 				group.itemLogs = [...(group.itemLogs ?? []), entry];
 			}
 			syncState();
@@ -105,13 +100,30 @@ export default function LogApp() {
 		) => {
 			const group = itemsMap.current.get(payload.itemId);
 			if (!group) return;
-			const step = group.steps.find((s) => s.stepId === payload.nodeId);
+			const step = findStepDeep(group.steps, payload.nodeId);
 			if (step) {
 				step.status = payload.status;
 				if (payload.startTime) step.startTime = payload.startTime;
 				if (payload.endTime) step.endTime = payload.endTime;
 				if (payload.finalCost !== undefined) step.finalCost = payload.finalCost;
 			}
+			syncState();
+		};
+
+		// Новая итерация loop'а: батч саб-шагов добавляется в parent.subSteps.
+		// Дедуп по stepId — защита от двойной доставки (если Tauri-подписка задвоилась
+		// или Rust по какой-то причине эмитнул дважды).
+		const onSubstepBatch = (_: any, payload: { itemId: string; parentStepId: string; subSteps: StepInfo[] }) => {
+			const group = itemsMap.current.get(payload.itemId);
+			if (!group) return;
+			const parent = findStepDeep(group.steps, payload.parentStepId);
+			if (!parent) return;
+			const existingIds = new Set((parent.subSteps ?? []).map((s) => s.stepId));
+			const incoming = (payload.subSteps ?? [])
+				.filter((s) => !existingIds.has(s.stepId))
+				.map((s) => ({ ...s, logs: s.logs ?? [], errorCount: s.errorCount ?? 0 }));
+			if (incoming.length === 0) return;
+			parent.subSteps = [...(parent.subSteps ?? []), ...incoming];
 			syncState();
 		};
 
@@ -172,6 +184,7 @@ export default function LogApp() {
 		api.on('log-window:item-log', onItemLog);
 		api.on('log-window:node-update', onNodeUpdate);
 		api.on('log-window:item-end', onItemEnd);
+		api.on('log-window:substep-batch', onSubstepBatch);
 		api.on('log-window:cleared', onCleared);
 
 		return () => {
@@ -179,6 +192,7 @@ export default function LogApp() {
 			api.off('log-window:item-log', onItemLog);
 			api.off('log-window:node-update', onNodeUpdate);
 			api.off('log-window:item-end', onItemEnd);
+			api.off('log-window:substep-batch', onSubstepBatch);
 			api.off('log-window:cleared', onCleared);
 		};
 	}, [syncState]);

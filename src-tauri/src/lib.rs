@@ -351,6 +351,7 @@ pub fn run() {
             log_window_emit_node_update,
             log_window_emit_item_end,
             log_window_emit_item_queued,
+            log_window_emit_substep_batch,
             log_window_emit_abort_queued,
             log_archive_list_days,
             log_archive_get_day,
