@@ -18,6 +18,7 @@ export interface Description {
 	workFolder?: string;
 	localFolder: string;
 	pathAliases?: Record<string, string>;
+	loopIndex?: number; // выставляется в executeLoop на каждую итерацию (через spread, чтобы не мутировать родительский ctx).
 }
 
 interface FormatNameOptions {
@@ -38,6 +39,7 @@ const replacers: Record<PatternKeys, (args: ReplacerArgs) => any> = {
 	[PatternKeys.clearName]: ({ description }) => description?.clearName?.trim() ?? nanoid(10),
 	[PatternKeys.index]: ({ description, file }) =>
 		file && description?.finalFile ? description.finalFile.indexOf(file) + 1 : 1,
+	[PatternKeys.loopIndex]: ({ description }) => description?.loopIndex ?? '',
 	[PatternKeys.fileName]: ({ file }) => (file ? path.basename(file, path.extname(file)) : nanoid(10)),
 	[PatternKeys.clearFileName]: ({ file }) => (file ? getIDandNameFile(path.basename(file)).clearName : nanoid(10)),
 	[PatternKeys.curItemName]: ({ description }) =>

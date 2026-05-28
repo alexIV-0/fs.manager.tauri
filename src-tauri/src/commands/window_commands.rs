@@ -944,6 +944,57 @@ pub fn log_window_emit_item_start(
     app.emit("log-window:item-start", &payload).map_err(|e| e.to_string())
 }
 
+/// Рекурсивный поиск шага по stepId среди steps + subSteps (для loop'ов).
+/// Возвращает mut-ссылку на найденный шаг. Сначала ищется индекс (без &mut), затем
+/// возвращается &mut по этому индексу — иначе borrow checker не пропускает один &mut
+/// борровинг через двухпроходный поиск.
+fn find_step_mut<'a>(steps: &'a mut Vec<serde_json::Value>, step_id: &str) -> Option<&'a mut serde_json::Value> {
+    enum Hit {
+        Top(usize),
+        Nested(usize),
+    }
+    let mut hit: Option<Hit> = None;
+    for (i, step) in steps.iter().enumerate() {
+        if step.get("stepId").and_then(|v| v.as_str()) == Some(step_id) {
+            hit = Some(Hit::Top(i));
+            break;
+        }
+    }
+    if hit.is_none() {
+        for (i, step) in steps.iter().enumerate() {
+            if let Some(subs) = step.get("subSteps").and_then(|v| v.as_array()) {
+                if find_step_index_recursive(subs, step_id) {
+                    hit = Some(Hit::Nested(i));
+                    break;
+                }
+            }
+        }
+    }
+    match hit {
+        Some(Hit::Top(i)) => Some(&mut steps[i]),
+        Some(Hit::Nested(i)) => {
+            let subs = steps[i].get_mut("subSteps")?.as_array_mut()?;
+            find_step_mut(subs, step_id)
+        }
+        None => None,
+    }
+}
+
+/// Immutable-проверка: есть ли где-то ниже шаг с таким stepId.
+fn find_step_index_recursive(steps: &[serde_json::Value], step_id: &str) -> bool {
+    for step in steps {
+        if step.get("stepId").and_then(|v| v.as_str()) == Some(step_id) {
+            return true;
+        }
+        if let Some(subs) = step.get("subSteps").and_then(|v| v.as_array()) {
+            if find_step_index_recursive(subs, step_id) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[tauri::command]
 pub fn log_window_emit_item_log(
     app: tauri::AppHandle,
@@ -957,18 +1008,22 @@ pub fn log_window_emit_item_log(
                 it.get("itemId").and_then(|v| v.as_str()) == Some(item_id)
             }) {
                 let step_id = payload.get("stepId").and_then(|v| v.as_str()).map(String::from);
-                if let Some(sid) = step_id {
+                let mut routed_to_step = false;
+                if let Some(sid) = step_id.as_deref() {
                     if let Some(steps) = it.get_mut("steps").and_then(|v| v.as_array_mut()) {
-                        if let Some(step) = steps.iter_mut().find(|s| {
-                            s.get("stepId").and_then(|v| v.as_str()) == Some(&sid)
-                        }) {
+                        if let Some(step) = find_step_mut(steps, sid) {
                             if let Some(logs) = step.get_mut("logs").and_then(|v| v.as_array_mut()) {
                                 logs.push(payload.clone());
+                                routed_to_step = true;
                             }
                         }
                     }
-                } else if let Some(item_logs) = it.get_mut("itemLogs").and_then(|v| v.as_array_mut()) {
-                    item_logs.push(payload.clone());
+                }
+                // stepId не указан или не найден — на item-уровень
+                if !routed_to_step {
+                    if let Some(item_logs) = it.get_mut("itemLogs").and_then(|v| v.as_array_mut()) {
+                        item_logs.push(payload.clone());
+                    }
                 }
             }
         }
@@ -991,9 +1046,7 @@ pub fn log_window_emit_node_update(
                 it.get("itemId").and_then(|v| v.as_str()) == Some(item_id)
             }) {
                 if let Some(steps) = it.get_mut("steps").and_then(|v| v.as_array_mut()) {
-                    if let Some(step) = steps.iter_mut().find(|s| {
-                        s.get("stepId").and_then(|v| v.as_str()) == Some(node_id)
-                    }) {
+                    if let Some(step) = find_step_mut(steps, node_id) {
                         if let Some(s) = step.as_object_mut() {
                             for k in ["status", "startTime", "endTime", "finalCost"] {
                                 if let Some(v) = payload.get(k) {
@@ -1059,6 +1112,61 @@ fn trim_hot_buffer(items: &mut Vec<serde_json::Value>) {
             true
         }
     });
+}
+
+/// Loop отправил батч саб-шагов очередной итерации. payload:
+///   { itemId, parentStepId, subSteps: [{ stepId, label, pluginId?, pluginVersion?,
+///                                         nodeType, cost?, costUnit?, status, logs, errorCount }] }
+/// Дописывает входящие шаги в parent.subSteps и эмитит `log-window:substep-batch` в renderer.
+#[tauri::command]
+pub fn log_window_emit_substep_batch(
+    app: tauri::AppHandle,
+    state: tauri::State<Mutex<LogState>>,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    if let Ok(mut st) = state.lock() {
+        if let (Some(item_id), Some(parent_id)) = (
+            payload.get("itemId").and_then(|v| v.as_str()),
+            payload.get("parentStepId").and_then(|v| v.as_str()),
+        ) {
+            if let Some(it) = st.items.iter_mut().find(|it| {
+                it.get("itemId").and_then(|v| v.as_str()) == Some(item_id)
+            }) {
+                if let Some(steps) = it.get_mut("steps").and_then(|v| v.as_array_mut()) {
+                    if let Some(parent) = find_step_mut(steps, parent_id) {
+                        if let Some(parent_obj) = parent.as_object_mut() {
+                            let entry = parent_obj
+                                .entry("subSteps".to_string())
+                                .or_insert_with(|| serde_json::json!([]));
+                            if let Some(arr) = entry.as_array_mut() {
+                                if let Some(incoming) = payload.get("subSteps").and_then(|v| v.as_array()) {
+                                    // Дедуп по stepId — защита от двойной доставки.
+                                    let existing: std::collections::HashSet<String> = arr
+                                        .iter()
+                                        .filter_map(|s| s.get("stepId").and_then(|v| v.as_str()).map(String::from))
+                                        .collect();
+                                    for s in incoming {
+                                        let sid = s.get("stepId").and_then(|v| v.as_str()).unwrap_or("");
+                                        if existing.contains(sid) {
+                                            continue;
+                                        }
+                                        let mut sub = s.clone();
+                                        if let Some(so) = sub.as_object_mut() {
+                                            so.entry("logs").or_insert_with(|| serde_json::json!([]));
+                                            so.entry("errorCount").or_insert_with(|| serde_json::json!(0));
+                                            so.entry("status").or_insert_with(|| serde_json::json!("queued"));
+                                        }
+                                        arr.push(sub);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    app.emit("log-window:substep-batch", &payload).map_err(|e| e.to_string())
 }
 
 /// Item поставлен в очередь — добавляется в LogState и эмитит событие item-start (с status="queued").

@@ -24,24 +24,28 @@ export function StepRow({ step, levelFilter, sourceFilter, search }: StepRowProp
 			(!search || e.message.toLowerCase().includes(search.toLowerCase())),
 	);
 
+	const subSteps = step.subSteps ?? [];
+	const hasSubSteps = subSteps.length > 0;
+	const expandable = filteredLogs.length > 0 || hasSubSteps;
+
 	const stepElapsed = step.startTime ? elapsed(step.startTime, step.endTime) : null;
 
 	return (
 		<Box sx={{ borderLeft: `2px solid ${color}33`, ml: 1.5, mb: '1px' }}>
 			<Box
-				onClick={() => filteredLogs.length > 0 && setOpen((v) => !v)}
+				onClick={() => expandable && setOpen((v) => !v)}
 				sx={{
 					display: 'flex',
 					alignItems: 'center',
 					gap: 0.75,
 					px: 1,
 					py: '4px',
-					cursor: filteredLogs.length > 0 ? 'pointer' : 'default',
-					'&:hover': filteredLogs.length > 0 ? { bgcolor: 'action.hover' } : {},
+					cursor: expandable ? 'pointer' : 'default',
+					'&:hover': expandable ? { bgcolor: 'action.hover' } : {},
 					borderRadius: 0.5,
 				}}
 			>
-				{filteredLogs.length > 0 ? (
+				{expandable ? (
 					open ? (
 						<ChevronDown size={12} style={{ color: '#666', flexShrink: 0 }} />
 					) : (
@@ -87,10 +91,13 @@ export function StepRow({ step, levelFilter, sourceFilter, search }: StepRowProp
 				</Box>
 			</Box>
 
-			{open && filteredLogs.length > 0 && (
+			{open && (filteredLogs.length > 0 || hasSubSteps) && (
 				<Box sx={{ pl: 2.5, pb: 0.5 }}>
 					{filteredLogs.map((e) => (
 						<LogLine key={e.id} entry={e} />
+					))}
+					{subSteps.map((sub) => (
+						<StepRow key={sub.stepId} step={sub} levelFilter={levelFilter} sourceFilter={sourceFilter} search={search} />
 					))}
 				</Box>
 			)}

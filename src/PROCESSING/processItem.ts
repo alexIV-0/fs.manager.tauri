@@ -41,8 +41,10 @@ export interface PluginCtx {
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
 async function pathExists(p: string): Promise<boolean> {
-	const checked = await api().invoke('checkFilePath', p);
-	return Boolean(checked);
+	// `checkFilePath` отбрасывает папки (внутри стоит `!p.is_file() → return ""`), поэтому
+	// для проверки «вообще существует ли путь» (файл или папка) используем `path_exists`.
+	// Без этого фикса для папок postProcess получал pathForDeleteExists=false → SKIPPED.
+	return Boolean(await api().invoke('path_exists', p));
 }
 
 /**
@@ -213,9 +215,9 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 				})
 				.catch(() => {});
 			// Broadcast в node_win (через Rust → app.emit "processing-event").
-			// Без этого подсветка ноды и статусбар в node_win не обновляются —
-			// `window.dispatchEvent` выше работает только в main_win.
-			api().invoke('sendNodeStart', payload.nodeId).catch(() => {});
+			// Для саб-шагов loop'а nodeId суффиксирован ('#k'), а граф знает только оригинальный
+			// id — поэтому в node-graph шлём graphNodeId (без суффикса), если он передан.
+			api().invoke('sendNodeStart', payload.graphNodeId ?? payload.nodeId).catch(() => {});
 		} else if (type === 'node:done') {
 			api()
 				.invoke('log-window:emit-node-update', {
@@ -226,7 +228,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					finalCost: payload.finalCost,
 				})
 				.catch(() => {});
-			api().invoke('sendNodeDone', payload.nodeId, payload.output ?? null).catch(() => {});
+			api().invoke('sendNodeDone', payload.graphNodeId ?? payload.nodeId, payload.output ?? null).catch(() => {});
 		} else if (type === 'node:error') {
 			api()
 				.invoke('log-window:emit-node-update', {
@@ -236,7 +238,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					endTime: new Date().toISOString(),
 				})
 				.catch(() => {});
-			api().invoke('sendNodeError', payload.nodeId, payload.message ?? '').catch(() => {});
+			api().invoke('sendNodeError', payload.graphNodeId ?? payload.nodeId, payload.message ?? '').catch(() => {});
 		} else if (type === 'process:complete') {
 			api().invoke('sendProcessComplete').catch(() => {});
 		} else if (type === 'log' || type === 'error') {
@@ -374,21 +376,25 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 
 // ─── Выполнение шага ─────────────────────────────────────────────────────────
 
-async function executeStep(stepId: string, stepObj: any, ctx: ExecutionContext, item: any): Promise<boolean> {
+// logStepId — id, под которым уходят node:* и log-события в log-window (для саб-шагов
+// loop'а здесь стоит суффиксированный id `${id}#${iter}`, чтобы события маршрутизировались
+// в нужный саб-шаг конкретной итерации). ctx.results всегда индексируется по оригинальному
+// stepId, чтобы downstream-импорты находили выход.
+async function executeStep(stepId: string, stepObj: any, ctx: ExecutionContext, item: any, logStepId?: string): Promise<boolean> {
 	const nodeType = stepObj.nodeType ?? 'default';
 	if (nodeType === 'loop') return executeLoop(stepId, stepObj, ctx, item);
-	return executeDefault(stepId, stepObj, ctx);
+	return executeDefault(stepId, stepObj, ctx, logStepId ?? stepId);
 }
 
 // ─── Обычная нода (один плагин) ──────────────────────────────────────────────
 
-async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContext): Promise<boolean> {
+async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContext, logStepId: string): Promise<boolean> {
 	const { send } = ctx;
 	const resolvedImport = resolveImport(stepObj.import, ctx);
 	const execObj = { ...stepObj, import: resolvedImport };
 
 	if (!execObj.pluginId || !execObj.pluginVersion) {
-		send('error', { step: stepId, message: `Missing pluginId/pluginVersion in "${stepId}"`, itemId: ctx.itemId });
+		send('error', { step: logStepId, message: `Missing pluginId/pluginVersion in "${stepId}"`, itemId: ctx.itemId, stepId: logStepId });
 		return false;
 	}
 
@@ -397,8 +403,8 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 	const colorType: string | undefined = execObj.colorType;
 	if (colorType) await acquirePool(colorType);
 
-	send('node:start', { nodeId: stepId, itemId: ctx.itemId });
-	send('log', { level: 'info', text: `→ ${stepId} (${execObj.pluginId}@${execObj.pluginVersion})`, itemId: ctx.itemId, stepId });
+	send('node:start', { nodeId: logStepId, graphNodeId: stepId, itemId: ctx.itemId });
+	send('log', { level: 'info', text: `→ ${stepId} (${execObj.pluginId}@${execObj.pluginVersion})`, itemId: ctx.itemId, stepId: logStepId });
 
 	try {
 		// execToken = уникальный токен на каждый вызов плагина. loader.ts использует
@@ -419,10 +425,10 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		const sendToMW = (type: string, payload: any) => {
 			if (type === 'log') {
 				const p = typeof payload === 'string' ? { text: payload } : (payload ?? {});
-				send('log', { level: p.level ?? 'info', text: p.text ?? '', meta: p.meta, itemId: ctx.itemId, stepId });
+				send('log', { level: p.level ?? 'info', text: p.text ?? '', meta: p.meta, itemId: ctx.itemId, stepId: logStepId });
 			} else if (type === 'error') {
 				const p = typeof payload === 'string' ? { message: payload } : (payload ?? {});
-				send('log', { level: 'error', text: p.message ?? p.text ?? String(payload), meta: p.meta, itemId: ctx.itemId, stepId });
+				send('log', { level: 'error', text: p.message ?? p.text ?? String(payload), meta: p.meta, itemId: ctx.itemId, stepId: logStepId });
 			} else if (type === 'statusbar') {
 				const text = typeof payload === 'string' ? payload : (payload?.text ?? '');
 				send('statusbar', { text });
@@ -430,9 +436,9 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 				const raw = payload?.cost;
 				const cost = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '0')) || 0;
 				capturedSiteCost = cost;
-				send('log', { level: 'info', text: `[siteCost] raw=${raw} parsed=${cost}`, itemId: ctx.itemId, stepId });
+				send('log', { level: 'info', text: `[siteCost] raw=${raw} parsed=${cost}`, itemId: ctx.itemId, stepId: logStepId });
 			} else {
-				send(type, { ...(typeof payload === 'object' && payload !== null ? payload : { value: payload }), itemId: ctx.itemId, stepId });
+				send(type, { ...(typeof payload === 'object' && payload !== null ? payload : { value: payload }), itemId: ctx.itemId, stepId: logStepId });
 			}
 		};
 
@@ -442,7 +448,7 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			signal: ctx.signal,
 			pluginId: execObj.pluginId,
 			pluginVersion: execObj.pluginVersion,
-			log: (level, text, meta) => send('log', { level, text, meta, itemId: ctx.itemId, stepId }),
+			log: (level, text, meta) => send('log', { level, text, meta, itemId: ctx.itemId, stepId: logStepId }),
 			send,
 			sendToMW,
 		};
@@ -471,12 +477,12 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			ctx.accumulatedCost += costNum;
 		}
 
-		send('log', { level: 'info', text: `[costDebug] costUnit=${costUnit} capturedSiteCost=${capturedSiteCost} finalCost=${finalCost}`, itemId: ctx.itemId, stepId });
-		send('node:done', { nodeId: stepId, output, itemId: ctx.itemId, finalCost });
+		send('log', { level: 'info', text: `[costDebug] costUnit=${costUnit} capturedSiteCost=${capturedSiteCost} finalCost=${finalCost}`, itemId: ctx.itemId, stepId: logStepId });
+		send('node:done', { nodeId: logStepId, graphNodeId: stepId, output, itemId: ctx.itemId, finalCost });
 		return true;
 	} catch (e: any) {
-		send('node:error', { nodeId: stepId, message: e?.message ?? String(e), itemId: ctx.itemId });
-		send('error', { step: stepId, message: e?.message ?? String(e), itemId: ctx.itemId, stepId });
+		send('node:error', { nodeId: logStepId, graphNodeId: stepId, message: e?.message ?? String(e), itemId: ctx.itemId });
+		send('error', { step: logStepId, message: e?.message ?? String(e), itemId: ctx.itemId, stepId: logStepId });
 		console.error(`[processItem] Error in step "${stepId}":`, e);
 		return false;
 	} finally {
@@ -512,18 +518,22 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 	// в errors. Раньше loop всегда возвращал true и ошибка проглатывалась.
 	let anyIterationFailed = false;
 
-	for (let i = 0; i < inputArray.length; i++) {
+	const N = inputArray.length;
+	for (let i = 0; i < N; i++) {
 		if (ctx.signal.aborted) {
 			send('aborted', null);
 			return false;
 		}
 
 		const currentItem = inputArray[i];
-		send('log', { level: 'info', text: `  [${i + 1}/${inputArray.length}] ${currentItem}`, itemId: ctx.itemId, stepId });
+		const iter = i + 1;
+		send('log', { level: 'info', text: `  [${iter}/${N}] ${currentItem}`, itemId: ctx.itemId, stepId });
 
+		// description копируем спрэдом, а не ссылкой: иначе loopIndex протекёт в родительский
+		// ctx и при возврате во внешний цикл там окажется значение внутреннего (для nested loops).
 		const innerCtx: ExecutionContext = {
 			results: new Map(ctx.results),
-			description: ctx.description,
+			description: { ...ctx.description, loopIndex: iter },
 			signal: ctx.signal,
 			itemId: ctx.itemId,
 			send,
@@ -532,12 +542,46 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 		innerCtx.results.set(`${stepId}__inputInLoop`, [currentItem]);
 
 		const subgraph: any[] = stepObj.subgraph ?? [];
+
+		// Регистрируем саб-шаги текущей итерации в log-window: батч из всех плагинов
+		// subgraph с суффиксированными stepId. UI добавит их под Loop как nested StepRow.
+		const batchSubSteps = subgraph.map((s: any) => ({
+			stepId: `${s.id}#${iter}`,
+			label: N > 1 ? `[${iter}/${N}] ${s.nodeLabel || s.pluginId || s.id}` : (s.nodeLabel || s.pluginId || s.id),
+			pluginId: s.pluginId,
+			pluginVersion: s.pluginVersion,
+			nodeType: s.nodeType ?? 'default',
+			cost: String(s.cost ?? '0'),
+			costUnit: s.costUnit ?? 'run',
+			status: 'queued' as const,
+			logs: [] as any[],
+			errorCount: 0,
+		}));
+		if (batchSubSteps.length > 0) {
+			// AWAIT обязателен: батч должен быть зарегистрирован в Rust state ДО того,
+			// как из executeStep полетят node:start/log события с суффиксированным stepId,
+			// иначе find_step_mut не найдёт саб-шаг и логи свалятся в itemLogs.
+			try {
+				await api().invoke('log-window:emit-substep-batch', {
+					itemId: ctx.itemId,
+					parentStepId: stepId,
+					subSteps: batchSubSteps,
+				});
+			} catch (err) {
+				// Если команда не зарегистрирована в Rust (старый бинарь) — увидим тут.
+				console.error('[executeLoop] emit-substep-batch failed:', err);
+			}
+		}
+
 		let iterationOk = true;
 
 		for (const subStep of subgraph) {
 			if (innerCtx.signal.aborted) return false;
 			const patched = patchSubStepImport(subStep, stepId);
-			const ok = await executeStep(subStep.id, patched, innerCtx, item);
+			// stepId для results — оригинальный subStep.id (важно для downstream-импортов внутри
+			// этой итерации). logStepId — суффиксированный, чтобы события маршрутизировались
+			// в правильный саб-шаг конкретной итерации в log-window.
+			const ok = await executeStep(subStep.id, patched, innerCtx, item, `${subStep.id}#${iter}`);
 			if (!ok) {
 				iterationOk = false;
 				break;
@@ -548,7 +592,7 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 
 		if (!iterationOk) {
 			anyIterationFailed = true;
-			send('log', { level: 'warn', text: `  [${i + 1}/${inputArray.length}] failed`, itemId: ctx.itemId, stepId });
+			send('log', { level: 'warn', text: `  [${i + 1}/${N}] failed`, itemId: ctx.itemId, stepId });
 			continue;
 		}
 

@@ -136,7 +136,13 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 		const fileInfo: any = await window.electronAPI.invoke('getFileInfo', item);
 		const curItemName: any = await window.electronAPI.invoke('pathBasename', item);
 
-		if (fileInfo.isDirectory && curItemName.trim().startsWith('-')) {
+		// Rust FileInfo сериализуется как snake_case (is_dir/is_file). Раньше тут читали
+		// fileInfo.isDirectory (Electron-имя) — поле было undefined, и папки определялись
+		// как файлы. Это и ломало postProcess для папок (deleteAfter+folder не отрабатывал).
+		const isDir: boolean = Boolean(fileInfo?.is_dir ?? fileInfo?.isDirectory);
+		const isFile: boolean = Boolean(fileInfo?.is_file ?? fileInfo?.isFile);
+
+		if (isDir && curItemName.trim().startsWith('-')) {
 			continue;
 		}
 
@@ -144,12 +150,12 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 
 		description.mainWorkFolder = joinPath(localFolder, mainFolderName, projectName);
 
-		description.isFolder = fileInfo.isDirectory;
+		description.isFolder = isDir;
 		description.curItem = curItemName;
 		description.id = clearNameAndId.id;
 		description.clearName = clearNameAndId.clearName;
 		description.pathForDelete = Array.isArray(item) ? item[0] : item;
-		description.size = fileInfo.isFile ? fileInfo.size : 0;
+		description.size = isFile ? fileInfo.size : 0;
 
 		templateObj.mainSearch.output = [item];
 
