@@ -49,8 +49,10 @@ export async function copyFileFunc(_item: any, _description: any): Promise<strin
 			text: `${_description.infoText ?? ''}: [copy file] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 		});
 
-		// destination уже существует?
-		const destExists = await fs.existsFile(fileTo);
+		// destination уже существует? Проверяем через exists (а не existsFile),
+		// потому что inputFile может быть папкой — existsFile вернул бы false
+		// и для проверки overwrite, и для пост-проверки после копирования.
+		const destExists = await fs.exists(fileTo);
 
 		if (destExists) {
 			if (!_item.overwriteOldest) {
@@ -73,8 +75,9 @@ export async function copyFileFunc(_item: any, _description: any): Promise<strin
 		// overwrite:true — мы уже отфильтровали кейсы выше.
 		await fs.copy(fileFrom, fileTo, { overwrite: true });
 
-		// Проверка что файл действительно появился (защита от тихого фейла).
-		const copied = await fs.existsFile(fileTo);
+		// Проверка что результат действительно появился (защита от тихого фейла).
+		// exists — потому что fileFrom может быть папкой.
+		const copied = await fs.exists(fileTo);
 		if (!copied) {
 			throw new Error(`[copyFile] Copy failed: ${path.basename(fileFrom)} → ${path.basename(fileTo)}`);
 		}

@@ -6,7 +6,7 @@
 //
 // Эмиты log-window событий идут через invoke в Rust → forward в logWindow.
 
-import { basename, join } from '@plugin-api/path';
+import { basename, dirname, join } from '@plugin-api/path';
 import { loadPlugin } from '@/PluginAPI/loader';
 import { acquirePool, releasePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
@@ -45,6 +45,51 @@ async function pathExists(p: string): Promise<boolean> {
 	return Boolean(checked);
 }
 
+/**
+ * Помечает папку, упавшую в обработке, дефисом в начале имени. mainSearch при
+ * следующей итерации пропускает папки, начинающиеся с `-` (см. findFilesForSingleFolder),
+ * поэтому такой "мягкий ban" удобнее, чем переносить целую папку в errors/.
+ * Если папка уже начинается с `-` — ничего не делаем.
+ */
+async function markFolderAsError(
+	folderPath: string,
+	send: SendFn,
+	itemId: string,
+): Promise<void> {
+	try {
+		send('log', { level: 'warn', text: `[markFolderAsError] ENTER: ${folderPath}`, itemId });
+		const name = basename(folderPath);
+		if (name.startsWith('-')) {
+			send('log', {
+				level: 'warn',
+				text: `[processItem] Folder already marked with "-": ${name}`,
+				itemId,
+			});
+			return;
+		}
+
+		const newName = `-${name}`;
+		const newPath = join(dirname(folderPath), newName);
+
+		send('log', { level: 'warn', text: `[markFolderAsError] invoke renameFolder: ${folderPath} -> ${newPath}`, itemId });
+		const renameResult = await api().invoke('renameFolder', folderPath, newPath);
+		send('log', { level: 'warn', text: `[markFolderAsError] renameFolder result: ${JSON.stringify(renameResult)}`, itemId });
+
+		send('log', {
+			level: 'warn',
+			text: `[processItem] Error — folder marked as skipped: "${name}" → "${newName}"`,
+			itemId,
+		});
+		send('statusbar', { text: `⚠️ Error — marked folder: "${newName}"` });
+	} catch (e: any) {
+		send('log', {
+			level: 'warn',
+			text: `[processItem] markFolderAsError failed: ${e?.message ?? String(e)}`,
+			itemId,
+		});
+	}
+}
+
 async function moveToErrorsFolder(
 	pathForDelete: string,
 	projectPath: string,
@@ -52,39 +97,41 @@ async function moveToErrorsFolder(
 	itemId: string,
 ): Promise<void> {
 	try {
-		// Ищем папку errors* в проекте
-		const items = (await api().invoke('getSomeFromFolder', projectPath, [
-			{ type: 'folders', ext: [] },
-		])) as any[];
-		let errorsFolder = items.find((it) => it.name?.startsWith('errors'))?.path as string | undefined;
+		send('log', {
+			level: 'warn',
+			text: `[moveToErrorsFolder] ENTER: pathForDelete=${pathForDelete} projectPath=${projectPath}`,
+			itemId,
+		});
+		// Делегируем в Rust (`move_to_errors`) — он сам ищет/создаёт папку errors*,
+		// переносит файл и переименовывает папку с датой. JS-реализация существовала
+		// исторически (порт из Electron), но дублировала логику и ломалась на
+		// несоответствии формы ответа `getSomeFromFolder`.
+		const res = (await api().invoke('moveToErrors', pathForDelete, projectPath)) as {
+			success: boolean;
+			moved_to?: string | null;
+			error?: string | null;
+		};
+		send('log', { level: 'warn', text: `[moveToErrorsFolder] moveToErrors result: ${JSON.stringify(res)}`, itemId });
 
-		if (!errorsFolder) {
-			errorsFolder = join(projectPath, 'errors');
-			await api().invoke('testAndCreateFolder', errorsFolder);
-		}
-
-		const destPath = join(errorsFolder, basename(pathForDelete));
-		await api().invoke('moveItem', pathForDelete, destPath, { overwrite: true });
-
-		const now = new Date();
-		const dateStr = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}`;
-		const newFolderName = `errors (${dateStr})`;
-		const newFolderPath = join(projectPath, newFolderName);
-
-		if (!(await pathExists(newFolderPath))) {
-			await api().invoke('renameFolder', errorsFolder, newFolderPath);
+		if (!res?.success) {
+			send('log', {
+				level: 'warn',
+				text: `[processItem] moveToErrors failed: ${res?.error ?? 'unknown error'}`,
+				itemId,
+			});
+			return;
 		}
 
 		send('log', {
 			level: 'warn',
-			text: `[processItem] Error — moved to "${newFolderName}": ${basename(pathForDelete)}`,
+			text: `[processItem] Error — moved to errors: ${basename(pathForDelete)}`,
 			itemId,
 		});
 		send('statusbar', {
-			text: `⚠️ Error — moved to "${newFolderName}": ${basename(pathForDelete)}`,
+			text: `⚠️ Error — moved to errors: ${basename(pathForDelete)}`,
 		});
 	} catch (e: any) {
-		send('log', { level: 'warn', text: `[processItem] moveToErrors failed: ${e.message}`, itemId });
+		send('log', { level: 'warn', text: `[processItem] moveToErrors failed: ${e?.message ?? String(e)}`, itemId });
 	}
 }
 
@@ -250,19 +297,66 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 	// Post-обработка оригинала
 	const pathForDelete: string | undefined = desc.pathForDelete;
 	const projectPath: string | undefined = desc.projectPathGD;
+	const deleteAfter = mainSearchObj?.deleteAfter ?? false;
+	const pathForDeleteExists = pathForDelete ? await pathExists(pathForDelete) : false;
+	const isFolder = Boolean(desc.isFolder);
 
-	if (pathForDelete && (await pathExists(pathForDelete))) {
-		const deleteAfter = mainSearchObj?.deleteAfter ?? false;
+	// [DIAG v2] Полная картина значений на момент принятия решения.
+	send('log', {
+		level: 'warn',
+		text:
+			`[processItem.postProcess v2] allStepsSucceeded=${allStepsSucceeded} ` +
+			`aborted=${ctx.signal.aborted} ` +
+			`deleteAfter=${deleteAfter} ` +
+			`isFolder=${isFolder} ` +
+			`pathForDeleteExists=${pathForDeleteExists} ` +
+			`projectPath=${projectPath ?? '<empty>'} ` +
+			`pathForDelete=${pathForDelete ?? '<empty>'}`,
+		itemId,
+	});
+
+	if (pathForDelete && pathForDeleteExists) {
 		if (allStepsSucceeded && !ctx.signal.aborted && deleteAfter) {
+			send('log', { level: 'warn', text: `[processItem.postProcess] → DELETE branch`, itemId });
 			try {
 				await api().invoke('deleteItem', pathForDelete);
 				send('log', { level: 'info', text: `[processItem] Deleted original: ${basename(pathForDelete)}`, itemId });
 			} catch {
 				send('log', { level: 'warn', text: `[processItem] Failed to delete original: ${basename(pathForDelete)}`, itemId });
 			}
-		} else if (!allStepsSucceeded && !ctx.signal.aborted && projectPath && deleteAfter) {
-			await moveToErrorsFolder(pathForDelete, projectPath, send, itemId);
+		} else if (!allStepsSucceeded && !ctx.signal.aborted && deleteAfter) {
+			// Папку не двигаем в errors/ — просто префиксуем имя `-`, чтобы mainSearch
+			// её пропустил на следующей итерации. Для файла — обычный перенос в errors/.
+			if (isFolder) {
+				send('log', { level: 'warn', text: `[processItem.postProcess] → MARK-FOLDER branch`, itemId });
+				await markFolderAsError(pathForDelete, send, itemId);
+			} else if (projectPath) {
+				send('log', { level: 'warn', text: `[processItem.postProcess] → MOVE-TO-ERRORS branch`, itemId });
+				await moveToErrorsFolder(pathForDelete, projectPath, send, itemId);
+			} else {
+				send('log', {
+					level: 'warn',
+					text: `[processItem.postProcess] → NO-OP: file error but projectPath is empty`,
+					itemId,
+				});
+			}
+		} else {
+			send('log', {
+				level: 'warn',
+				text:
+					`[processItem.postProcess] → NO-OP: no branch matched ` +
+					`(allStepsSucceeded=${allStepsSucceeded}, aborted=${ctx.signal.aborted}, deleteAfter=${deleteAfter})`,
+				itemId,
+			});
 		}
+	} else {
+		send('log', {
+			level: 'warn',
+			text:
+				`[processItem.postProcess] → SKIPPED outer if: ` +
+				`pathForDelete=${pathForDelete ?? '<empty>'} exists=${pathForDeleteExists}`,
+			itemId,
+		});
 	}
 
 	const finalStatus = ctx.signal.aborted ? 'aborted' : allStepsSucceeded ? 'done' : 'error';
