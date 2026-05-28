@@ -70,6 +70,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	copyItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
 	moveItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
 	deleteItem: (itemPath) => ({ itemPath }),
+	moveToErrors: (itemPath, projectPath) => ({ itemPath, projectPath }),
 	// IO
 	readFileSync: (filePath) => ({ filePath }),
 	readMediaPreview: (filePath) => ({ filePath }),
@@ -287,6 +288,7 @@ const commandAliases: Record<string, string> = {
 	'logs:clear-archive': 'log_archive_clear',
 	// Misc PROCESSING channels
 	createTextFile: 'createTextFile',
+	moveToErrors: 'move_to_errors',
 	ensureAndReadDir: 'ensure_and_read_dir',
 	get_stat: 'get_stat',
 	os_tmpdir: 'os_tmpdir',
