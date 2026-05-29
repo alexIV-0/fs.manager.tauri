@@ -794,14 +794,17 @@ pub fn log_message(level: String, message: String, meta: Option<serde_json::Valu
     }
 }
 
+// async — обязательно. На macOS WebviewWindowBuilder::build() должен идти через main-thread;
+// синхронная Tauri-команда выполняется на worker-треде из пула и build() блокируется намертво
+// (см. историю с зависанием после пересоздания окна). Async-команда крутится в Tauri's
+// async runtime, который сам проксирует webview-builder на main-thread.
 #[tauri::command]
-pub fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
     let existed = app.get_webview_window("logWindow").is_some();
     crate::commands::diag_log::write(
         &app,
         &format!("log_window_open called (existed={}) | {}", existed, crate::commands::diag_log::counters_snapshot()),
     );
-    // Проверяем существует ли уже окно
     if let Some(existing_win) = app.get_webview_window("logWindow") {
         existing_win.show().map_err(|e| e.to_string())?;
         existing_win.set_focus().map_err(|e| e.to_string())?;
