@@ -10,6 +10,8 @@
 //
 // После воспроизведения зависания — открыть файл и прислать содержимое.
 
+#![allow(dead_code)]
+
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -25,6 +27,9 @@ static ITEM_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
 static SUBSTEP_BATCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 static NODE_UPDATE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static ITEM_END_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ITEM_QUEUED_COUNT: AtomicUsize = AtomicUsize::new(0);
+static PROCESSING_EVENT_COUNT: AtomicUsize = AtomicUsize::new(0);
+static UPDATE_DATA_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn diag_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -58,15 +63,40 @@ pub fn bump_node_update() {
 pub fn bump_item_end() {
     ITEM_END_COUNT.fetch_add(1, Ordering::Relaxed);
 }
+pub fn bump_item_queued() {
+    ITEM_QUEUED_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+pub fn bump_processing_event() {
+    PROCESSING_EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+pub fn bump_update_data() {
+    UPDATE_DATA_COUNT.fetch_add(1, Ordering::Relaxed);
+}
 
 pub fn counters_snapshot() -> String {
     format!(
-        "totals: item-log={} substep-batch={} node-update={} item-end={}",
+        "totals: item-log={} substep-batch={} node-update={} item-end={} item-queued={} proc-event={} update-data={}",
         ITEM_LOG_COUNT.load(Ordering::Relaxed),
         SUBSTEP_BATCH_COUNT.load(Ordering::Relaxed),
         NODE_UPDATE_COUNT.load(Ordering::Relaxed),
         ITEM_END_COUNT.load(Ordering::Relaxed),
+        ITEM_QUEUED_COUNT.load(Ordering::Relaxed),
+        PROCESSING_EVENT_COUNT.load(Ordering::Relaxed),
+        UPDATE_DATA_COUNT.load(Ordering::Relaxed),
     )
+}
+
+/// Запускает фоновый heartbeat-поток: каждые 2 сек пишет строку в diag.log.
+/// Если строки перестают идти — Rust runtime/Tokio полностью заблокирован.
+/// Вызывается один раз из setup().
+pub fn spawn_heartbeat(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        write(&app, "=== heartbeat started ===");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            write(&app, &format!("heartbeat | {}", counters_snapshot()));
+        }
+    });
 }
 
 #[tauri::command]

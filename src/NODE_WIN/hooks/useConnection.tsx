@@ -1,14 +1,24 @@
 import { CustomNode, Property } from '@/NODE_WIN/definitions/types';
+import { isEdgeActive } from '@/NODE_WIN/utils/edgeActive';
 import type { Connection, Edge } from '@xyflow/react';
 import { addEdge, useReactFlow } from '@xyflow/react';
 import { useCallback } from 'react';
 import { useCascadeValidation } from './useCascadeValidation';
+
+// Хелпер: новые edges создаются всегда активными.
+function withActive(connection: Connection): Connection & { data: { active: true } } {
+	return { ...connection, data: { active: true } } as any;
+}
 
 // Хэндлеры Loop ноды — не описаны в data.properties, обрабатываем отдельно
 const LOOP_HANDLES = new Set(['loopInput', 'inputInLoop', 'outputInLoop', 'loopResult']);
 
 function isLoopNode(node: CustomNode): boolean {
 	return node.data?.executionType === 'loop';
+}
+
+function isSpyNode(node: CustomNode): boolean {
+	return node.type === 'spy';
 }
 
 export const useConnection = () => {
@@ -28,7 +38,7 @@ export const useConnection = () => {
 			const sourceIsLoop = isLoopNode(sourceNode) && LOOP_HANDLES.has(connection.sourceHandle ?? '');
 
 			if (targetIsLoop || sourceIsLoop) {
-				reactFlow.setEdges((edges) => addEdge(connection, edges));
+				reactFlow.setEdges((edges) => addEdge(withActive(connection), edges));
 
 				if (sourceIsLoop && connection.target) {
 					// Проверяем что computedOutput уже записан в Loop ноду
@@ -47,13 +57,23 @@ export const useConnection = () => {
 				return;
 			}
 
+			// Spy-нода не имеет properties — пропускаем стандартную проверку и
+			// добавляем edge напрямую. Тип пробрасывается через cascade validation.
+			if (isSpyNode(targetNode) || isSpyNode(sourceNode)) {
+				reactFlow.setEdges((edges) => addEdge(withActive(connection), edges));
+				setTimeout(() => {
+					if (connection.target) handleEdgeAdd(connection.target);
+				}, 0);
+				return;
+			}
+
 			// Стандартная проверка для обычных нод
 			const targetProperty = targetNode.data.properties.find((p: Property) => p.id === connection.targetHandle);
 			const sourceProperty = sourceNode.data.properties.find((p: Property) => p.id === connection.sourceHandle);
 
 			if (!targetProperty || !sourceProperty) return;
 
-			reactFlow.setEdges((edges) => addEdge(connection, edges));
+			reactFlow.setEdges((edges) => addEdge(withActive(connection), edges));
 
 			setTimeout(() => {
 				handleEdgeAdd(connection.target);
@@ -69,11 +89,36 @@ export const useConnection = () => {
 
 			if (!targetNode || !sourceNode) return false;
 
+			// Слот target-хендлера занят активным коннектором — отклоняем.
+			// Inactive (от выключенных нод) не блокируют слот — можно подменить источник.
+			const existingActive = reactFlow.getEdges().some((e) =>
+				e.target === connection.target &&
+				e.targetHandle === connection.targetHandle &&
+				isEdgeActive(e)
+			);
+			if (existingActive) return false;
+
 			// Если один из участников — Loop нода с loop хэндлером — разрешаем
 			const targetIsLoop = isLoopNode(targetNode) && LOOP_HANDLES.has(connection.targetHandle ?? '');
 			const sourceIsLoop = isLoopNode(sourceNode) && LOOP_HANDLES.has(connection.sourceHandle ?? '');
 
 			if (targetIsLoop || sourceIsLoop) return true;
+
+			// ── SPY как target: принимает любой тип на 'in' ──────────────────
+			if (isSpyNode(targetNode) && connection.targetHandle === 'in') return true;
+
+			// ── SPY как source ('out'): проверяем тип downstream-цели против
+			// computedOutput.out у spy (он зеркалит upstream-тип). Если spy ещё
+			// не получил вход — разрешаем (тип проверится после cascade).
+			if (isSpyNode(sourceNode) && connection.sourceHandle === 'out') {
+				const targetProperty = targetNode.data.properties.find((p: Property) => p.id === connection.targetHandle);
+				if (!targetProperty?.acceptedTypes) return true;
+				if (targetProperty.acceptedTypes.includes('all')) return true;
+				const co = sourceNode.data.computedOutput as Record<string, { value: any; type: string }> | null;
+				const spyType = co?.['out']?.type;
+				if (!spyType) return true; // ещё не определился — разрешаем
+				return targetProperty.acceptedTypes.includes(spyType);
+			}
 
 			// Стандартная валидация для обычных нод
 			const targetProperty = targetNode.data.properties.find((p: Property) => p.id === connection.targetHandle);

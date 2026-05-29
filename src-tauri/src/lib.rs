@@ -56,7 +56,11 @@ pub fn run() {
         .manage(Mutex::new(DbState::new()))
         .setup(|app| {
             let app_handle = app.handle().clone();
-            
+
+            // Диагностический heartbeat: фоновый поток пишет в `logs/diag.log` каждые 2 сек.
+            // Если строки `heartbeat` перестают идти — Rust runtime заблокирован целиком.
+            commands::diag_log::spawn_heartbeat(app_handle.clone());
+
             // Инициализируем PluginManagerState с правильным путём
             let app_data_dir = app.path()
                 .app_data_dir()

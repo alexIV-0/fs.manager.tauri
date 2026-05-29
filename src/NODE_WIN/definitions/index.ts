@@ -1,6 +1,7 @@
 // buildNodeDefinitions.ts
 import { mainSearch } from './mainSearch';
 import { description } from './description';
+import { spy } from './spy';
 import type { CollectedUINode } from '@/Utils/loadAllUINodes';
 
 // Глобальная переменная для хранения нод
@@ -14,7 +15,7 @@ export function buildNodeDefinitions(pluginNodes: CollectedUINode[] = []) {
 	// console.log('🎨 [buildNodeDefinitions] Starting build...');
 
 	// 1. Встроенные ноды
-	const builtInNodes = [mainSearch, description];
+	const builtInNodes = [mainSearch, description, spy];
 	// console.log('[buildNodeDefinitions] Built-in nodes:', builtInNodes.length);
 
 	// 2. Преобразуем плагинные UI ноды в формат node definitions

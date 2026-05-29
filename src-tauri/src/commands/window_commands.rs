@@ -796,14 +796,20 @@ pub fn log_message(level: String, message: String, meta: Option<serde_json::Valu
 
 #[tauri::command]
 pub fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
+    let existed = app.get_webview_window("logWindow").is_some();
+    crate::commands::diag_log::write(
+        &app,
+        &format!("log_window_open called (existed={}) | {}", existed, crate::commands::diag_log::counters_snapshot()),
+    );
     // Проверяем существует ли уже окно
     if let Some(existing_win) = app.get_webview_window("logWindow") {
         existing_win.show().map_err(|e| e.to_string())?;
         existing_win.set_focus().map_err(|e| e.to_string())?;
+        crate::commands::diag_log::write(&app, "log_window_open: show+focus done");
         return Ok(true);
     }
 
-    // Создаём новое окно
+    let t0 = std::time::Instant::now();
     let _window = WebviewWindowBuilder::new(
         &app,
         "logWindow",
@@ -814,6 +820,10 @@ pub fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
     .visible(true)
     .build()
     .map_err(|e| e.to_string())?;
+    crate::commands::diag_log::write(
+        &app,
+        &format!("log_window_open: WebviewWindowBuilder build done in {}ms", t0.elapsed().as_millis()),
+    );
 
     Ok(true)
 }
@@ -1295,6 +1305,9 @@ pub fn log_window_emit_item_queued(
             st.items.push(payload.clone());
         }
     }
+    crate::commands::diag_log::bump_item_queued();
+    let id = payload.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
+    crate::commands::diag_log::write(&app, &format!("item-queued: id={}", id));
     app.emit("log-window:item-start", &payload).map_err(|e| e.to_string())
 }
 

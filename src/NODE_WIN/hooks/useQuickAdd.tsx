@@ -122,6 +122,7 @@ export function useQuickAdd() {
 					id: newId,
 					isValid,
 					computedOutput,
+					disabled: false,
 					pluginId: (nodeReference as any).pluginId,
 					pluginVersion: (nodeReference as any).pluginVersion,
 				},

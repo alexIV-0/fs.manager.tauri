@@ -2,9 +2,15 @@
 import GenericEdge from '@/NODE_WIN/edges/CustomEdge';
 import { isNodeDefinitionsInitialized, getNodeDefinitions } from '../definitions';
 import GenericNode from '../nodes/GenericNode';
+import SpyNode from '../nodes/SpyNode';
 
 export const edgeTypes = {
 	default: GenericEdge,
+};
+
+// Кастомные рендереры по type. Для всего остального — GenericNode.
+const CUSTOM_NODE_RENDERERS: Record<string, any> = {
+	spy: SpyNode,
 };
 
 // Функция, которая ВСЕГДА берет актуальные ноды
@@ -21,7 +27,7 @@ export function getNodeTypes() {
 	return nodes.reduce(
 		(acc, node) => {
 			if (node.type) {
-				acc[node.type] = GenericNode;
+				acc[node.type] = CUSTOM_NODE_RENDERERS[node.type] ?? GenericNode;
 			}
 			return acc;
 		},

@@ -14,11 +14,35 @@ type Graph = {
 	edges: AnyEdge[];
 };
 
+// Walk back through spy (reroute) chain to find the first non-spy upstream node id.
+// Spy nodes never execute, so downstream imports must reference the real source.
+// Возвращает null если цепочка обрывается (нет incoming edge у spy) или зациклена.
+function resolveSpySource(
+	sourceId: string,
+	allNodes: AnyNode[],
+	allEdges: AnyEdge[],
+	visited: Set<string> = new Set(),
+): string | null {
+	if (visited.has(sourceId)) return null;
+	visited.add(sourceId);
+	const node = allNodes.find((n) => n.id === sourceId);
+	if (!node || (node as any).type !== 'spy') return sourceId;
+	const incoming = allEdges.find((e) => e.target === sourceId && e.targetHandle === 'in');
+	if (!incoming) return null;
+	return resolveSpySource(incoming.source, allNodes, allEdges, visited);
+}
+
 // ------------------------------------------------------------------
 // Строит execution-объект для одной ноды.
 // ------------------------------------------------------------------
 function buildExecutionObject(id: string, nodesMap: Map<string, AnyNode>, allNodes: AnyNode[], allEdges: AnyEdge[]): any | null {
 	const node = nodesMap.get(id);
+	// Spy-нода не исполняется — она «сплющивается» при сборке importObj
+	// у downstream-нод через resolveSpySource. В очереди её нет.
+	if ((node as any)?.type === 'spy') return null;
+	// Выключенная нода не исполняется. Downstream остаётся без источника
+	// (это сознательно — пользователь сам решает, чем заменить).
+	if ((node as any)?.data?.disabled === true) return null;
 	if (!node?.data?.output) return null;
 
 	const executionType: string | undefined = node.data.executionType;
@@ -36,7 +60,10 @@ function buildExecutionObject(id: string, nodesMap: Map<string, AnyNode>, allNod
 			? p.id
 			: (p?.controlProps?.editLabel === true ? p?.controlProps?.label : p.id);
 
-		importObj[key] = edge.source;
+		// Если источник — spy, идём по цепочке spy → ... → реальная нода.
+		const resolvedSource = resolveSpySource(edge.source, allNodes, allEdges);
+		if (!resolvedSource) continue; // spy без входа — пропускаем
+		importObj[key] = resolvedSource;
 	}
 
 	// ----------------------------------------------------------------
@@ -63,19 +90,21 @@ function buildExecutionObject(id: string, nodesMap: Map<string, AnyNode>, allNod
 			? createProcessQueueFromNodes({ nodes: childNodes, edges: innerEdges }, resolvedStartId, allNodes, allEdges)
 			: [];
 
-		// loopInput: внешняя нода → loopInput handle
+		// loopInput: внешняя нода → loopInput handle (через spy резолвим к реальному источнику)
 		const loopInputEdge = allEdges.find((e) => e.target === id && e.targetHandle === 'loopInput');
+		const loopInputSource = loopInputEdge ? resolveSpySource(loopInputEdge.source, allNodes, allEdges) : null;
 
 		// loopOutputSource: внутренняя нода → outputInLoop handle
 		const loopOutputEdge = allEdges.find((e) => e.target === id && e.targetHandle === 'outputInLoop');
+		const loopOutputSource = loopOutputEdge ? resolveSpySource(loopOutputEdge.source, allNodes, allEdges) : null;
 
 		return {
 			id,
 			nodeType: 'loop',
 			import: {
-				loopInput: loopInputEdge?.source ?? null,
+				loopInput: loopInputSource,
 			},
-			loopOutputSource: loopOutputEdge?.source ?? null,
+			loopOutputSource,
 			subgraph,
 			output: [],
 			isTerminal: false,
@@ -209,7 +238,9 @@ export function createProcessQueue(graph: Graph, startNodeId = 'mainSearch'): an
 	// Перезаписываем cost/costUnit актуальными значениями из plugin.json,
 	// чтобы изменения цены в Settings → Plugins применялись без перезагрузки флоу.
 	const nodes = syncCostsFromManifest((graph.nodes ?? []) as any);
-	const edges = graph.edges ?? [];
+	// Отфильтровываем inactive edges (от выключенных нод) — для очереди исполнения
+	// существуют только активные коннекторы. data.active отсутствует = active (legacy).
+	const edges = (graph.edges ?? []).filter((e: any) => e?.data?.active !== false);
 	const allNodesMap = new Map(nodes.map((n) => [n.id, n]));
 
 	// Top-level ноды — без parentId

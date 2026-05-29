@@ -3,23 +3,33 @@ import { useCallback } from 'react';
 import { CustomNode, CustomNodeData, Property } from '../definitions/types';
 import { getPropertyValueAndType } from '../utils/getPropertyData';
 import { isValueValid } from '../utils/validation';
+import { isEdgeActive } from '../utils/edgeActive';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
+
+// Тип "сноска" в каскаде — несёт всё что downstream-нода должна знать про upstream,
+// без чтения через reactFlow.getNode (которое может вернуть stale state внутри
+// одной синхронной рекурсии cascade'а).
+type SourceUpdate = {
+	properties: Property[];
+	isValid: boolean;
+	computedOutput: Record<string, { value: any; type: string }> | null;
+};
 
 export const useCascadeValidation = () => {
 	const reactFlow = useReactFlow();
 
-	// Получить все исходящие edges из ноды
+	// Получить все исходящие edges из ноды (только активные — inactive это история).
 	const getOutgoingEdges = useCallback(
 		(nodeId: string) => {
-			return reactFlow.getEdges().filter((edge) => edge.source === nodeId);
+			return reactFlow.getEdges().filter((edge) => edge.source === nodeId && isEdgeActive(edge));
 		},
 		[reactFlow],
 	);
 
-	// Получить все входящие edges в ноду
+	// Получить все входящие edges в ноду (только активные).
 	const getIncomingEdges = useCallback(
 		(nodeId: string) => {
-			return reactFlow.getEdges().filter((edge) => edge.target === nodeId);
+			return reactFlow.getEdges().filter((edge) => edge.target === nodeId && isEdgeActive(edge));
 		},
 		[reactFlow],
 	);
@@ -52,6 +62,18 @@ export const useCascadeValidation = () => {
 				controlProps: {
 					...property.controlProps,
 					inheritedValue: undefined,
+				},
+			} as Property;
+		}
+
+		// link: значение хранится прямо в value, а не в inheritedValue (см. setInheritedValue ниже).
+		// Без очистки value downstream-нода с link-входом остаётся "валидной" после удаления связи.
+		if (property.controlType === 'link') {
+			return {
+				...property,
+				controlProps: {
+					...property.controlProps,
+					value: '',
 				},
 			} as Property;
 		}
@@ -108,10 +130,48 @@ export const useCascadeValidation = () => {
 
 	// Валидировать и обновить одну ноду на основе её входящих связей
 	const validateAndUpdateNode = useCallback(
-		(nodeId: string, clearedPropertyIds?: string[], sourceUpdates?: Map<string, Property[]>) => {
+		(nodeId: string, clearedPropertyIds?: string[], sourceUpdates?: Map<string, SourceUpdate>): { isValid: boolean; updatedProperties: Property[]; computedOutput: SourceUpdate['computedOutput'] } => {
 			const node = reactFlow.getNode(nodeId) as CustomNode;
 			if (!node) {
-				return { isValid: false, updatedProperties: [] };
+				return { isValid: false, updatedProperties: [], computedOutput: null };
+			}
+
+			// ── DISABLED — нода выключена пользователем ───────────────────────────
+			// Не валидируем, не вычисляем output. Downstream автоматически становится
+			// orphan (isSourceValid → false).
+			if ((node.data as any)?.disabled === true) {
+				reactFlow.updateNode(nodeId, (n) => ({
+					...n,
+					data: { ...n.data, isValid: false, computedOutput: null },
+				}));
+				return { isValid: false, updatedProperties: (node.data.properties as Property[]) ?? [], computedOutput: null };
+			}
+
+			// ── SPY (reroute) — passthrough: out = upstream output ───────────────
+			// Свой короткий путь: нет properties, нет output config — type/value
+			// просто зеркалятся от upstream-ноды через incoming edge на 'in'.
+			if (node.type === 'spy') {
+				const incomingEdge = getIncomingEdges(nodeId).find((e) => e.targetHandle === 'in');
+				let computedOutput: Record<string, { value: any; type: string }> | null = null;
+				let isValid = false;
+				if (incomingEdge) {
+					// Сперва свежие данные из sourceUpdates, потом fallback в store
+					const upd = sourceUpdates?.get(incomingEdge.source);
+					const sourceIsValid = upd ? upd.isValid : !!(reactFlow.getNode(incomingEdge.source) as CustomNode | undefined)?.data?.isValid;
+					const sourceCO = upd ? upd.computedOutput : ((reactFlow.getNode(incomingEdge.source) as CustomNode | undefined)?.data?.computedOutput as any);
+					if (sourceIsValid) {
+						const sourceOut = sourceCO?.[incomingEdge.sourceHandle ?? ''];
+						if (sourceOut?.type) {
+							computedOutput = { out: { value: sourceOut.value, type: sourceOut.type } };
+							isValid = true;
+						}
+					}
+				}
+				reactFlow.updateNode(nodeId, (n) => ({
+					...n,
+					data: { ...n.data, isValid, computedOutput },
+				}));
+				return { isValid, updatedProperties: [], computedOutput };
 			}
 
 			const nodeData = node.data as CustomNodeData;
@@ -139,7 +199,7 @@ export const useCascadeValidation = () => {
 				let sourceProperty: Property | undefined;
 
 				if (sourceUpdates?.has(incomingEdge.source)) {
-					const sourceProperties = sourceUpdates.get(incomingEdge.source)!;
+					const sourceProperties = sourceUpdates.get(incomingEdge.source)!.properties;
 					sourceProperty = sourceProperties.find((p: Property) => p.id === incomingEdge.sourceHandle);
 				} else {
 					const sourceNode = reactFlow.getNode(incomingEdge.source) as CustomNode;
@@ -181,7 +241,9 @@ export const useCascadeValidation = () => {
 					return clearInheritedValue(property);
 				}
 
-				// ✅ Проверяем валидность source ноды
+				// ✅ Проверяем валидность source ноды — приоритет sourceUpdates над store
+				// (store может быть stale в синхронной рекурсии cascade'а сразу после updateNode).
+				const sourceUpdate = sourceUpdates?.get(incomingEdge.source);
 				const sourceNode = reactFlow.getNode(incomingEdge.source) as CustomNode;
 
 				// Для Loop ноды — считаем валидной если inputInLoop имеет тип
@@ -189,8 +251,8 @@ export const useCascadeValidation = () => {
 					incomingEdge.sourceHandle === 'inputInLoop' && (sourceNode?.data as any)?.executionType === 'loop';
 
 				const isSourceValid = isLoopSource
-					? !!(sourceNode?.data?.computedOutput as any)?.inputInLoop?.type
-					: (sourceNode?.data.isValid ?? false);
+					? !!((sourceUpdate?.computedOutput as any)?.inputInLoop?.type ?? (sourceNode?.data?.computedOutput as any)?.inputInLoop?.type)
+					: (sourceUpdate ? sourceUpdate.isValid : (sourceNode?.data.isValid ?? false));
 
 				if (!isSourceValid) {
 					return clearInheritedValue(property);
@@ -217,7 +279,7 @@ export const useCascadeValidation = () => {
 				// Если в source ноде есть входные свойства с outputMarker и они подключены —
 				// добавляем их маркеры к значению, передаваемому вниз по цепочке
 				const sourceNodeAllProps: Property[] = sourceUpdates?.has(incomingEdge.source)
-					? sourceUpdates.get(incomingEdge.source)!
+					? sourceUpdates.get(incomingEdge.source)!.properties
 					: ((reactFlow.getNode(incomingEdge.source) as CustomNode)?.data?.properties ?? []);
 				const sourceIncoming = getIncomingEdges(incomingEdge.source);
 				const markers = sourceNodeAllProps
@@ -347,7 +409,9 @@ export const useCascadeValidation = () => {
 			reactFlow.updateNode(nodeId, (n) => ({
 				...n,
 				data: {
-					...nodeData,
+					// n.data вместо nodeData чтобы не затереть параллельные обновления (например disabled),
+					// зафиксированные в store после старта validateAndUpdateNode.
+					...n.data,
 					properties: updatedProperties,
 					// Для Loop ноды сохраняем текущий isValid, не перезаписываем
 					isValid: isLoopNode ? (n.data.isValid as boolean) : isValid,
@@ -360,23 +424,24 @@ export const useCascadeValidation = () => {
 				},
 			}));
 
-			return { isValid, updatedProperties };
+			return { isValid, updatedProperties, computedOutput };
 		},
 		[getIncomingEdges, clearInheritedValue, setInheritedValue, reactFlow],
 	);
 
 	// Каскадно обновить ноду и все зависимые ноды
 	const cascadeValidation = useCallback(
-		(startNodeId: string, visited = new Set<string>(), sourceUpdates = new Map<string, Property[]>()) => {
+		(startNodeId: string, visited = new Set<string>(), sourceUpdates = new Map<string, SourceUpdate>()) => {
 			// Защита от циклов
 			if (visited.has(startNodeId)) return;
 			visited.add(startNodeId);
 
-			// ✅ Обновляем текущую ноду и получаем обновленные properties
-			const { updatedProperties } = validateAndUpdateNode(startNodeId, undefined, sourceUpdates);
+			// ✅ Обновляем текущую ноду и получаем обновлённое состояние целиком
+			const { updatedProperties, isValid, computedOutput } = validateAndUpdateNode(startNodeId, undefined, sourceUpdates);
 
-			// ✅ Сохраняем обновленные properties для следующих нод
-			sourceUpdates.set(startNodeId, updatedProperties);
+			// ✅ Сохраняем для downstream: properties + isValid + computedOutput.
+			// Downstream предпочитает это store'у — устраняет stale-read в синхронной рекурсии.
+			sourceUpdates.set(startNodeId, { properties: updatedProperties, isValid, computedOutput });
 
 			// Получаем все зависимые ноды (куда идут edges от этой ноды)
 			const outgoingEdges = getOutgoingEdges(startNodeId);

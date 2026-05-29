@@ -78,6 +78,7 @@ export const useDragAndDrop = () => {
 					id: newId,
 					isValid,
 					computedOutput,
+					disabled: false,
 					pluginId: nodeReference.data.pluginId,
 					pluginVersion: nodeReference.data.pluginVersion,
 				},
