@@ -332,6 +332,11 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
         })();
     }
 
+    // После destroy → пересоздание: восстановить сохранённый размер/позицию и переподписать
+    // autosave на новый экземпляр окна (старый обработчик умер вместе со старым окном).
+    crate::commands::window_state::apply_saved_state(&app, "nodeWin");
+    crate::commands::window_state::register_autosave(&app, "nodeWin");
+
     // Отправляем данные после загрузки
     let data_clone = data.clone();
     let app_clone = app.clone();
@@ -827,6 +832,11 @@ pub async fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
         &app,
         &format!("log_window_open: WebviewWindowBuilder build done in {}ms", t0.elapsed().as_millis()),
     );
+
+    // После destroy → пересоздание: восстановить сохранённый размер/позицию и переподписать
+    // autosave на новый экземпляр окна (старый обработчик умер вместе со старым окном).
+    crate::commands::window_state::apply_saved_state(&app, "logWindow");
+    crate::commands::window_state::register_autosave(&app, "logWindow");
 
     Ok(true)
 }
