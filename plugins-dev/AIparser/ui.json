@@ -20,7 +20,10 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["video", "audio"],
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -30,13 +33,19 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен текущую локальную папку для обработки. имя будет стандартное (\"$clearName ($random(3))\"), если не указано",
-					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"options": [
+						"#pathPattern",
+						"Custom Folder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": false,
 				"outputType": "path"
 			},
@@ -46,7 +55,13 @@
 				"controlProps": {
 					"label": "Model for Parsing",
 					"tooltip": "Нужно выбрать одну из моделей для парсинга",
-					"options": ["gemini-flash", "gemini-pro-25", "gemini-pro", "qwen"],
+					"options": [
+						"gemini-flash",
+						"gemini-pro-25",
+						"gemini-pro",
+						"qwen",
+						"qwen3"
+					],
 					"freeInput": false,
 					"value": "gemini-pro"
 				},
@@ -63,7 +78,10 @@
 					"language": "plaintext"
 				},
 				"isInput": true,
-				"acceptedTypes": ["text", "string"],
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},

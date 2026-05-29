@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
 import { joinPath } from '@/Utils/joinPath';
+import { getAppSettings } from '@/Store/Settings/appSettings_client';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
 	name,
@@ -48,8 +49,38 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			addFolder(name);
 		} else {
 			removeFolder(name);
+			// Если папка была давно «холодной» — даём ей сутки до повторного auto-disable,
+			// сдвигая mtime OUT. Иначе autoDisable на следующем тике снова её выключит.
+			void bumpOutMtimeIfStale();
 		}
 		setOnOffVal(!_prev);
+	}
+
+	async function bumpOutMtimeIfStale() {
+		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
+		if (!autoDisableDays || autoDisableDays <= 0) return;
+
+		const { mainFolderArr } = mainFolders_stor.getState();
+		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
+		if (!activeMain) return;
+
+		const outPath = joinPath(activeMain.path, name, 'OUT');
+		try {
+			const info: any = await window.electronAPI.invoke('getFileInfo', outPath);
+			const isDir = info?.is_dir ?? info?.isDirectory ?? false;
+			const modifiedMs: number | undefined = info?.modified ?? info?.modifiedMs;
+			if (!isDir || typeof modifiedMs !== 'number') return;
+
+			const dayMs = 86_400_000;
+			const ageMs = Date.now() - modifiedMs;
+			// Трогаем только если OUT уже «просрочена» — иначе оставляем mtime как есть.
+			if (ageMs <= autoDisableDays * dayMs) return;
+
+			const newMtimeMs = Date.now() - (autoDisableDays - 1) * dayMs;
+			await window.electronAPI.invoke('setPathMtime', outPath, newMtimeMs);
+		} catch {
+			// OUT может не существовать — это нормально, autoDisable пропустит её.
+		}
 	}
 
 	const handleMainClick = () => {

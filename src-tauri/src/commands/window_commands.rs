@@ -840,11 +840,80 @@ pub fn log_window_get_status(state: tauri::State<Mutex<LogState>>) -> Result<Log
 }
 
 #[tauri::command]
-pub fn log_window_get_history(state: tauri::State<Mutex<LogState>>) -> Result<LogHistory, String> {
+pub fn log_window_get_history(
+    app: tauri::AppHandle,
+    state: tauri::State<Mutex<LogState>>,
+) -> Result<LogHistory, String> {
+    let t0 = std::time::Instant::now();
     let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(LogHistory {
-        items: state.items.clone(),
-    })
+    let items = state.items.clone();
+    drop(state);
+
+    // Считаем размеры по дереву, чтобы понять что мы возвращаем во фронт.
+    // Особенно subSteps — главный подозреваемый по росту после нескольких циклов loop.
+    let mut total_steps = 0usize;
+    let mut total_substeps = 0usize;
+    let mut total_logs = 0usize;
+    let mut max_substeps_per_parent = 0usize;
+    let mut max_logs_per_step = 0usize;
+    let mut max_item_logs = 0usize;
+    for it in &items {
+        if let Some(arr) = it.get("itemLogs").and_then(|v| v.as_array()) {
+            total_logs += arr.len();
+            max_item_logs = max_item_logs.max(arr.len());
+        }
+        if let Some(steps) = it.get("steps").and_then(|v| v.as_array()) {
+            for s in steps {
+                total_steps += 1;
+                if let Some(logs) = s.get("logs").and_then(|v| v.as_array()) {
+                    total_logs += logs.len();
+                    max_logs_per_step = max_logs_per_step.max(logs.len());
+                }
+                if let Some(subs) = s.get("subSteps").and_then(|v| v.as_array()) {
+                    total_substeps += subs.len();
+                    max_substeps_per_parent = max_substeps_per_parent.max(subs.len());
+                    for sub in subs {
+                        total_steps += 1;
+                        if let Some(logs) = sub.get("logs").and_then(|v| v.as_array()) {
+                            total_logs += logs.len();
+                            max_logs_per_step = max_logs_per_step.max(logs.len());
+                        }
+                        // Третий уровень subSteps (вложенные loops, на всякий случай).
+                        if let Some(subs2) = sub.get("subSteps").and_then(|v| v.as_array()) {
+                            total_substeps += subs2.len();
+                            for s2 in subs2 {
+                                total_steps += 1;
+                                if let Some(logs) = s2.get("logs").and_then(|v| v.as_array()) {
+                                    total_logs += logs.len();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let bytes = serde_json::to_string(&items).map(|s| s.len()).unwrap_or(0);
+    let elapsed_ms = t0.elapsed().as_millis();
+
+    crate::commands::diag_log::write(
+        &app,
+        &format!(
+            "get-history: items={} steps={} subSteps={} logs={} maxSubs/parent={} maxLogs/step={} maxItemLogs={} bytes={} elapsed_ms={} | {}",
+            items.len(),
+            total_steps,
+            total_substeps,
+            total_logs,
+            max_substeps_per_parent,
+            max_logs_per_step,
+            max_item_logs,
+            bytes,
+            elapsed_ms,
+            crate::commands::diag_log::counters_snapshot(),
+        ),
+    );
+
+    Ok(LogHistory { items })
 }
 
 #[tauri::command]
@@ -941,6 +1010,14 @@ pub fn log_window_emit_item_start(
             st.items.push(payload.clone());
         }
     }
+    let item_id = payload.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
+    let item_name = payload.get("itemName").and_then(|v| v.as_str()).unwrap_or("");
+    let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    let steps_count = payload.get("steps").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    crate::commands::diag_log::write(
+        &app,
+        &format!("item-start: id={} name={} status={} steps={}", item_id, item_name, status, steps_count),
+    );
     app.emit("log-window:item-start", &payload).map_err(|e| e.to_string())
 }
 
@@ -1028,6 +1105,7 @@ pub fn log_window_emit_item_log(
             }
         }
     }
+    crate::commands::diag_log::bump_item_log();
     app.emit("log-window:item-log", &payload).map_err(|e| e.to_string())
 }
 
@@ -1059,6 +1137,7 @@ pub fn log_window_emit_node_update(
             }
         }
     }
+    crate::commands::diag_log::bump_node_update();
     app.emit("log-window:node-update", &payload).map_err(|e| e.to_string())
 }
 
@@ -1124,6 +1203,21 @@ pub fn log_window_emit_substep_batch(
     state: tauri::State<Mutex<LogState>>,
     payload: serde_json::Value,
 ) -> Result<(), String> {
+    let incoming_count = payload
+        .get("subSteps")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let mut parent_total_after: usize = 0;
+    let mut item_id_for_diag = String::new();
+    let mut parent_id_for_diag = String::new();
+    if let (Some(item_id), Some(parent_id)) = (
+        payload.get("itemId").and_then(|v| v.as_str()),
+        payload.get("parentStepId").and_then(|v| v.as_str()),
+    ) {
+        item_id_for_diag = item_id.to_string();
+        parent_id_for_diag = parent_id.to_string();
+    }
     if let Ok(mut st) = state.lock() {
         if let (Some(item_id), Some(parent_id)) = (
             payload.get("itemId").and_then(|v| v.as_str()),
@@ -1158,6 +1252,7 @@ pub fn log_window_emit_substep_batch(
                                         }
                                         arr.push(sub);
                                     }
+                                    parent_total_after = arr.len();
                                 }
                             }
                         }
@@ -1166,6 +1261,14 @@ pub fn log_window_emit_substep_batch(
             }
         }
     }
+    crate::commands::diag_log::bump_substep_batch();
+    crate::commands::diag_log::write(
+        &app,
+        &format!(
+            "substep-batch: item={} parent={} incoming={} parentSubStepsTotal={}",
+            item_id_for_diag, parent_id_for_diag, incoming_count, parent_total_after,
+        ),
+    );
     app.emit("log-window:substep-batch", &payload).map_err(|e| e.to_string())
 }
 
@@ -1274,6 +1377,42 @@ pub fn log_window_emit_item_end(
         }
     }
 
+    crate::commands::diag_log::bump_item_end();
+    if let Some(group) = &finished_group {
+        // Замеряем размер сохраняемого item'а — субшаги loop'а накапливаются именно тут.
+        let bytes = serde_json::to_string(group).map(|s| s.len()).unwrap_or(0);
+        let steps_count = group.get("steps").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+        let mut subs_total = 0usize;
+        let mut logs_total = 0usize;
+        if let Some(steps) = group.get("steps").and_then(|v| v.as_array()) {
+            for s in steps {
+                if let Some(logs) = s.get("logs").and_then(|v| v.as_array()) {
+                    logs_total += logs.len();
+                }
+                if let Some(subs) = s.get("subSteps").and_then(|v| v.as_array()) {
+                    subs_total += subs.len();
+                    for sub in subs {
+                        if let Some(logs) = sub.get("logs").and_then(|v| v.as_array()) {
+                            logs_total += logs.len();
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(item_logs) = group.get("itemLogs").and_then(|v| v.as_array()) {
+            logs_total += item_logs.len();
+        }
+        let id = group.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
+        let status = group.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        crate::commands::diag_log::write(
+            &app,
+            &format!(
+                "item-end: id={} status={} steps={} subSteps={} logs={} bytes={} | {}",
+                id, status, steps_count, subs_total, logs_total, bytes,
+                crate::commands::diag_log::counters_snapshot(),
+            ),
+        );
+    }
     app.emit("log-window:item-end", &payload).map_err(|e| e.to_string())
 }
 

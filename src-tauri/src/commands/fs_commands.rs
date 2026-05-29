@@ -359,6 +359,21 @@ pub fn rename_folder(old_path: String, new_path: String) -> Result<(), String> {
     fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
 }
 
+/// Устанавливает mtime файла/папки на указанный момент времени в миллисекундах от Unix epoch.
+/// Используется в логике автоотключения: при ручном включении папки с устаревшим OUT
+/// фронт двигает mtime, чтобы дать папке окно перед повторным auto-disable.
+#[tauri::command]
+pub fn set_path_mtime(path: String, mtime_ms: f64) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    let secs = (mtime_ms / 1000.0).floor() as i64;
+    let nanos = (((mtime_ms - (secs as f64) * 1000.0).max(0.0)) * 1_000_000.0) as u32;
+    let ft = filetime::FileTime::from_unix_time(secs, nanos);
+    filetime::set_file_mtime(p, ft).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn copy_item(
     source_path: String,

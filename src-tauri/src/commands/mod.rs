@@ -2,6 +2,7 @@ pub mod db_analytics;
 pub mod fs_commands;
 pub mod window_commands;
 pub mod log_archive;
+pub mod diag_log;
 pub mod watch_commands;
 pub mod processing_commands;
 pub mod plugin_commands;
