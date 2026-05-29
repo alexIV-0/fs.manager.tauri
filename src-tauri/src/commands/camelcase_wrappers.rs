@@ -73,6 +73,11 @@ pub fn renameFolder(oldPath: String, newPath: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn setPathMtime(path: String, mtimeMs: f64) -> Result<(), String> {
+    super::fs_commands::set_path_mtime(path, mtimeMs)
+}
+
+#[tauri::command]
 pub fn copyItem(sourcePath: String, destinationPath: String, options: Option<super::fs_commands::CopyMoveOptions>) -> Result<(), String> {
     super::fs_commands::copy_item(sourcePath, destinationPath, options)
 }

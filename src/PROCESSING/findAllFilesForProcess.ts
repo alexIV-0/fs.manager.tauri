@@ -61,6 +61,17 @@ export async function findAllFilesForProcess(clearQueue = true) {
 		setMainFolderIndex(i);
 		let getOffArr: string[] = loadFromLocalStorage(curMainFolder.id) || [];
 
+		// ── чистим off-список от имён удалённых/переименованных папок ────
+		// finalArr — актуальный список с диска; всё что в LS, но отсутствует там — мусор.
+		const finalSet = new Set(finalArr);
+		const cleaned = getOffArr.filter((n) => finalSet.has(n));
+		if (cleaned.length !== getOffArr.length) {
+			const removed = getOffArr.filter((n) => !finalSet.has(n));
+			console.log(`[offList cleanup] ${mainFolderName} — removed stale: ${removed.join(', ')}`);
+			getOffArr = cleaned;
+			saveToLocalStorage(curMainFolder.id, getOffArr);
+		}
+
 		// ── авто-отключение проектов по mtime папки OUT ──────────────────
 		// Если включено в настройках и OUT не модифицировалась N дней —
 		// добавляем проект в off-список (тот же массив в LS, что и ручной чекбокс).
@@ -88,7 +99,10 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			}
 			// Все подпапки отключены — не выключаем главную папку, просто пропускаем цикл файлов.
 			// Главная папка продолжает сканировать на появление новых подпапок.
-			if (finalArr.length > 0 && offSet.size >= finalArr.length) {
+			// Считаем только те off-имена, что реально есть в finalArr — старые/удалённые
+			// записи в LS не должны учитываться, иначе главная папка скипается с активными подпапками.
+			const activeOffCount = finalArr.reduce((n, p) => (offSet.has(p) ? n + 1 : n), 0);
+			if (finalArr.length > 0 && activeOffCount >= finalArr.length) {
 				console.log(`[autoDisable] ${mainFolderName} — all projects off, folder stays active`);
 				continue;
 			}

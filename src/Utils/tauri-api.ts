@@ -67,6 +67,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	testAndCreateFolder: (path) => ({ path }),
 	testAndCreateFolders: (paths) => ({ paths }),
 	renameFolder: (oldPath, newPath) => ({ oldPath, newPath }),
+	setPathMtime: (path, mtimeMs) => ({ path, mtimeMs }),
 	copyItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
 	moveItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
 	deleteItem: (itemPath) => ({ itemPath }),
@@ -193,6 +194,9 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	log_archive_get_day: (date: string) => ({ date }),
 	log_archive_cleanup: () => ({}),
 	log_archive_clear: () => ({}),
+	diag_log_write: (msg: string) => ({ msg }),
+	diag_log_path: () => ({}),
+	diag_log_clear: () => ({}),
 	createTextFile: (path: string) => ({ path }),
 	ensure_and_read_dir: (path: string) => ({ path }),
 	get_stat: (path: string) => ({ path }),
@@ -288,6 +292,10 @@ const commandAliases: Record<string, string> = {
 	'logs:get-day': 'log_archive_get_day',
 	'logs:cleanup': 'log_archive_cleanup',
 	'logs:clear-archive': 'log_archive_clear',
+	// Диагностический лог для отладки зависания LogApp (см. src-tauri/src/commands/diag_log.rs).
+	'diag:log': 'diag_log_write',
+	'diag:log-path': 'diag_log_path',
+	'diag:log-clear': 'diag_log_clear',
 	// Misc PROCESSING channels
 	createTextFile: 'createTextFile',
 	moveToErrors: 'move_to_errors',

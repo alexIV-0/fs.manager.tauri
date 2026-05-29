@@ -10,6 +10,42 @@ import { Toolbar } from './components/Toolbar';
 
 const theme = createTheme(themeOptions);
 
+// Fire-and-forget диагностическая запись в `app_data_dir/logs/diag.log` (см. diag_log.rs).
+// Используется только для отладки зависания LogApp — после починки можно снести вместе с
+// `diag:log` алиасом и diag_log.rs модулем.
+function diag(msg: string) {
+	try {
+		(window as any).electronAPI?.invoke?.('diag:log', `[LogApp] ${msg}`);
+	} catch {
+		/* noop */
+	}
+}
+
+// Глубокий пересчёт размеров текущего состояния — сколько узлов/логов сейчас
+// держим в RAM. Считается из самой Map'ы, без копирования массивов.
+function snapshotState(map: Map<string, ProcessingItemGroup>): string {
+	let steps = 0;
+	let substeps = 0;
+	let logs = 0;
+	let maxSubs = 0;
+	let maxLogs = 0;
+	const visit = (s: StepInfo) => {
+		steps++;
+		logs += s.logs.length;
+		if (s.logs.length > maxLogs) maxLogs = s.logs.length;
+		if (s.subSteps && s.subSteps.length) {
+			substeps += s.subSteps.length;
+			if (s.subSteps.length > maxSubs) maxSubs = s.subSteps.length;
+			for (const sub of s.subSteps) visit(sub);
+		}
+	};
+	for (const g of map.values()) {
+		for (const s of g.steps) visit(s);
+		logs += (g.itemLogs ?? []).length;
+	}
+	return `items=${map.size} steps=${steps} subSteps=${substeps} logs=${logs} maxSubs=${maxSubs} maxLogs=${maxLogs}`;
+}
+
 export default function LogApp() {
 	const [items, setItems] = useState<ProcessingItemGroup[]>([]);
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -31,11 +67,19 @@ export default function LogApp() {
 	// Дебаунс через requestAnimationFrame: при шторме log-событий пересобираем массив
 	// и ре-рендерим дерево максимум раз в кадр (~16мс), а не на каждую строку лога.
 	const syncRaf = useRef<number | null>(null);
+	// Счётчики событий для диагностического 1-секундного flush'а (см. ниже).
+	const eventCounts = useRef({ start: 0, log: 0, node: 0, sub: 0, end: 0, sync: 0, syncMs: 0 });
 	const syncState = useCallback(() => {
 		if (syncRaf.current != null) return;
 		syncRaf.current = requestAnimationFrame(() => {
 			syncRaf.current = null;
+			const t0 = performance.now();
 			setItems(Array.from(itemsMap.current.values()));
+			const dt = performance.now() - t0;
+			eventCounts.current.sync++;
+			eventCounts.current.syncMs += dt;
+			// Долгий батч раз — пишем сразу, не ждём секундного flush'а.
+			if (dt > 50) diag(`slow sync: ${dt.toFixed(1)}ms ${snapshotState(itemsMap.current)}`);
 		});
 	}, []);
 	useEffect(
@@ -45,22 +89,53 @@ export default function LogApp() {
 		[],
 	);
 
+	// Раз в секунду пишем сводку: сколько событий обработали + текущий снапшот RAM.
+	// Если фронт замрёт — последняя запись покажет, на чём именно: и тогда счётчики
+	// (особенно sub/log) подскажут, что приходило перед остановкой.
+	useEffect(() => {
+		diag(`mount ${snapshotState(itemsMap.current)}`);
+		const id = setInterval(() => {
+			const c = eventCounts.current;
+			if (c.start || c.log || c.node || c.sub || c.end || c.sync) {
+				diag(
+					`tick: start=${c.start} log=${c.log} node=${c.node} sub=${c.sub} end=${c.end} ` +
+						`syncs=${c.sync} syncTotalMs=${c.syncMs.toFixed(0)} | ${snapshotState(itemsMap.current)}`,
+				);
+				eventCounts.current = { start: 0, log: 0, node: 0, sub: 0, end: 0, sync: 0, syncMs: 0 };
+			}
+		}, 1000);
+		return () => {
+			clearInterval(id);
+			diag(`unmount ${snapshotState(itemsMap.current)}`);
+		};
+	}, []);
+
 	// ── IPC ──────────────────────────────────────────────────────────────────
 
 	useEffect(() => {
 		const api = (window as any).electronAPI;
 
+		const tHistory0 = performance.now();
+		diag('get-history start');
 		api.invoke('log-window:get-history').then((data: any) => {
-			if (!data) return;
+			const tIpc = performance.now() - tHistory0;
+			if (!data) {
+				diag(`get-history empty (ipc=${tIpc.toFixed(0)}ms)`);
+				return;
+			}
+			const tBuild0 = performance.now();
 			itemsMap.current.clear();
 			for (const g of data.items ?? []) {
 				if (!g.itemLogs) g.itemLogs = [];
 				itemsMap.current.set(g.itemId, g);
 			}
+			const tBuild = performance.now() - tBuild0;
+			diag(`get-history loaded: ipc=${tIpc.toFixed(0)}ms build=${tBuild.toFixed(0)}ms ${snapshotState(itemsMap.current)}`);
 			syncState();
 		});
 
 		const onItemStart = (_: any, group: ProcessingItemGroup) => {
+			eventCounts.current.start++;
 			if (!group.itemLogs) group.itemLogs = [];
 			itemsMap.current.set(group.itemId, { ...group });
 			// Queued-элементы не раскрываем автоматически — только при реальном старте.
@@ -71,6 +146,7 @@ export default function LogApp() {
 		};
 
 		const onItemLog = (_: any, entry: LogEntry) => {
+			eventCounts.current.log++;
 			if (!entry.itemId) return;
 			const group = itemsMap.current.get(entry.itemId);
 			if (!group) return;
@@ -98,6 +174,7 @@ export default function LogApp() {
 			_: any,
 			payload: { itemId: string; nodeId: string; status: StepInfo['status']; startTime?: string; endTime?: string; finalCost?: number },
 		) => {
+			eventCounts.current.node++;
 			const group = itemsMap.current.get(payload.itemId);
 			if (!group) return;
 			const step = findStepDeep(group.steps, payload.nodeId);
@@ -114,6 +191,7 @@ export default function LogApp() {
 		// Дедуп по stepId — защита от двойной доставки (если Tauri-подписка задвоилась
 		// или Rust по какой-то причине эмитнул дважды).
 		const onSubstepBatch = (_: any, payload: { itemId: string; parentStepId: string; subSteps: StepInfo[] }) => {
+			eventCounts.current.sub++;
 			const group = itemsMap.current.get(payload.itemId);
 			if (!group) return;
 			const parent = findStepDeep(group.steps, payload.parentStepId);
@@ -124,10 +202,15 @@ export default function LogApp() {
 				.map((s) => ({ ...s, logs: s.logs ?? [], errorCount: s.errorCount ?? 0 }));
 			if (incoming.length === 0) return;
 			parent.subSteps = [...(parent.subSteps ?? []), ...incoming];
+			// Если subSteps растут неуправляемо — заметим в diag.
+			if (parent.subSteps.length % 50 === 0) {
+				diag(`subSteps milestone: parent=${payload.parentStepId} len=${parent.subSteps.length}`);
+			}
 			syncState();
 		};
 
 		const onItemEnd = async (_: any, payload: { itemId: string; status: ProcessingItemGroup['status']; endTime: string; totalCost?: number }) => {
+			eventCounts.current.end++;
 			const group = itemsMap.current.get(payload.itemId);
 			if (group) {
 				group.status = payload.status;
