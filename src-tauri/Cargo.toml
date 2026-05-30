@@ -1,6 +1,6 @@
 [package]
 name = "fs-manager-tauri"
-version = "0.1.7"
+version = "0.1.8"
 description = "fsManager - File System Manager with Tauri"
 authors = ["alexIV"]
 edition = "2021"
