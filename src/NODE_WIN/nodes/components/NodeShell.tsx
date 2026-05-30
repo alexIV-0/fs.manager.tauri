@@ -15,6 +15,7 @@ function NodeShell({ children, sx, nodeId }: NodeShellProps) {
 
 	const nodeData = useNodesData(nodeId ?? '');
 	const isLoop = (nodeData?.data as any)?.executionType === 'loop';
+	const isDisabled = !!(nodeData?.data as any)?.disabled;
 
 	const isActive = !!nodeId && activeNodeId === nodeId;
 	const isError = status === 'error';
@@ -33,7 +34,9 @@ function NodeShell({ children, sx, nodeId }: NodeShellProps) {
 			sx={{
 				boxShadow: getShadow(),
 				borderRadius: 'inherit',
-				transition: 'box-shadow 0.3s ease',
+				transition: 'box-shadow 0.3s ease, opacity 0.2s ease, filter 0.2s ease',
+				opacity: isDisabled ? 0.4 : 1,
+				filter: isDisabled ? 'grayscale(0.6)' : 'none',
 				animation: isActive ? 'nodePulse 1.2s ease-in-out infinite' : 'none',
 				'@keyframes nodePulse': {
 					'0%': { boxShadow: `0 0 12px 3px ${blueColor(25)}` },

@@ -89,6 +89,23 @@ export default function LogApp() {
 		[],
 	);
 
+	// Frame-heartbeat: requestAnimationFrame должен фигачить каждые ~16мс. Если интервал
+	// между кадрами становится >200мс — рендер заклинило, и это будет последняя запись
+	// в diag перед фактическим зависанием.
+	useEffect(() => {
+		let lastFrame = performance.now();
+		let raf = 0;
+		const tick = () => {
+			const now = performance.now();
+			const dt = now - lastFrame;
+			lastFrame = now;
+			if (dt > 200) diag(`FRAME STALL: ${dt.toFixed(0)}ms`);
+			raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(raf);
+	}, []);
+
 	// Раз в секунду пишем сводку: сколько событий обработали + текущий снапшот RAM.
 	// Если фронт замрёт — последняя запись покажет, на чём именно: и тогда счётчики
 	// (особенно sub/log) подскажут, что приходило перед остановкой.

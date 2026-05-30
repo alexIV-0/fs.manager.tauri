@@ -1,5 +1,6 @@
 import { Property, CustomNode } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
+import { isEdgeActive } from '@/NODE_WIN/utils/edgeActive';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { Handle, Position, useEdges, useNodesData, useReactFlow } from '@xyflow/react';
 import { useEffect, useState } from 'react';
@@ -14,7 +15,11 @@ export default function InputHandle({ property }: { property: Property }) {
 	const colorTypes = colorTypes_store((s) => s.colorTypes);
 	const [color, setColor] = useState(colorTypes.default);
 
-	const handleConnections = edges.filter((edge) => edge.target === nodeId && edge.targetHandle === property.id);
+	// Считаем только активные коннекторы. Inactive (от выключенных нод) — это «история»,
+	// слот должен оставаться доступным для подмены источника.
+	const handleConnections = edges.filter(
+		(edge) => edge.target === nodeId && edge.targetHandle === property.id && isEdgeActive(edge),
+	);
 
 	// Раньше тут было useNodes() — широкая подписка, ре-рендерящая на любое изменение
 	// в любой ноде графа. На drag-tick это умножало работу × количество InputHandles.

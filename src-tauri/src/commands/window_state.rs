@@ -78,6 +78,23 @@ fn debounce_tokens() -> &'static Mutex<HashMap<String, u64>> {
 
 const DEBOUNCE_MS: u64 = 350;
 
+/// Восстанавливает сохранённые размер/позицию для окна по его label из window-state.json.
+/// Безопасно при отсутствии файла или записи — окно просто остаётся с initial размером.
+pub fn apply_saved_state(app: &tauri::AppHandle, label: &str) {
+    let Some(win) = app.get_webview_window(label) else { return; };
+    let Ok(Some(state)) = load_window_state(label.to_string(), app.clone()) else { return; };
+    let _ = win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+        width: state.width as u32,
+        height: state.height as u32,
+    }));
+    if let (Some(x), Some(y)) = (state.x, state.y) {
+        let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: x as i32,
+            y: y as i32,
+        }));
+    }
+}
+
 /// Регистрирует на окне обработчик Resized + Moved, который сохраняет состояние
 /// с дебаунсом (по окончании drag).
 pub fn register_autosave(app: &tauri::AppHandle, label: &str) {

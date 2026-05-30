@@ -38,6 +38,10 @@ export interface CustomNodeData {
 	output?: OutputConfig;
 	isValid: boolean;
 
+	// Нода выключена пользователем — не исполняется, downstream остаётся без входа.
+	// Отсутствие поля = false (старые флоу).
+	disabled?: boolean;
+
 	// 🔥 НОВЫЕ ПОЛЯ ДЛЯ ПЛАГИНОВ
 	pluginId?: string; // ID плагина (если нода из плагина)
 	pluginVersion?: string; // Версия плагина (если нода из плагина)

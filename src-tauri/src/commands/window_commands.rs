@@ -332,6 +332,11 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
         })();
     }
 
+    // После destroy → пересоздание: восстановить сохранённый размер/позицию и переподписать
+    // autosave на новый экземпляр окна (старый обработчик умер вместе со старым окном).
+    crate::commands::window_state::apply_saved_state(&app, "nodeWin");
+    crate::commands::window_state::register_autosave(&app, "nodeWin");
+
     // Отправляем данные после загрузки
     let data_clone = data.clone();
     let app_clone = app.clone();
@@ -794,16 +799,25 @@ pub fn log_message(level: String, message: String, meta: Option<serde_json::Valu
     }
 }
 
+// async — обязательно. На macOS WebviewWindowBuilder::build() должен идти через main-thread;
+// синхронная Tauri-команда выполняется на worker-треде из пула и build() блокируется намертво
+// (см. историю с зависанием после пересоздания окна). Async-команда крутится в Tauri's
+// async runtime, который сам проксирует webview-builder на main-thread.
 #[tauri::command]
-pub fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
-    // Проверяем существует ли уже окно
+pub async fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
+    let existed = app.get_webview_window("logWindow").is_some();
+    crate::commands::diag_log::write(
+        &app,
+        &format!("log_window_open called (existed={}) | {}", existed, crate::commands::diag_log::counters_snapshot()),
+    );
     if let Some(existing_win) = app.get_webview_window("logWindow") {
         existing_win.show().map_err(|e| e.to_string())?;
         existing_win.set_focus().map_err(|e| e.to_string())?;
+        crate::commands::diag_log::write(&app, "log_window_open: show+focus done");
         return Ok(true);
     }
 
-    // Создаём новое окно
+    let t0 = std::time::Instant::now();
     let _window = WebviewWindowBuilder::new(
         &app,
         "logWindow",
@@ -814,6 +828,15 @@ pub fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
     .visible(true)
     .build()
     .map_err(|e| e.to_string())?;
+    crate::commands::diag_log::write(
+        &app,
+        &format!("log_window_open: WebviewWindowBuilder build done in {}ms", t0.elapsed().as_millis()),
+    );
+
+    // После destroy → пересоздание: восстановить сохранённый размер/позицию и переподписать
+    // autosave на новый экземпляр окна (старый обработчик умер вместе со старым окном).
+    crate::commands::window_state::apply_saved_state(&app, "logWindow");
+    crate::commands::window_state::register_autosave(&app, "logWindow");
 
     Ok(true)
 }
@@ -1295,6 +1318,9 @@ pub fn log_window_emit_item_queued(
             st.items.push(payload.clone());
         }
     }
+    crate::commands::diag_log::bump_item_queued();
+    let id = payload.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
+    crate::commands::diag_log::write(&app, &format!("item-queued: id={}", id));
     app.emit("log-window:item-start", &payload).map_err(|e| e.to_string())
 }
 
