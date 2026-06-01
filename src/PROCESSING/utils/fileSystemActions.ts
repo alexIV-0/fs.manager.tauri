@@ -4,9 +4,28 @@ import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 
 // ── Определяем тип инстанса по пути ────────────────────────────────────────
-function getInstanceType(path: string): 'gd' | 'local' {
+// Сначала пытаемся понять, в какой панели реально открыт путь — сравниваем с
+// корневыми путями уже загруженных колонок (с учётом границы разделителя).
+// Это надёжнее, чем угадывать по префиксу localFolder: если GD-путь («Папка
+// Пользователя») случайно начинается с той же строки, что и localFolder
+// (например localFolder — родитель/сосед с общим префиксом имени), наивный
+// startsWith ошибочно вернул бы 'local', и обновление UI молча пропускалось бы.
+function isUnderRoot(path: string, root: string): boolean {
+	if (!root) return false;
+	return path === root || path.startsWith(root + '/') || path.startsWith(root + '\\');
+}
+
+export function getInstanceType(path: string): 'gd' | 'local' {
+	const { instances } = useColumnView_Store.getState();
+	const gdRoot = instances.gd.columns[0]?.path;
+	const localRoot = instances.local.columns[0]?.path;
+
+	if (isUnderRoot(path, localRoot)) return 'local';
+	if (isUnderRoot(path, gdRoot)) return 'gd';
+
+	// Фолбэк на старую эвристику, если корни ещё не загружены.
 	const lFolder = localFolders_stor.getState().localFolder;
-	return path.startsWith(lFolder) ? 'local' : 'gd';
+	return lFolder && path.startsWith(lFolder) ? 'local' : 'gd';
 }
 
 // ── Удаление с обрезкой дочерних колонок ───────────────────────────────────

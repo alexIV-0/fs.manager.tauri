@@ -1,5 +1,5 @@
-import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { getInstanceType } from './fileSystemActions';
 
 export async function deleteItemWithTrimColumns(path: string) {
 	try {
@@ -9,8 +9,7 @@ export async function deleteItemWithTrimColumns(path: string) {
 		return;
 	}
 
-	const lFolder = localFolders_stor.getState().localFolder;
-	const instanceType = path.startsWith(lFolder) ? 'local' : 'gd';
+	const instanceType = getInstanceType(path);
 
 	await useColumnView_Store.getState().removeItemAndTrimColumns(instanceType, path);
 }

@@ -117,7 +117,7 @@ export function CurentFolderItem({
 						: isSelected
 							? isActiveSelection
 								? '#007bff4c'
-								: 'rgba(255,255,255,0.08)'
+								: 'rgba(150,150,150,0.22)'
 							: 'transparent',
 					outline: isMultiSelected ? '1px solid #007bff66' : 'none',
 					'&:hover': { backgroundColor: isMultiSelected ? '#007bff44' : '#ffffff0b' },
@@ -173,7 +173,7 @@ export function CurentFolderItem({
 								textOverflow: 'ellipsis',
 								fontWeight: isSelected ? 600 : 400,
 								fontSize: '1.2rem',
-								color: isSelected ? (isActiveSelection ? '#64afffff' : '#ffffffd9') : '#ffffffd9',
+								color: isSelected ? '#64afffff' : '#ffffffd9',
 								opacity: isCut ? 0.4 : 1,
 								cursor: 'pointer',
 								transition: 'color 0.2s ease, opacity 0.2s ease',

@@ -134,7 +134,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			disablePadding
 			sx={{
 				height: '34px',
-				backgroundColor: isActive ? (isColumnFocused ? '#007bff4c' : 'rgba(255,255,255,0.08)') : 'transparent',
+				backgroundColor: isActive ? (isColumnFocused ? '#007bff4c' : 'rgba(150,150,150,0.22)') : 'transparent',
 				position: 'relative',
 				'&:hover': { backgroundColor: isActive && isColumnFocused ? '#007bff5c' : '#ffffff0b' },
 				'&:hover .removeProjectButton': { opacity: 1 },
@@ -164,7 +164,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 						width: '100%',
 						overflow: 'hidden',
 						cursor: 'pointer',
-						...(isActive && isColumnFocused && { '& .MuiListItemText-primary': { color: '#64afffff', fontWeight: 600 } }),
+						...(isActive && { '& .MuiListItemText-primary': { color: '#64afffff', fontWeight: 600 } }),
 					}}
 				>
 					{name}
