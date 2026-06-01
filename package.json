@@ -14,7 +14,9 @@
 		"plug:build:all": "node plugins-dev/_packScripts/build-plugins-dev.js",
 		"plug:watch": "node plugins-dev/_packScripts/build-plugins-watch.js",
 		"plug:pack": "node plugins-dev/_packScripts/pack-plugin.js",
-		"plug:pack:all": "node plugins-dev/_packScripts/pack-plugins-all.js"
+		"plug:pack:all": "node plugins-dev/_packScripts/pack-plugins-all.js",
+		"jsx:build": "node jsx/_packScripts/build-jsx.js",
+		"jsx:watch": "node jsx/_packScripts/build-jsx-watch.js"
 	},
 	"dependencies": {
 		"@dnd-kit/core": "^6.3.1",

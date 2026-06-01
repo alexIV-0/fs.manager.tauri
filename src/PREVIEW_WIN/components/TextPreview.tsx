@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 
 const WINDOW_W = 900;
@@ -100,6 +101,51 @@ export function TextPreview({ filePath }: { filePath: string }) {
 				// глобальный useKeyboardShortcut в PreviewApp не сработает при фокусе в редакторе.
 				editorInstRef.current.addCommand(monaco.KeyCode.Escape, () => {
 					getCurrentWebviewWindow().close().catch(() => {});
+				});
+
+				// Буфер обмена в WKWebView: системные copy/paste API заблокированы,
+				// а глобальный enableTextFieldShortcuts намеренно не трогает Monaco
+				// (его inputarea — мусорный IME-буфер). Поэтому copy/cut/paste гоняем
+				// через плагин буфера Tauri прямо в модель редактора — так корректно
+				// работает и Cmd+C/X/V, и внешние утилиты (carambaSwitcher и т.п.),
+				// которые используют тот же системный буфер.
+				const ed = editorInstRef.current;
+
+				const copySelection = (): boolean => {
+					const sel = ed.getSelection();
+					const model = ed.getModel();
+					if (!sel || !model || sel.isEmpty()) return false;
+					writeText(model.getValueInRange(sel)).catch(() => {});
+					return true;
+				};
+
+				// Cmd/Ctrl+C — копировать выделение в системный буфер
+				ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
+					copySelection();
+				});
+
+				// Cmd/Ctrl+X — вырезать выделение
+				ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, () => {
+					const sel = ed.getSelection();
+					if (!copySelection() || !sel) return;
+					ed.executeEdits('clipboard-cut', [{ range: sel, text: '', forceMoveMarkers: true }]);
+					ed.pushUndoStop();
+				});
+
+				// Cmd/Ctrl+V — вставить из системного буфера в позицию курсора/выделение
+				ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+					readText()
+						.then((text) => {
+							if (text == null || text === '') return;
+							const sel = ed.getSelection();
+							if (!sel) return;
+							ed.executeEdits('clipboard-paste', [
+								{ range: sel, text, forceMoveMarkers: true },
+							]);
+							ed.pushUndoStop();
+							ed.focus();
+						})
+						.catch(() => {});
 				});
 			}
 		};

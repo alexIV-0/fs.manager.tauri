@@ -11,6 +11,14 @@
  * Covered elements:
  *   - INPUT / TEXTAREA   – full C/V/X/A support
  *   - contentEditable    – V and X only (Monaco handles C on its own)
+ *
+ * NOT covered: Monaco editor. Monaco's focused input is a real
+ * `<textarea class="inputarea">`, so it would match `isInput()` here — but
+ * writing to that textarea's `.value` does NOT insert into Monaco's document
+ * model (the inputarea is a throwaway IME buffer Monaco fully controls).
+ * Hijacking it breaks paste/cut inside the editor. Monaco registers its own
+ * clipboard commands (see TextPreview.tsx), so we bail out for any target
+ * inside `.monaco-editor` and let those commands run.
  */
 
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
@@ -48,6 +56,10 @@ function setInputValue(input: InputEl, value: string): void {
 
 function handleShortcut(e: KeyboardEvent): void {
 	if (!e.metaKey && !e.ctrlKey) return;
+
+	// Monaco owns its clipboard via editor commands — never intercept its
+	// inputarea here (doing so corrupts paste/cut inside the editor).
+	if (e.target instanceof HTMLElement && e.target.closest('.monaco-editor')) return;
 
 	if (isInput(e.target)) {
 		handleInput(e, e.target);

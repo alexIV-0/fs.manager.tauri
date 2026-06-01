@@ -22,7 +22,10 @@
 				"isInput": true,
 				"acceptedTypes": [
 					"video",
-					"audio"
+					"audio",
+					"image",
+					"text",
+					"string"
 				],
 				"required": true,
 				"outputType": "accepted"
