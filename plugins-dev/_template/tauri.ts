@@ -240,16 +240,21 @@ export const http = {
 		});
 	},
 
-	/** Скачивает URL в локальный файл. Возвращает количество байт. */
+	/** Скачивает URL в локальный файл. Возвращает количество байт.
+	 *  Передай `nodeId` и/или `statusText`, чтобы прогресс скачивания отображался
+	 *  в статусбаре/ноде (тот же формат, что у ffmpeg-прогресса). Без них —
+	 *  тихое скачивание, как раньше. */
 	download(
 		url: string,
 		dest: string,
-		opts: { headers?: [string, string][] } = {},
+		opts: { headers?: [string, string][]; nodeId?: string; statusText?: string } = {},
 	): Promise<number> {
 		return api().invoke('http_download', {
 			url,
 			dest,
 			headers: opts.headers,
+			nodeId: opts.nodeId,
+			statusText: opts.statusText,
 		});
 	},
 };

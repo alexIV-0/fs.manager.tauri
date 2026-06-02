@@ -83,16 +83,96 @@ const DEBOUNCE_MS: u64 = 350;
 pub fn apply_saved_state(app: &tauri::AppHandle, label: &str) {
     let Some(win) = app.get_webview_window(label) else { return; };
     let Ok(Some(state)) = load_window_state(label.to_string(), app.clone()) else { return; };
+    apply_state_to_window(&win, &state);
+}
+
+/// Применяет размер+позицию к окну с защитой от «потерянного» окна: если сохранённая
+/// позиция не попадает ни на один подключённый монитор (экран отключили / сменилось
+/// разрешение), окно центрируется на первичном мониторе. Используется и для main,
+/// и для nodeWin/logWindow — единая точка восстановления.
+pub fn apply_state_to_window(win: &tauri::WebviewWindow, state: &WindowState) {
     let _ = win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
         width: state.width as u32,
         height: state.height as u32,
     }));
+
     if let (Some(x), Some(y)) = (state.x, state.y) {
-        let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-            x: x as i32,
-            y: y as i32,
-        }));
+        let (px, py) = clamp_to_visible(win, x as i32, y as i32, state.width as u32, state.height as u32);
+        let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: px, y: py }));
     }
+}
+
+/// Возвращает безопасную позицию: исходную, если окно видно «ручкой» хотя бы на одном
+/// мониторе, иначе — координаты центрирования на первичном (или первом доступном) мониторе.
+fn clamp_to_visible(win: &tauri::WebviewWindow, x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
+    let monitors = win.available_monitors().unwrap_or_default();
+    if monitors.is_empty() {
+        return (x, y); // нет данных о мониторах — не трогаем
+    }
+
+    // Сколько окна должно быть видно, чтобы за заголовок можно было схватиться мышкой.
+    const MIN_VISIBLE_W: i32 = 120;
+    const MIN_VISIBLE_H: i32 = 40;
+
+    let (w, h) = (w as i32, h as i32);
+
+    for m in &monitors {
+        let mp = m.position();
+        let ms = m.size();
+        let overlap_w = (x + w).min(mp.x + ms.width as i32) - x.max(mp.x);
+        let overlap_h = (y + h).min(mp.y + ms.height as i32) - y.max(mp.y);
+        if overlap_w >= MIN_VISIBLE_W && overlap_h >= MIN_VISIBLE_H {
+            return (x, y); // достаточно видно на этом мониторе — позиция валидна
+        }
+    }
+
+    // Окна не видно ни на одном экране → центрируем на первичном (или первом) мониторе.
+    let target = win
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| monitors.into_iter().next());
+    if let Some(m) = target {
+        let mp = m.position();
+        let ms = m.size();
+        let cx = mp.x + (ms.width as i32 - w).max(0) / 2;
+        let cy = mp.y + (ms.height as i32 - h).max(0) / 2;
+        println!("[WindowState] Saved position off-screen → recenter to ({}, {})", cx, cy);
+        return (cx, cy);
+    }
+    (x, y)
+}
+
+/// Если окно по своей текущей геометрии не видно ни на одном мониторе — центрирует его
+/// на текущем экране. В отличие от clamp_to_visible работает с уже созданным окном
+/// (читает его реальные outer_position/outer_size в physical px) — удобно для preview-окон,
+/// которые спавнятся по сохранённой/каскадной позиции и могут уехать за пределы экрана.
+pub fn ensure_on_screen(win: &tauri::WebviewWindow) {
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return;
+    };
+    let monitors = win.available_monitors().unwrap_or_default();
+    if monitors.is_empty() {
+        return;
+    }
+
+    const MIN_VISIBLE_W: i32 = 120;
+    const MIN_VISIBLE_H: i32 = 40;
+    let (x, y) = (pos.x, pos.y);
+    let (w, h) = (size.width as i32, size.height as i32);
+
+    for m in &monitors {
+        let mp = m.position();
+        let ms = m.size();
+        let overlap_w = (x + w).min(mp.x + ms.width as i32) - x.max(mp.x);
+        let overlap_h = (y + h).min(mp.y + ms.height as i32) - y.max(mp.y);
+        if overlap_w >= MIN_VISIBLE_W && overlap_h >= MIN_VISIBLE_H {
+            return; // видно на этом мониторе — ничего не делаем
+        }
+    }
+
+    println!("[WindowState] preview window off-screen → centered");
+    let _ = win.center();
 }
 
 /// Регистрирует на окне обработчик Resized + Moved, который сохраняет состояние

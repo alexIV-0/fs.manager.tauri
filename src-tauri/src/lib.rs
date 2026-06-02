@@ -38,6 +38,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard::init())
+        .plugin(tauri_plugin_drag::init())
         // Кастомный `plugin://` протокол для динамической загрузки плагинов через import().
         // Resolver: distr-plugins (dev, приоритет) → app_data/plugins → resource/plugins.
         // На лету переписывает Node-импорты в плагинах на наши @plugin-api/* полифилы.
@@ -95,19 +97,21 @@ pub fn run() {
             let exec_state = commands::exec_commands::ExecState::new(abort_flag);
             app.manage(exec_state);
             
-            // Восстановить состояние главного окна
-            if let Ok(Some(state)) = commands::window_state::load_window_state("main".to_string(), app_handle.clone()) {
-                println!("[WindowState] Restoring main window: {:?}", state);
-                if let Some(main_win) = app.get_webview_window("main") {
-                    // Сначала позицию, потом размер
-                    if let (Some(x), Some(y)) = (state.x, state.y) {
-                        let _ = main_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: x as i32, y: y as i32 }));
-                    }
-                    let _ = main_win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                        width: state.width as u32,
-                        height: state.height as u32,
-                    }));
+            // Восстановить состояние главного окна ДО показа.
+            // Окно создаётся скрытым (tauri.conf.json → "visible": false), позиция/размер
+            // выставляются пока оно невидимо, и только потом show() — поэтому больше нет
+            // «прыжка» (раньше окно появлялось по центру с дефолтным размером, а затем
+            // переезжало в сохранённое место уже на глазах у пользователя).
+            if let Some(main_win) = app.get_webview_window("main") {
+                if let Ok(Some(state)) = commands::window_state::load_window_state("main".to_string(), app_handle.clone()) {
+                    println!("[WindowState] Restoring main window: {:?}", state);
+                    // apply_state_to_window выставляет размер+позицию с защитой от «потерянного»
+                    // окна (если сохранённый экран отключён — центрирует на первичном мониторе).
+                    commands::window_state::apply_state_to_window(&main_win, &state);
                 }
+                // Показываем уже спозиционированное окно — без прыжка.
+                let _ = main_win.show();
+                let _ = main_win.set_focus();
             }
             
             // Node Editor window
@@ -135,22 +139,9 @@ pub fn run() {
                 }
             }
 
-            // Preview window
-            let preview_win = WebviewWindowBuilder::new(
-                app,
-                "previewWin",
-                WebviewUrl::App("previewWin.html".into()),
-            )
-            .title("fsManager — Preview")
-            .inner_size(800.0, 600.0)
-            .visible(false)
-            .disable_drag_drop_handler()
-            .build()?;
-
-            // Preview-окно использует bounds-per-file-type (см. preview_bounds.rs).
-            // Размер и позиция восстанавливаются при первом preview_open в зависимости
-            // от типа открываемого файла. Generic window_state для него не используем.
-            let _ = preview_win;
+            // Preview-окна теперь создаются динамически в preview_open (мульти-инстанс,
+            // label "preview-{type}-{n}", каскад, bounds-per-type). Заранее единое
+            // previewWin больше не нужно — оно бы просто висело скрытым.
 
             // Log window
             let log_win = WebviewWindowBuilder::new(
@@ -202,8 +193,9 @@ pub fn run() {
                 let app_menu = make_edit_menu(&app_handle)?;
                 app.set_menu(app_menu)?;
 
-                // Явно на каждое окно (гарантия для вторичных окон)
-                for label in &["main", "nodeWin", "previewWin", "logWindow"] {
+                // Явно на каждое окно (гарантия для вторичных окон).
+                // previewWin'ов больше нет на старте — их меню ставит preview_open при создании.
+                for label in &["main", "nodeWin", "logWindow"] {
                     if let Some(win) = app.get_webview_window(label) {
                         let win_menu = make_edit_menu(&app_handle)?;
                         let _ = win.set_menu(win_menu);
@@ -227,6 +219,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Native file icon (drag-preview)
+            commands::icon_commands::get_file_icon,
             // File system commands
             get_file_info,
             get_file_type_by_extname,

@@ -19,6 +19,9 @@ interface UniversalColumnViewState {
 	};
 	lastActiveInstance: 'gd' | 'local' | null;
 	lastSelectedItem: { colIndex: number; item: any } | null;
+	// Путь колонки, активной для вставки/подсветки: при клике по папке — путь открытой
+	// папки (следующая колонка), при клике по файлу/пустому месту — путь кликнутой колонки.
+	activeColumnPath: string | null;
 	openRoot: (instanceType: 'gd' | 'local', rootPath: string, options?: { ensureDir?: boolean }) => Promise<void>;
 	selectItem: (instanceType: 'gd' | 'local', colIndex: number, item: any) => Promise<void>;
 	refreshColumn: (instanceType: 'gd' | 'local', colIndex: number) => Promise<void>;
@@ -62,6 +65,7 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 	},
 	lastActiveInstance: null,
 	lastSelectedItem: null,
+	activeColumnPath: null,
 
 	openRoot: async (instanceType: 'gd' | 'local', rootPath: string, options?: { ensureDir?: boolean }) => {
 		try {
@@ -115,6 +119,8 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 		set((state) => ({
 			lastActiveInstance: instanceType,
 			lastSelectedItem: { colIndex, item },
+			// папка → путь открываемой папки (станет следующей колонкой); файл → путь его колонки
+			activeColumnPath: item.isDir ? item.path : (columns[colIndex]?.path ?? null),
 			instances: {
 				...state.instances,
 				[instanceType]: {

@@ -196,11 +196,12 @@ pub fn fsWatchStop(folderPath: String, state: tauri::State<'_, std::sync::Mutex<
 #[tauri::command]
 pub async fn previewResize(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     opts: super::fs_commands::PreviewResizeOpts,
     state: tauri::State<'_, std::sync::Mutex<super::window_commands::PreviewWindowState>>,
     bounds_state: tauri::State<'_, std::sync::Mutex<super::preview_bounds::PreviewBoundsState>>,
 ) -> Result<(), String> {
-    super::window_commands::preview_resize(app, opts, state, bounds_state).await
+    super::window_commands::preview_resize(app, window, opts, state, bounds_state).await
 }
 
 #[tauri::command]

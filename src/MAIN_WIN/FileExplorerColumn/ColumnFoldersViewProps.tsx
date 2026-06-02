@@ -12,6 +12,7 @@ import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useMenuItems } from '../hooks/useMenuItems';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
+import { isDraggingOut, getActiveDragMode, applyExplorerDrop } from '@/Utils/dragOut';
 import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
@@ -55,14 +56,17 @@ export function ColumnFolderView({
 	const rbState = useRef<RbState | null>(null);
 	const [rbRect, setRbRect] = useState<{ colIndex: number; left: number; top: number; width: number; height: number } | null>(null);
 
-	const handleRbMouseDown = useCallback((e: React.MouseEvent, colIndex: number) => {
-		if (e.button !== 0) return;
-		// Клик в любом месте панели делает её фокусной колонкой (в т.ч. по пустому месту).
-		useColumnFocus_store.getState().setFocusedColumn(sourceType);
-		if ((e.target as Element).closest('[data-item-path]')) return;
-		e.preventDefault();
-		rbState.current = { colIndex, startX: e.clientX, startY: e.clientY };
-	}, [sourceType]);
+	const handleRbMouseDown = useCallback(
+		(e: React.MouseEvent, colIndex: number) => {
+			if (e.button !== 0) return;
+			// Клик в любом месте панели делает её фокусной колонкой (в т.ч. по пустому месту).
+			useColumnFocus_store.getState().setFocusedColumn(sourceType);
+			if ((e.target as Element).closest('[data-item-path]')) return;
+			e.preventDefault();
+			rbState.current = { colIndex, startX: e.clientX, startY: e.clientY };
+		},
+		[sourceType],
+	);
 
 	useEffect(() => {
 		const onMove = (e: MouseEvent) => {
@@ -117,6 +121,7 @@ export function ColumnFolderView({
 
 	const addItemToColumn = useColumnView_Store((s) => s.addItemToColumn);
 	const focusedColumn = useColumnFocus_store((s) => s.focusedColumn);
+	const activeColumnPath = useColumnView_Store((s) => s.activeColumnPath);
 	const lastSelectedColIndex = useColumnView_Store((s) => s.lastSelectedItem?.colIndex ?? -1);
 	const multiAnchorColIndex = useColumnView_Store((s) => s.instances[sourceType].multiSelectAnchor?.colIndex ?? -1);
 	const cbType = clipboardFs_store((s) => s.type);
@@ -155,6 +160,12 @@ export function ColumnFolderView({
 		};
 
 		win.onDragDropEvent(async (event) => {
+			// Если перетаскивание запущено самой программой (drag-наружу) — игнорируем
+			// входящий UI, иначе наша же сессия ложно подсвечивает колонки / «вешает» UI.
+			if (isDraggingOut()) {
+				setExternalDropIndex(null);
+				return;
+			}
 			const payload = event.payload as any;
 			const type = payload?.type;
 			console.log(`[DragDrop:${sourceType}] event:`, type, payload);
@@ -181,7 +192,16 @@ export function ColumnFolderView({
 					console.log('  col', c.id, 'rect:', r.left, r.top, r.right, r.bottom);
 				});
 				const idx = typeof x === 'number' && typeof y === 'number' ? findColumnIndexAt(x, y) : null;
-				console.log(`[DragDrop:${sourceType} drop] idx:`, idx, 'columns.length:', columns.length, 'paths:', paths);
+				console.log(
+					`[DragDrop:${sourceType} drop] idx:`,
+					idx,
+					'columns.length:',
+					columns.length,
+					'paths:',
+					paths,
+					'dragMode:',
+					getActiveDragMode(),
+				);
 				if (idx === null || idx >= columns.length) return;
 
 				const col = columns[idx];
@@ -197,7 +217,11 @@ export function ColumnFolderView({
 							isDir: Boolean(info?.isDirectory),
 						});
 
-						await window.electronAPI.invoke('copyItem', filePath, destPath, { overwrite: false });
+						await applyExplorerDrop(
+							filePath,
+							destPath,
+							getActiveDragMode() === 'move' ? 'move' : 'copy',
+						); /* drag=move, shift=copy; из Finder=copy */
 					} catch (error) {
 						console.error('❌ Ошибка при копировании внешнего файла:', filePath, error);
 					}
@@ -263,8 +287,6 @@ export function ColumnFolderView({
 			document.removeEventListener('mouseup', stopResizingColumn);
 		};
 	}, [resizingColumnIndex]);
-
-
 
 	// Auto-scroll to the rightmost column whenever a new one is added
 	useEffect(() => {
@@ -487,6 +509,7 @@ export function ColumnFolderView({
 							key={col.path}
 							sx={{ display: 'flex', position: 'relative', ...(isLast && { flex: 1, minWidth: minLastColumnWidth }) }}
 							onDragOver={(e: React.DragEvent) => {
+								if (isDraggingOut()) return;
 								if (!e.dataTransfer.types.includes('Files')) return;
 								e.preventDefault();
 								e.dataTransfer.dropEffect = 'copy';
@@ -498,6 +521,7 @@ export function ColumnFolderView({
 								}
 							}}
 							onDrop={async (e: React.DragEvent) => {
+								if (isDraggingOut()) return;
 								if (!e.dataTransfer.types.includes('Files')) return;
 								e.preventDefault();
 								setExternalDropIndex(null);
@@ -520,7 +544,9 @@ export function ColumnFolderView({
 										});
 
 										// Копируем в фоне
-										await window.electronAPI.invoke('copyItem', filePath, destPath, { overwrite: false });
+										// Внутренний дроп: move (просто drag) или copy (drag+Shift). Дроп из Finder
+										// (getActiveDragMode() === null) всегда копирует.
+										await applyExplorerDrop(filePath, destPath, getActiveDragMode() === 'move' ? 'move' : 'copy');
 									} catch (error) {
 										console.error('❌ Ошибка при копировании:', file.name, error);
 									}
@@ -528,13 +554,25 @@ export function ColumnFolderView({
 							}}
 						>
 							{/* Droppable Column */}
-							<DroppableColumn id={`column-${sourceType}-${i}`} path={col.path} source={sourceType} sx={isLast ? { flex: 1 } : undefined}>
+							<DroppableColumn
+								id={`column-${sourceType}-${i}`}
+								path={col.path}
+								source={sourceType}
+								sx={isLast ? { flex: 1 } : undefined}
+							>
 								<Box
 									id={`col-${sourceType}-${i}`}
+									style={
+										sourceType === focusedColumn && col.path === activeColumnPath
+											? { backgroundColor: 'rgba(255,255,255,0.025)' }
+											: undefined
+									}
 									sx={{
 										display: 'flex',
 										flexDirection: 'column',
-										...(isLast ? { flex: 1, minWidth: minLastColumnWidth } : { width, flexGrow: 0, flexShrink: 0, minWidth: width }),
+										...(isLast
+											? { flex: 1, minWidth: minLastColumnWidth }
+											: { width, flexGrow: 0, flexShrink: 0, minWidth: width }),
 										borderRight: isLast ? 'none' : `1px solid ${greyColor(50)}`,
 										overflow: 'hidden',
 										height: '100%',
@@ -549,6 +587,14 @@ export function ColumnFolderView({
 								>
 									<Box
 										onMouseDown={(e) => handleRbMouseDown(e, i)}
+										onClick={(e) => {
+											// Клик по ПУСТОМУ месту колонки → делаем её панель активной целью
+											// вставки (чтобы Cmd+V знал, куда). Клик по файлу/папке игнорируем —
+											// их onSelect (selectItem) и так активирует панель.
+											if ((e.target as HTMLElement).closest('.MuiListItem-root')) return;
+											useColumnFocus_store.getState().setFocusedColumn(sourceType);
+											useColumnView_Store.setState({ lastActiveInstance: sourceType, activeColumnPath: col.path });
+										}}
 										onContextMenu={(e) => {
 											// Показываем меню пустого места только если клик не попал на элемент списка
 											if ((e.target as HTMLElement).closest('.MuiListItem-root')) return;

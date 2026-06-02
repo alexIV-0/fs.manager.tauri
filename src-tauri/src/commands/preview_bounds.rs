@@ -29,22 +29,18 @@ const DEFAULT_BOUNDS: PreviewBounds = PreviewBounds {
     y: None,
 };
 
-/// Состояние preview-окна (не персистится): какой тип сейчас открыт, заблокирован ли
-/// размер от автоматических изменений, нужно ли центрировать при следующем resize.
+/// Рантайм-реестр каскада preview-окон (НЕ персистится). На каждый тип файла храним
+/// позицию (logical x,y) последнего заспавненного окна — это якорь для смещения
+/// следующего окна того же типа (+offset). Сбрасывается, когда закрывается последнее
+/// окно типа (см. on_preview_destroyed) — поэтому каскад не дрейфует между сессиями.
 pub struct PreviewBoundsState {
-    pub current_type: String,
-    pub current_file_path: Option<String>,
-    pub bounds_locked: bool,
-    pub should_center: bool,
+    pub type_last_spawn: HashMap<String, (f64, f64)>,
 }
 
 impl PreviewBoundsState {
     pub fn new() -> Self {
         Self {
-            current_type: "default".to_string(),
-            current_file_path: None,
-            bounds_locked: false,
-            should_center: false,
+            type_last_spawn: HashMap::new(),
         }
     }
 }

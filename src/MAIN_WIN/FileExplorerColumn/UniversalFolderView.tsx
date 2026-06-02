@@ -135,7 +135,8 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			e.preventDefault();
 			const cols = state.instances[type].columns;
 			if (cols.length === 0) return;
-			await pasteFromClipboardFs(cols[cols.length - 1].path);
+			const pasteTarget = state.activeColumnPath && cols.some((c) => c.path === state.activeColumnPath) ? state.activeColumnPath : cols[cols.length - 1].path;
+			await pasteFromClipboardFs(pasteTarget);
 		},
 	});
 

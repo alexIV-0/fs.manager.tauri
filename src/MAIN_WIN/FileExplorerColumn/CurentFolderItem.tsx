@@ -21,6 +21,7 @@ import {
 } from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
 interface CurentFolderItemProps {
 	name: string;

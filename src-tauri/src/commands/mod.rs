@@ -18,3 +18,4 @@ pub mod docs_commands;
 pub mod plugin_protocol;
 pub mod http_commands;
 pub mod process_utils;
+pub mod icon_commands;

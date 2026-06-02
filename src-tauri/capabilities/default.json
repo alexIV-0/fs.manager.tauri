@@ -27,6 +27,12 @@
 		"shell:default",
 		"clipboard-manager:allow-read-text",
 		"clipboard-manager:allow-write-text",
+		"clipboard:allow-read-files",
+		"clipboard:allow-write-files-uris",
+		"clipboard:allow-write-files",
+		"clipboard:allow-read-files-uris",
+		"clipboard:allow-has-files",
+		"drag:default",
 		"updater:default",
 		"process:default"
 	]

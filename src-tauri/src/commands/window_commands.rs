@@ -201,21 +201,37 @@ impl NodeWindowState {
     }
 }
 
-// Хранилище для последних данных Preview-окна (для handshake-перезапроса)
+// Реестр всех открытых preview-окон (мульти-инстанс). Ключ — label окна
+// ("preview-{type}-{n}"). Раньше было одно переиспользуемое окно "previewWin".
 pub struct PreviewWindowState {
-    pub last_data: Option<String>,
-    /// Соотношение сторон медиафайла (width / height). None — не установлено.
-    pub aspect_ratio: Option<f64>,
-    /// Физический размер окна, который мы сами задали для коррекции пропорций.
-    /// Используется чтобы пропустить Resized-событие, порождённое нашей же коррекцией.
-    pub last_corrected: Option<(u32, u32)>,
+    pub instances: std::collections::HashMap<String, PreviewInstance>,
+    /// Монотонный счётчик для генерации уникальных label'ов.
+    pub counter: u64,
+}
+
+pub struct PreviewInstance {
+    pub file_path: String,
+    /// Нормализованный тип файла (video/image/audio/text/...).
+    pub file_type: String,
+    /// JSON ({filePath, fileType}) для handshake-перезапроса (request_data).
+    pub last_data: String,
+    /// Первое (не каскадное) окно типа — задаёт «базу». Только оно восстанавливает
+    /// сохранённую позицию и пишет её в персистентный слот; каскадные — нет (без дрейфа).
+    pub is_primary: bool,
+    /// Центрировать при первом resize — если для типа нет сохранённой позиции.
+    pub should_center: bool,
+    /// Последняя снятая геометрия (viewport logical). Обновляется на resize/move/open-settle.
+    pub last_geometry: Option<crate::commands::preview_bounds::PreviewBounds>,
 }
 
 impl PreviewWindowState {
     pub fn new() -> Self {
-        Self { last_data: None, aspect_ratio: None, last_corrected: None }
+        Self { instances: std::collections::HashMap::new(), counter: 0 }
     }
 }
+
+/// Каскадный сдвиг нового окна того же типа (logical px).
+const PREVIEW_CASCADE_OFFSET: f64 = 30.0;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -414,137 +430,160 @@ pub async fn preview_open(
 
     let parsed: PreviewOpenData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
     println!("[Preview] Opening: {} (type={})", parsed.file_path, parsed.file_type);
-
     let next_type = pb::normalize_type(&parsed.file_type);
 
-    // Сохраняем data для handshake-перезапроса.
+    // 1) Тот же файл уже открыт в каком-то окне → фокусируем его, без дубля.
+    {
+        let existing_label = {
+            let st = state.lock().map_err(|e| e.to_string())?;
+            st.instances
+                .iter()
+                .find(|(_, inst)| inst.file_path == parsed.file_path)
+                .map(|(label, _)| label.clone())
+        };
+        if let Some(label) = existing_label {
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = win.unminimize();
+                win.show().map_err(|e| e.to_string())?;
+                win.set_focus().map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+        }
+    }
+
+    // 2) Новый инстанс — уникальный label "preview-{type}-{n}".
+    let label = {
+        let mut st = state.lock().map_err(|e| e.to_string())?;
+        st.counter += 1;
+        format!("preview-{}-{}", next_type, st.counter)
+    };
+
+    // 3) Базовый размер/позиция из сохранённого слота типа (любой ориентации).
+    let any_saved = pb::any_bounds_for_type(&app, &next_type);
+    let (init_w, init_h) = any_saved.as_ref().map(|b| (b.width, b.height)).unwrap_or((800.0, 600.0));
+    let base_pos: Option<(f64, f64)> = any_saved.as_ref().and_then(|b| match (b.x, b.y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    });
+
+    // 4) Позиция: первое окно типа → база; последующие → каскад от последнего спавна.
+    let open_count = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.instances.values().filter(|i| i.file_type == next_type).count()
+    };
+    let spawn_pos: Option<(f64, f64)> = if open_count == 0 {
+        base_pos
+    } else {
+        let last = {
+            let bs = bounds_state.lock().map_err(|e| e.to_string())?;
+            bs.type_last_spawn.get(&next_type).copied()
+        };
+        last.or(base_pos).map(|(x, y)| (x + PREVIEW_CASCADE_OFFSET, y + PREVIEW_CASCADE_OFFSET))
+    };
+    let should_center = spawn_pos.is_none();
+    let is_primary = open_count == 0;
+
+    // 5) Регистрируем инстанс + запоминаем якорь каскада типа.
     {
         let mut st = state.lock().map_err(|e| e.to_string())?;
-        st.last_data = Some(data.clone());
+        st.instances.insert(label.clone(), PreviewInstance {
+            file_path: parsed.file_path.clone(),
+            file_type: next_type.clone(),
+            last_data: data.clone(),
+            is_primary,
+            should_center,
+            last_geometry: None,
+        });
     }
-
-    // Окно уже существует — обновляем контент. preview_resize позже подберёт
-    // правильный размер/позицию по orientation-bucket'у новой записи.
-    if let Some(existing_win) = app.get_webview_window("previewWin") {
-        let prev_path = {
-            let bs = bounds_state.lock().map_err(|e| e.to_string())?;
-            bs.current_file_path.clone()
-        };
-
-        // Тот же файл — Space-toggle: закрываем окно.
-        if prev_path.as_deref() == Some(parsed.file_path.as_str()) {
-            let _ = existing_win.close();
-            return Ok(());
-        }
-
-        {
-            let mut bs = bounds_state.lock().map_err(|e| e.to_string())?;
-            bs.current_file_path = Some(parsed.file_path.clone());
-            bs.current_type = next_type.clone();
-            bs.should_center = false; // окно уже на экране — не центрируем
-        }
-
-        existing_win.show().map_err(|e| e.to_string())?;
-        existing_win.set_focus().map_err(|e| e.to_string())?;
-        existing_win
-            .emit_to("previewWin", "update-data", &data)
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    // Окна нет — создаём. Initial size берём из любого сохранённого bounds для
-    // этого типа (любой ориентации) — чтобы минимизировать визуальный flicker
-    // перед тем как preview_resize выставит точный размер под актуальную
-    // ориентацию видео.
-    let any_saved = pb::any_bounds_for_type(&app, &next_type);
-    let (init_w, init_h) = any_saved
-        .as_ref()
-        .map(|b| (b.width, b.height))
-        .unwrap_or((800.0, 600.0));
-
-    {
+    if let Some(pos) = spawn_pos {
         let mut bs = bounds_state.lock().map_err(|e| e.to_string())?;
-        bs.current_type = next_type.clone();
-        bs.current_file_path = Some(parsed.file_path.clone());
-        bs.should_center = any_saved.is_none();
+        bs.type_last_spawn.insert(next_type.clone(), pos);
     }
 
+    // 6) Создаём окно. preview_resize позже подгонит точный размер под ориентацию.
     let mut builder = WebviewWindowBuilder::new(
         &app,
-        "previewWin",
+        label.as_str(),
         WebviewUrl::App("previewWin.html".into()),
     )
     .title("fsManager — Preview")
     .inner_size(init_w, init_h)
-    .visible(true);
+    .visible(true)
+    .disable_drag_drop_handler();
 
-    if let Some(b) = &any_saved {
-        if let (Some(x), Some(y)) = (b.x, b.y) {
-            builder = builder.position(x, y);
-        }
+    if let Some((x, y)) = spawn_pos {
+        builder = builder.position(x, y);
     }
 
     let window = builder.build().map_err(|e| e.to_string())?;
 
-    // Отправляем данные после загрузки окна.
+    // Edit-меню (Cmd+C/V/X) — без него macOS не маршрутизирует буфер в WebView.
+    // Раньше его ставил boot-цикл для единого previewWin; теперь окна динамические,
+    // поэтому меню вешаем здесь, как в open_node_window.
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+        let _ = (|| -> Result<(), tauri::Error> {
+            let edit = Submenu::with_items(&app, "Edit", true, &[
+                &PredefinedMenuItem::undo(&app, None)?,
+                &PredefinedMenuItem::redo(&app, None)?,
+                &PredefinedMenuItem::separator(&app)?,
+                &PredefinedMenuItem::cut(&app, None)?,
+                &PredefinedMenuItem::copy(&app, None)?,
+                &PredefinedMenuItem::paste(&app, None)?,
+                &PredefinedMenuItem::select_all(&app, None)?,
+            ])?;
+            let menu = Menu::with_items(&app, &[&edit])?;
+            window.set_menu(menu)?;
+            Ok(())
+        })();
+    }
+
+    // Если база/каскад увели окно за пределы экрана — вернуть на экран.
+    if spawn_pos.is_some() {
+        crate::commands::window_state::ensure_on_screen(&window);
+    }
+
+    // 7) Данные после загрузки — строго в это окно (emit_to по его label).
     let data_clone = data.clone();
-    let app_clone = app.clone();
+    let app_loaded = app.clone();
+    let label_loaded = label.clone();
     window.once("tauri://loaded", move |_event| {
-        if let Some(win) = app_clone.get_webview_window("previewWin") {
-            let _ = win.emit_to("previewWin", "update-data", &data_clone);
+        if let Some(win) = app_loaded.get_webview_window(&label_loaded) {
+            let _ = win.emit_to(label_loaded.as_str(), "update-data", &data_clone);
         }
     });
 
-    // Resize/Move handler: сохраняем bounds под текущим типом и ставим lock.
-    // Это работает и для пользовательского ресайза, и для нашего setContentSize —
-    // в обоих случаях после первого вызова бунды зафиксированы.
-    let app_for_save = app.clone();
+    // 8) События окна: resize/move обновляют геометрию инстанса в памяти (на диск НЕ пишем);
+    //    destroyed убирает инстанс и пишет базу, если это было последнее окно типа.
+    let app_evt = app.clone();
+    let label_evt = label.clone();
+    let type_evt = next_type.clone();
     window.on_window_event(move |event| {
         match event {
-            tauri::WindowEvent::Resized(s) => {
-                // DEBUG: смотрим что реально применилось — это physical inner size окна
-                if let Some(win) = app_for_save.get_webview_window("previewWin") {
-                    let outer = win.outer_size().ok();
-                    let inner = win.inner_size().ok();
-                    let aspect = inner.as_ref().map(|i| i.width as f64 / i.height.max(1) as f64);
-                    println!(
-                        "[previewWin Resized] event.physical={}x{} | inner={:?} outer={:?} aspect={:?}",
-                        s.width, s.height, inner, outer, aspect
-                    );
-                }
-                save_current_bounds(&app_for_save);
+            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
+                update_instance_geometry(&app_evt, &label_evt);
             }
-            tauri::WindowEvent::Moved(_) => {
-                save_current_bounds(&app_for_save);
+            tauri::WindowEvent::Destroyed => {
+                on_preview_destroyed(&app_evt, &label_evt, &type_evt);
             }
             _ => {}
-        }
-    });
-
-    // Close handler: сбрасываем state preview_bounds, чтобы следующий preview_open
-    // пересоздал окно с восстановленными bounds.
-    let app_for_close = app.clone();
-    window.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::Destroyed) {
-            let bs = app_for_close.state::<Mutex<pb::PreviewBoundsState>>();
-            let _ = bs.lock().map(|mut guard| {
-                guard.current_file_path = None;
-                guard.bounds_locked = false;
-                guard.should_center = false;
-                // current_type оставляем — пригодится для следующего открытия
-            });
         }
     });
 
     Ok(())
 }
 
-/// Снимает bounds окна (inner size + outer position в logical px) и сохраняет
-/// под ключом "{type}_{orientation}" — для каждой ориентации свои размеры.
-fn save_current_bounds(app: &tauri::AppHandle) {
+/// Снимает текущую геометрию окна (VIEWPORT logical, с поправкой WEBVIEW_TOP_INSET).
+/// Вызывается при open-settle / перемещении / ресайзе. Делает три вещи:
+///   1) кладёт геометрию в память инстанса;
+///   2) двигает якорь каскада типа за реальной позицией (тогда следующее окно встаёт
+///      со сдвигом от актуального места, а не стопкой — даже до появления базы);
+///   3) для ПЕРВИЧНОГО окна — персистит базу в слот "{type}_{orientation}".
+fn update_instance_geometry(app: &tauri::AppHandle, label: &str) {
     use crate::commands::preview_bounds as pb;
 
-    let Some(win) = app.get_webview_window("previewWin") else { return };
+    let Some(win) = app.get_webview_window(label) else { return };
     let Ok(inner) = win.inner_size() else { return };
     let pos = win.outer_position().ok();
     let scale = win.scale_factor().unwrap_or(1.0);
@@ -554,12 +593,9 @@ fn save_current_bounds(app: &tauri::AppHandle) {
     // Сохраняем размер VIEWPORT (а не NSWindow content). preview_resize при
     // восстановлении добавит обратно WEBVIEW_TOP_INSET.
     let logical_h = nswindow_logical_h - WEBVIEW_TOP_INSET;
-
     if logical_w < 1.0 || logical_h < 1.0 {
         return;
     }
-
-    let aspect = logical_w / logical_h;
 
     let bounds = pb::PreviewBounds {
         width: logical_w,
@@ -568,21 +604,65 @@ fn save_current_bounds(app: &tauri::AppHandle) {
         y: pos.map(|p| p.y as f64 / scale),
     };
 
-    let current_type = {
-        let bs = app.state::<Mutex<pb::PreviewBoundsState>>();
-        let result = bs.lock().ok().map(|g| g.current_type.clone());
-        match result {
-            Some(t) => t,
+    // 1) Память инстанса + забираем тип и is_primary.
+    let (file_type, is_primary) = {
+        let st = app.state::<Mutex<PreviewWindowState>>();
+        let mut guard = match st.lock() { Ok(g) => g, Err(_) => return };
+        match guard.instances.get_mut(label) {
+            Some(inst) => {
+                inst.last_geometry = Some(bounds.clone());
+                (inst.file_type.clone(), inst.is_primary)
+            }
             None => return,
         }
     };
 
-    let key = pb::make_key(&current_type, aspect);
-    let _ = pb::save_bounds(app, &key, bounds);
-
-    {
+    // 2) Якорь каскада типа (рантайм, сбрасывается на закрытии последнего окна типа).
+    if let (Some(x), Some(y)) = (bounds.x, bounds.y) {
         let bs = app.state::<Mutex<pb::PreviewBoundsState>>();
-        let _ = bs.lock().map(|mut g| { g.bounds_locked = true; });
+        let _ = bs.lock().map(|mut g| { g.type_last_spawn.insert(file_type.clone(), (x, y)); });
+    }
+
+    // 3) Персист базы — только первичное окно (каскадные позицию не пишут → нет дрейфа).
+    if is_primary {
+        let aspect = bounds.width / bounds.height.max(1.0);
+        let key = pb::make_key(&file_type, aspect);
+        let _ = pb::save_bounds(app, &key, bounds);
+    }
+}
+
+/// Закрытие preview-окна: убираем инстанс из реестра. Если это было ПОСЛЕДНЕЕ окно
+/// своего типа — пишем его геометрию в персистентный слот "{type}_{orientation}"
+/// (вариант «база» — без каскадного дрейфа) и сбрасываем якорь каскада типа.
+fn on_preview_destroyed(app: &tauri::AppHandle, label: &str, file_type: &str) {
+    use crate::commands::preview_bounds as pb;
+
+    let (geometry, is_primary, remaining_of_type) = {
+        let st = app.state::<Mutex<PreviewWindowState>>();
+        let mut guard = match st.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let removed = guard.instances.remove(label);
+        let is_primary = removed.as_ref().map(|i| i.is_primary).unwrap_or(false);
+        let geometry = removed.and_then(|i| i.last_geometry);
+        let remaining = guard.instances.values().filter(|i| i.file_type == file_type).count();
+        (geometry, is_primary, remaining)
+    };
+
+    // Базу пишем только при закрытии ПЕРВИЧНОГО окна (каскадные позицию не пишут → без дрейфа).
+    if is_primary {
+        if let Some(b) = geometry {
+            let aspect = b.width / b.height.max(1.0);
+            let key = pb::make_key(file_type, aspect);
+            let _ = pb::save_bounds(app, &key, b);
+        }
+    }
+
+    // Якорь каскада типа сбрасываем, когда закрылось последнее окно типа.
+    if remaining_of_type == 0 {
+        let bs = app.state::<Mutex<pb::PreviewBoundsState>>();
+        let _ = bs.lock().map(|mut g| { g.type_last_spawn.remove(file_type); });
     }
 }
 
@@ -619,21 +699,28 @@ pub fn preview_delete_temp(_file_path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn preview_resize(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     opts: crate::commands::fs_commands::PreviewResizeOpts,
-    _state: tauri::State<'_, Mutex<PreviewWindowState>>,
-    bounds_state: tauri::State<'_, Mutex<crate::commands::preview_bounds::PreviewBoundsState>>,
+    state: tauri::State<'_, Mutex<PreviewWindowState>>,
+    _bounds_state: tauri::State<'_, Mutex<crate::commands::preview_bounds::PreviewBoundsState>>,
 ) -> Result<(), String> {
     use crate::commands::preview_bounds as pb;
 
-    let Some(preview_win) = app.get_webview_window("previewWin") else {
-        return Ok(());
+    // Окно-вызыватель инжектит Tauri (мульти-инстанс: ресайзим именно то окно,
+    // из которого пришёл вызов, а не единственное "previewWin").
+    let label = window.label().to_string();
+    let preview_win = window;
+
+    // Тип и is_primary берём из инстанса (раньше был единый current_type).
+    let (current_type, is_primary) = {
+        let st = state.lock().map_err(|e| e.to_string())?;
+        match st.instances.get(&label) {
+            Some(inst) => (inst.file_type.clone(), inst.is_primary),
+            None => return Ok(()), // окно не наше / уже закрыто
+        }
     };
 
     let new_aspect = opts.width / opts.height.max(1.0);
-    let current_type = {
-        let bs = bounds_state.lock().map_err(|e| e.to_string())?;
-        bs.current_type.clone()
-    };
     let key = pb::make_key(&current_type, new_aspect);
     let (saved, has_saved) = pb::bounds_for_type(&app, &key);
 
@@ -692,12 +779,16 @@ pub async fn preview_resize(
         target_w, nswindow_h, after_inner, target_w, target_h
     );
 
-    // 2) Позиция — только если есть сохранённая для этой ориентации.
-    if let (Some(x), Some(y)) = (saved.x, saved.y) {
-        let _ = preview_win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
-            x,
-            y,
-        }));
+    // 2) Позиция — на сохранённую базу возвращаем ТОЛЬКО первичное окно. Каскадные
+    //    сохраняют свой сдвиг (иначе после загрузки медиа они бы «прыгали» на базу
+    //    и сваливались в стопку — это и был баг «второе окно в том же месте»).
+    if is_primary {
+        if let (Some(x), Some(y)) = (saved.x, saved.y) {
+            let _ = preview_win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+                x,
+                y,
+            }));
+        }
     }
 
     // 3) Aspect-constraint (всегда). На macOS — нативный setContentAspectRatio:.
@@ -731,14 +822,18 @@ pub async fn preview_resize(
         }
     }
 
-    // 4) Центрируем один раз если нет сохранённой позиции и стоит флаг.
+    // 4) Центрируем один раз, если у инстанса стоит should_center и нет сохранённой позиции.
     let should_center = {
-        let bs = bounds_state.lock().map_err(|e| e.to_string())?;
-        bs.should_center && !has_saved
+        let st = state.lock().map_err(|e| e.to_string())?;
+        st.instances.get(&label).map(|i| i.should_center).unwrap_or(false) && !has_saved
     };
     if should_center {
         let _ = preview_win.center();
-        let _ = bounds_state.lock().map(|mut bs| { bs.should_center = false; });
+        if let Ok(mut st) = state.lock() {
+            if let Some(inst) = st.instances.get_mut(&label) {
+                inst.should_center = false;
+            }
+        }
     }
 
     Ok(())
@@ -1503,10 +1598,16 @@ pub fn request_data(
     let label = webview.label().to_string();
     println!("[request_data] called from webview '{}'", label);
 
-    let data = match label.as_str() {
-        "nodeWin" => node_state.lock().ok().and_then(|s| s.last_data.clone()),
-        "previewWin" => preview_state.lock().ok().and_then(|s| s.last_data.clone()),
-        _ => None,
+    let data = if label == "nodeWin" {
+        node_state.lock().ok().and_then(|s| s.last_data.clone())
+    } else if label.starts_with("preview-") {
+        // Мульти-инстанс: каждый preview-{type}-{n} отдаёт last_data своего инстанса.
+        preview_state
+            .lock()
+            .ok()
+            .and_then(|s| s.instances.get(&label).map(|i| i.last_data.clone()))
+    } else {
+        None
     };
 
     if let Some(d) = data {
