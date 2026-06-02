@@ -1,4 +1,5 @@
 import { greyColor, defGray } from '@/Store/Color/grayColor';
+import { commands, unwrap } from '@/Utils/specta';
 import { PatternStore } from '@/Store/MainWin/pathPattern_store';
 import { IconButton, ListItem } from '@mui/material';
 import { Trash2, GripVertical } from 'lucide-react';
@@ -75,9 +76,7 @@ export function CustomSettinsElement({
 			const next = Array.isArray(val) ? val : [val];
 
 			if (next.includes(customFolder)) {
-				const singleFolderPath = await window.electronAPI.invoke('selectFolders', {
-					multiSelect: false,
-				});
+				const singleFolderPath = unwrap(await commands.selectFolders({ multiSelect: false }));
 				if (Array.isArray(singleFolderPath) && singleFolderPath.length > 0) {
 					setModPath(singleFolderPath);
 					store.updatePatternElementPath(id, singleFolderPath);
@@ -86,9 +85,7 @@ export function CustomSettinsElement({
 			}
 
 			if (next.includes(customFile)) {
-				const singleFilePath = await window.electronAPI.invoke('selectFiles', {
-					multiSelect: false,
-				});
+				const singleFilePath = unwrap(await commands.selectFiles({ multiSelect: false }));
 				if (Array.isArray(singleFilePath) && singleFilePath.length > 0) {
 					setModPath(singleFilePath);
 					store.updatePatternElementPath(id, singleFilePath);

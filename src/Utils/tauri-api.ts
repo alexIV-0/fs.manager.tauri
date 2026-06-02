@@ -98,17 +98,9 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	sendNodeDone: (nodeId, output) => ({ nodeId, output }),
 	sendNodeError: (nodeId, message) => ({ nodeId, message }),
 	sendProcessComplete: () => ({}),
-	// Dialog
-	selectFolders: (options?) => ({ ...(options ? { options } : {}) }),
-	selectFiles: (options?) => ({ ...(options ? { options } : {}) }),
-	copyToClipboard: (path) => ({ path }),
-	showInFolder: (path) => ({ path }),
-	openFileWithDefaultApp: (path) => ({ path }),
-	createFolder: (path) => ({ path }),
-	renameFile: (oldPath, newPath) => ({ oldPath, newPath }),
-	getNodeObjFromFile: (path) => ({ path }),
-	saveFlowToOptionsFolder: (path, flow) => ({ path, flow }),
-	getPathsFromFiles: (files) => ({ files }),
+	// Dialog: selectFolders/selectFiles/copyToClipboard/showInFolder/openFileWithDefaultApp/
+	// createFolder/renameFile/getNodeObjFromFile/saveFlowToOptionsFolder/getPathsFromFiles
+	// мигрированы на tauri-specta (commands.* + unwrap) — мапперы не нужны.
 	requestDataPreview: () => ({}),
 	openDevTools: () => ({}),
 	openUrl: (url) => ({ url }),
@@ -466,18 +458,8 @@ export const tauriAPI = {
 	off: tauriOff,
 	send: tauriSend,
 
-	// Dialog & Shell
-	selectFolders: (options?: { multiSelect?: boolean }) => tauriInvoke<string[]>('selectFolders', options),
-	selectFiles: (options?: { multiSelect?: boolean; filters?: any[] }) => tauriInvoke<string[]>('selectFiles', options),
-	copyToClipboard: (path: string) => tauriInvoke<void>('copyToClipboard', path),
-	showInFolder: (path: string) => tauriInvoke<void>('showInFolder', path),
-	openFileWithDefaultApp: (path: string) => tauriInvoke<void>('openFileWithDefaultApp', path),
-	createFolder: (path: string) => tauriInvoke<void>('createFolder', path),
-	renameFile: (oldPath: string, newPath: string) => tauriInvoke<boolean>('renameFile', oldPath, newPath),
-	getNodeObjFromFile: (path: string) => tauriInvoke<any>('getNodeObjFromFile', path),
-	saveFlowToOptionsFolder: (path: string, flow: any) => tauriInvoke<any>('saveFlowToOptionsFolder', path, flow),
-	getPathsFromFiles: (_files: string[]) => tauriInvoke<string[]>('getPathsFromFiles', _files),
-	requestDataFromMainWindow: () => tauriInvoke<void>('requestDataPreview'),
+	// Dialog & Shell: мигрированы на tauri-specta (commands.* + unwrap из @/Utils/specta).
+	// openDevTools оставлен — это window_commands.open_devtools (отдельная команда, не dialog).
 	openDevTools: () => tauriInvoke<void>('open_devtools'),
 
 	// Логирование

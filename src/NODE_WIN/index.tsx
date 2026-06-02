@@ -1,5 +1,6 @@
 // NodeApp.tsx
 import { usePathStore } from '@/Store/Node/usePathStore';
+import { commands, unwrap } from '@/Utils/specta';
 import { useSavedState } from '@/Store/Node/useSavedState';
 import { rebuildColorTypes } from '@/Store/Color/buildColorTypes';
 import ThemeWrapper from '@/theme/ThemeWrapper';
@@ -121,9 +122,9 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 			// внутри nativeFs создаёт все три параллельно через tokio thread pool.
 			const folders = ['IN', 'options', 'OUT'].map((f) => joinPath(path, f));
 			await window.electronAPI.invoke('testAndCreateFolders', folders);
-			const newState = await window.electronAPI.invoke('getNodeObjFromFile', path);
+			const newState = unwrap(await commands.getNodeObjFromFile(path));
 			if (cancelled) return;
-			setSavedState(newState as SavedState);
+			setSavedState(newState as unknown as SavedState);
 		};
 
 		init();

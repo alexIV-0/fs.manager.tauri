@@ -15,7 +15,7 @@ import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimC
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
-import { commands } from '@/Utils/specta';
+import { commands, unwrap } from '@/Utils/specta';
 import { basename } from '@/Utils/path';
 
 interface UniversalFolderViewProps {
@@ -246,9 +246,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 	// ==============================
 	const handleSelectFolder = async () => {
 		try {
-			const folderPaths = await window.electronAPI.invoke('selectFolders', {
-				multiSelect: false,
-			});
+			const folderPaths = unwrap(await commands.selectFolders({ multiSelect: false }));
 			if (folderPaths && Array.isArray(folderPaths) && folderPaths.length > 0) {
 				localFolders_stor.getState().updateLocalFolder(folderPaths[0]);
 			}

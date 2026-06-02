@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, Button, Checkbox, IconButton, MenuItem, Select, TextField, Typography } from '@mui/material';
 import { AlertTriangle, CheckCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
@@ -196,9 +197,7 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 		let next = value;
 		if (value.includes(CUSTOM_FOLDER)) {
 			try {
-				const res: any = await window.electronAPI.invoke('selectFolders', {
-					multiSelect: false,
-				});
+				const res = unwrap(await commands.selectFolders({ multiSelect: false }));
 				const picked = Array.isArray(res) ? res[0] : res;
 				next = value.map((v) => (v === CUSTOM_FOLDER ? picked : v)).filter((v): v is string => typeof v === 'string' && v.length > 0);
 			} catch {

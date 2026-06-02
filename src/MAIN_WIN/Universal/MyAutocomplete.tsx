@@ -1,4 +1,5 @@
 import { IconButton, List, ListItem, ListItemButton, Paper, Popper, TextField } from '@mui/material';
+import { commands, unwrap } from '@/Utils/specta';
 import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChipAutocompleteContainer from '@/NODE_WIN/nodes/properties/ChipAutocompleteContainer';
@@ -167,9 +168,7 @@ function MyAutocomplete(props: MyAutocompleteProps) {
 
 	const handleSelectOption = async (replacement: string, commit = false) => {
 		if (replacement === 'Custom Folder...') {
-			const singleFolderPath = await window.electronAPI.invoke('selectFolders', {
-				multiSelect: false,
-			});
+			const singleFolderPath = unwrap(await commands.selectFolders({ multiSelect: false }));
 			if (Array.isArray(singleFolderPath) && singleFolderPath.length > 0) {
 				singleFolderPath.forEach((path) => addChip(path));
 			}

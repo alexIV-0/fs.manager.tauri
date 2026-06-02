@@ -153,8 +153,17 @@ tauri-specta = { version = "=2.0.0-rc.x", features = ["derive", "typescript"] }
 > `unwrap()` (`src/Utils/specta.ts`) остаётся для будущих Result-модулей. cargo+tsc зелёные.
 > Ручной тест в приложении ✅: переименование файла, превью, запуск обработки — всё работает.
 
-Порядок по app-call-sites (от простого к сложному): ~~path-утилиты (→ pure TS, не specta)~~ → dialog (selectFolders/Files,
-shell:openPath) → preview (preview:*) → fs_commands (getFileInfo/getSomeFromFolder/copyItem/moveItem/…) →
+> **✅ dialog — ВЫПОЛНЕНО (первый «ловушечный» модуль, A-вариант).** Реальный код был в camel-файле,
+> snake — мёртвые заглушки. Сделали честно: `dialog_commands_camel.rs` УДАЛЁН целиком; реальные
+> реализации перенесены в `dialog_commands.rs` под snake-именами + `#[specta::specta]`; 18 call-sites
+> в 11 файлах → `unwrap(await commands.*)` (первое реальное применение unwrap на Result-командах);
+> мёртвый стаб-файл перезаписан; argMappers + мёртвые типизированные `tauriAPI`-методы удалены.
+> Нюансы: `getNodeObjFromFile` → `JsonValue` (каст `as unknown as SavedState`); `flow` в
+> `saveFlowToOptionsFolder` → `as any` (динамический JSON). `openDevTools` оставлен (это
+> window_commands.open_devtools, не dialog). **Это снесло ОДИН из двух файлов-обёрток (цель плана).**
+> cargo+tsc зелёные; ручной тест — выбор папок/файлов (была ловушка!), save/load flow, clipboard.
+
+Порядок по app-call-sites (от простого к сложному): ~~path-утилиты (→ pure TS, не specta)~~ → ~~dialog~~ → preview (preview:*) → fs_commands (getFileInfo/getSomeFromFolder/copyItem/moveItem/…) →
 processing → window_commands → log-window → settings. **http/icon/ae/exec — отдельно/в конце или вместе
 с плагинами: у них нет app-вызовов** (зовут только плагины через `_template/tauri.ts`). Для каждого модуля:
 - [ ] Найти call-sites: `grep -rn "electronAPI.invoke('<имена модуля>'" src/`.
@@ -162,6 +171,18 @@ processing → window_commands → log-window → settings. **http/icon/ae/exec 
 - [ ] Удалить отработавшие camel-обёртки + алиасы (как только нет легаси-вызовов).
 - [ ] `tsc` + точечный тест.
 Каждый модуль = отдельный коммит/PR (легко откатить).
+
+> ⚠️⚠️ **ОБЯЗАТЕЛЬНЫЙ шаг 0 для каждого модуля — проверить, ГДЕ реальная реализация (snake или camel).**
+> Допущение «snake = реальный код» НЕ всегда верно:
+> - `camelcase_wrappers.rs` (path, fs_watch, fs_commands, …) — ИСТИННЫЕ тонкие обёртки: camel зовёт snake.
+>   Здесь snake real → план работает как есть.
+> - **`dialog_commands_camel.rs` — ПЕРЕВЁРНУТО:** camel-функции содержат РЕАЛЬНЫЕ реализации
+>   (`selectFolders`/`selectFiles` открывают нативный диалог через `tauri_plugin_dialog`;
+>   `saveFlowToOptionsFolder`/`getNodeObjFromFile` пишут/читают `{path}/options/options.json`),
+>   а snake-двойники в `dialog_commands.rs` — МЁРТВЫЕ ЗАГЛУШКИ (`select_folders` → `Ok(vec![])`,
+>   не зарегистрированы в `generate_handler!`, не используют dialog-плагин). Слепая миграция на
+>   snake СЛОМАЛА бы выбор папок/файлов и записала flow не туда.
+> Проверка: `grep -nE "^\s+<cmd>,?\s*$" lib.rs` (что зарегистрировано) + сравнить тела snake vs camel.
 
 ### Stage Events (опционально, после команд)
 - [ ] Типизировать события (`processing-event`, `update-data`, `give-data`, лог-события) через

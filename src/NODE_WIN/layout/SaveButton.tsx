@@ -1,4 +1,5 @@
 import { usePathStore } from '@/Store/Node/usePathStore';
+import { commands, unwrap } from '@/Utils/specta';
 import { useSavedState } from '@/Store/Node/useSavedState';
 import { Button } from '@mui/material';
 import { useEdges, useNodes, useReactFlow, type Edge, type Node } from '@xyflow/react';
@@ -101,7 +102,7 @@ function SaveButton() {
 	const handleSaveFlow = useCallback(async () => {
 		setIsSaving(true);
 		const flow = reactFlow.toObject();
-		await window.electronAPI.invoke('saveFlowToOptionsFolder', path, flow);
+		unwrap(await commands.saveFlowToOptionsFolder(path, flow as any));
 		setSavedSig({
 			struct: structSig(flow.nodes, flow.edges),
 			layout: layoutSig(flow.nodes),

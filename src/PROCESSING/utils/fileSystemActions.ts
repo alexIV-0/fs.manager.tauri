@@ -4,6 +4,7 @@ import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 import clipboard from 'tauri-plugin-clipboard-api';
 import { basename, dirname } from '@/Utils/path';
+import { commands, unwrap } from '@/Utils/specta';
 
 // ── Определяем тип инстанса по пути ────────────────────────────────────────
 // Сначала пытаемся понять, в какой панели реально открыт путь — сравниваем с
@@ -46,7 +47,7 @@ export async function deleteItem(path: string): Promise<void> {
 // ── Копировать путь в буфер ─────────────────────────────────────────────────
 export async function copyPath(path: string): Promise<void> {
 	try {
-		await window.electronAPI.invoke('copyToClipboard', path);
+		unwrap(await commands.copyToClipboard(path));
 	} catch (err) {
 		console.error('copyPath failed:', err);
 	}
@@ -55,7 +56,7 @@ export async function copyPath(path: string): Promise<void> {
 // ── Показать в Finder / Explorer ────────────────────────────────────────────
 export async function showInFinder(path: string): Promise<void> {
 	try {
-		await window.electronAPI.invoke('showInFolder', path);
+		unwrap(await commands.showInFolder(path));
 	} catch (err) {
 		console.error('showInFinder failed:', err);
 	}
@@ -64,7 +65,7 @@ export async function showInFinder(path: string): Promise<void> {
 // ── Открыть файл дефолтным приложением ─────────────────────────────────────
 export async function openFile(path: string): Promise<void> {
 	try {
-		await window.electronAPI.invoke('openFileWithDefaultApp', path);
+		unwrap(await commands.openFileWithDefaultApp(path));
 	} catch (err) {
 		console.error('openFile failed:', err);
 	}
@@ -99,7 +100,7 @@ export async function renameFile(
 	onSuccess?: (oldName: string, newName: string) => void,
 ): Promise<void> {
 	try {
-		const success = await window.electronAPI.invoke('renameFile', oldPath, newPath);
+		const success = unwrap(await commands.renameFile(oldPath, newPath));
 		if (!success) return;
 
 		const parentPath = dirname(oldPath);
@@ -119,7 +120,7 @@ export async function renameFile(
 export async function createFolder(parentPath: string, folderName = 'Новая папка'): Promise<void> {
 	try {
 		const newFolderPath = joinPath(parentPath, folderName);
-		await window.electronAPI.invoke('createFolder', newFolderPath);
+		unwrap(await commands.createFolder(newFolderPath));
 
 		const instanceType = getInstanceType(parentPath);
 		useColumnView_Store.getState().refreshAffectedColumns(instanceType, [parentPath]);

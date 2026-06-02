@@ -1,4 +1,5 @@
 import { AutocompletePropertyControlProps, Property } from '@/NODE_WIN/definitions/types';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, IconButton, List, ListItem, ListItemButton, Paper, Popper, Stack, TextField, Typography } from '@mui/material';
 import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -175,9 +176,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 		// Канонический формат из PluginBuilder (SPECIAL_OPTIONS) — без пробела: 'CustomFolder...'.
 		// Пробельную форму оставляем для совместимости со старыми конфигами.
 		if (replacement === 'CustomFolder...' || replacement === 'Custom Folder...') {
-			const singleFolderPath = await window.electronAPI.invoke('selectFolders', {
-				multiSelect: false,
-			});
+			const singleFolderPath = unwrap(await commands.selectFolders({ multiSelect: false }));
 			if (Array.isArray(singleFolderPath) && singleFolderPath.length > 0) {
 				// Добавляем выбранную папку как чип
 				singleFolderPath.forEach((path) => addChip(path));
@@ -188,9 +187,7 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 		}
 
 		if (replacement === 'CustomFile...' || replacement === 'Custom File...') {
-			const singleFilePath = await window.electronAPI.invoke('selectFiles', {
-				multiSelect: false,
-			});
+			const singleFilePath = unwrap(await commands.selectFiles({ multiSelect: false }));
 			if (Array.isArray(singleFilePath) && singleFilePath.length > 0) {
 				// Добавляем выбранный файл как чип
 				singleFilePath.forEach((path) => addChip(path));
