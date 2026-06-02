@@ -16,14 +16,14 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 use super::process_utils::HiddenConsole;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct AEResult {
     pub success: bool,
     pub data: Option<serde_json::Value>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 pub struct RunScriptInAEArgs {
     /// Путь к исполняемому файлу AE (aerender или After Effects.app)
     pub ae_path: String,
@@ -42,6 +42,7 @@ pub struct RunScriptInAEArgs {
 // ==================== COMMAND ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn run_script_in_ae(args: RunScriptInAEArgs) -> Result<AEResult, String> {
     let temp_dir = args
         .temp_dir
@@ -89,6 +90,7 @@ pub fn run_script_in_ae(args: RunScriptInAEArgs) -> Result<AEResult, String> {
 
 /// Tauri-команда: просто запустить AE с готовым jsx-файлом (без ожидания результата)
 #[tauri::command]
+#[specta::specta]
 pub fn launch_ae_with_script(ae_path: String, script_path: String) -> Result<(), String> {
     launch_in_ae(&ae_path, Path::new(&script_path))
 }
@@ -114,9 +116,15 @@ fn build_script(
     let lock_str = lock_path.to_string_lossy().replace('\\', "/");
     let result_str = result_path.to_string_lossy().replace('\\', "/");
 
-    // Заменяем первый вызов вида `funcName(inObj);` на обвязку
-    let re_call = regex_find_func_call(&with_args);
-    if let Some((func_name, call_range)) = re_call {
+    // Билд (jsx-builder.js) помечает вызов entry-функции маркером AE_ENTRY_MARKER:
+    //   /* @AE_ENTRY */
+    //   myFn();
+    // Находим этот вызов и заменяем его на lock/result-обвязку. Само выражение вызова
+    // подставляется ДОСЛОВНО — по умолчанию `name()` (функция сама читает свой
+    // локальный `var inObj`, который мы уже подменили выше), но если в вызове есть
+    // аргументы — они сохраняются.
+    let re_call = find_entry_call(&with_args);
+    if let Some((call_expr, call_range)) = re_call {
         let wrapper = format!(
             r#"
 var __lock__ = new File("{lock}");
@@ -125,7 +133,7 @@ __lock__.write("working");
 __lock__.close();
 
 try {{
-    var __result__ = {func}(inObj);
+    var __result__ = {call};
     var __rf__ = new File("{result}");
     __rf__.open("w");
     __rf__.write(JSON.stringify({{ success: true, data: __result__ }}));
@@ -141,7 +149,7 @@ __lock__.remove();
 "#,
             lock = lock_str,
             result = result_str,
-            func = func_name,
+            call = call_expr,
         );
 
         let mut result = with_args.clone();
@@ -149,32 +157,39 @@ __lock__.remove();
         return result;
     }
 
-    // Если паттерн не найден — добавляем обвязку в конец
+    // Если маркер не найден — добавляем обвязку в конец
     format!(
-        "{}\n// [ae_commands.rs]: could not find function call pattern\n",
+        "{}\n// [ae_commands.rs]: AE_ENTRY marker not found — script may not run\n",
         with_args
     )
 }
 
-/// Простой поиск паттерна `word(inObj);` — возвращает имя функции и диапазон замены.
-fn regex_find_func_call(script: &str) -> Option<(String, std::ops::Range<usize>)> {
-    let pattern = "(inObj);";
-    let pos = script.find(pattern)?;
+/// Маркер, которым jsx-builder.js помечает вызов entry-функции.
+const AE_ENTRY_MARKER: &str = "/* @AE_ENTRY */";
 
-    // Ищем назад имя функции (alphanumeric + _)
-    let before = &script[..pos];
-    let func_start = before
-        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+/// Находит вызов entry-функции, помеченный маркером AE_ENTRY_MARKER, и возвращает
+/// само выражение вызова (`name()` или `name(args...)` — как написал билд) и диапазон
+/// ОТ маркера ДО `;` включительно. Весь диапазон заменяется на lock/result-обвязку,
+/// а выражение вызова подставляется как есть — аргументы сохраняются.
+/// (Ограничение: аргументы вызова не должны содержать `;`.)
+fn find_entry_call(script: &str) -> Option<(String, std::ops::Range<usize>)> {
+    let marker_pos = script.find(AE_ENTRY_MARKER)?;
+    let after = marker_pos + AE_ENTRY_MARKER.len();
 
-    let func_name = before[func_start..].to_string();
-    if func_name.is_empty() {
+    // Начало выражения вызова — первый непробельный символ после маркера
+    let rel_call_start = script[after..].find(|c: char| !c.is_whitespace())?;
+    let call_start = after + rel_call_start;
+
+    // Конец вызова — первая `;` после него
+    let rel_semi = script[call_start..].find(';')?;
+    let semi_pos = call_start + rel_semi;
+
+    let call_expr = script[call_start..semi_pos].trim().to_string();
+    if call_expr.is_empty() {
         return None;
     }
 
-    let range_end = pos + pattern.len();
-    Some((func_name, func_start..range_end))
+    Some((call_expr, marker_pos..(semi_pos + 1)))
 }
 
 /// Запускает After Effects с переданным jsx-скриптом.

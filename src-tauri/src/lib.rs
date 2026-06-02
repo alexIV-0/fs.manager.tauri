@@ -28,8 +28,52 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, Submenu, PredefinedMenuItem};
 
+/// Specta-builder для генерации типобезопасных TS-биндингов (стадия «export-only»).
+///
+/// Содержит ТОЛЬКО snake-реализации (НЕ camel-обёртки) — см. SPECTA_MIGRATION_PLAN.md §4.
+/// `generate_handler!` ниже пока остаётся ЕДИНСТВЕННЫМ источником истины для рантайма;
+/// этот билдер НЕ монтируется в `tauri::Builder` — используется исключительно для
+/// `export()` в debug-сборке. Поэтому коллизий имён в рантайме нет, поведение не меняется.
+///
+/// Пилот миграции: модуль `ae_commands` (2 команды). Остальные модули добавляются
+/// в `collect_commands!` по мере миграции.
+#[cfg(debug_assertions)]
+fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
+    tauri_specta::Builder::<tauri::Wry>::new()
+        .commands(tauri_specta::collect_commands![
+            run_script_in_ae,
+            launch_ae_with_script,
+            // fs watcher (мигрирован Stage 1 — call-sites на commands.*, camel-обёртки удалены)
+            fs_watch_start,
+            fs_watch_stop,
+        ])
+}
+
+/// Экспортирует `src/bindings.ts` из specta-билдера.
+///
+/// `bigint(Number)` — обязателен: по умолчанию specta-typescript падает на `u64`/`i64`/
+/// `usize` (`BigIntForbidden`), т.к. JS-число теряет точность за пределами 2^53. В нашем
+/// коде эти поля (таймауты, размеры, mtime) и так ходят как обычные `number` в JS —
+/// `Number` сохраняет это поведение. Конфиг тут единый, чтобы dev-экспорт (`run()`) и
+/// headless-тест не разъехались.
+#[cfg(debug_assertions)]
+fn export_specta_bindings() {
+    specta_builder()
+        .export(
+            specta_typescript::Typescript::default()
+                .bigint(specta_typescript::BigIntExportBehavior::Number),
+            "../src/bindings.ts",
+        )
+        .expect("Failed to export specta TS bindings");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Export-only: в debug пересобираем src/bindings.ts из specta-билдера.
+    // generate_handler! НЕ трогаем — он остаётся invoke_handler'ом приложения.
+    #[cfg(debug_assertions)]
+    export_specta_bindings();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
@@ -283,8 +327,6 @@ pub fn run() {
             fontsGetList,
             fontsLoadOne,
             shellOpenPath,
-            fsWatchStart,
-            fsWatchStop,
             previewResize,
             previewOpen,
             openNodeWindow,
@@ -440,4 +482,14 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod specta_export_tests {
+    /// Генерация `src/bindings.ts` без запуска GUI: `cargo test export_bindings`.
+    /// Зеркалит debug-экспорт из `run()`, но запускается headless (в CI/без дисплея).
+    #[test]
+    fn export_bindings() {
+        super::export_specta_bindings();
+    }
 }

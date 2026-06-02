@@ -18,6 +18,7 @@ impl WatcherState {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn fs_watch_start(
     folder_path: String,
     app: tauri::AppHandle,
@@ -58,6 +59,7 @@ pub fn fs_watch_start(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn fs_watch_stop(
     folder_path: String,
     state: tauri::State<Mutex<WatcherState>>,

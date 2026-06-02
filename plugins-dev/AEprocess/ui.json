@@ -52,6 +52,19 @@
 				"isOutput": true,
 				"outputType": "array",
 				"required": false
+			},
+			{
+				"id": "maxWaitTime",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Max AE work time",
+					"tooltip": "Выставляем максимально возможное время работы After Effects. Это НЕ время рендера — это лимит, после которого работа программы считается зависшей и процесс нужно принудительно завершать. По умолчанию 10 минут. Можно подать таймкод-узлом на вход.",
+					"value": 600
+				},
+				"isInput": true,
+				"acceptedTypes": ["timecode", "string", "text"],
+				"required": false,
+				"outputType": "string"
 			}
 		],
 		"output": {

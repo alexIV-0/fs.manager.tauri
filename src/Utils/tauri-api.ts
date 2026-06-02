@@ -91,9 +91,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	fontsLoadOne: (fontPath) => ({ fontPath }),
 	// Shell
 	shellOpenPath: (folderPath) => ({ folderPath }),
-	// Watch
-	fsWatchStart: (folderPath) => ({ folderPath }),
-	fsWatchStop: (folderPath) => ({ folderPath }),
+	// Watch: fsWatchStart/fsWatchStop мигрированы на tauri-specta (commands.*) — маппер не нужен.
 	// Preview
 	previewResize: (opts) => ({ opts }),
 	previewOpen: (data) => ({ data }),
@@ -241,8 +239,7 @@ const commandAliases: Record<string, string> = {
 	'exec-command': 'exec_command',
 	'kill-all-exec-processes': 'killAllExecProcesses',
 	'process-item': 'processItem',
-	'fs-watch:start': 'fsWatchStart',
-	'fs-watch:stop': 'fsWatchStop',
+	// 'fs-watch:start'/'fs-watch:stop' мигрированы на tauri-specta (commands.fsWatchStart/Stop).
 	'preview:resize': 'previewResize',
 	'preview:open': 'previewOpen',
 	'preview:detect-alpha': 'preview_detect_alpha',

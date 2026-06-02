@@ -180,16 +180,9 @@ pub fn shellOpenPath(folderPath: String) -> Result<(), String> {
 }
 
 // ==================== FS WATCH ====================
-
-#[tauri::command]
-pub fn fsWatchStart(folderPath: String, app: tauri::AppHandle, state: tauri::State<'_, std::sync::Mutex<super::watch_commands::WatcherState>>) -> Result<(), String> {
-    super::watch_commands::fs_watch_start(folderPath, app, state)
-}
-
-#[tauri::command]
-pub fn fsWatchStop(folderPath: String, state: tauri::State<'_, std::sync::Mutex<super::watch_commands::WatcherState>>) -> Result<(), String> {
-    super::watch_commands::fs_watch_stop(folderPath, state)
-}
+// fsWatchStart/fsWatchStop удалены при миграции на tauri-specta (Stage 1).
+// Call-sites теперь зовут типизированные commands.fsWatchStart/Stop → snake-команды
+// fs_watch_start/fs_watch_stop напрямую. См. SPECTA_MIGRATION_PLAN.md.
 
 // ==================== PREVIEW ====================
 

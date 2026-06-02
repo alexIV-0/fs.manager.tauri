@@ -15,6 +15,7 @@ import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimC
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
+import { commands } from '@/bindings';
 
 interface UniversalFolderViewProps {
 	type: 'gd' | 'local';
@@ -203,8 +204,8 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 		const rootPath = rootCol.path;
 
-		// Стартуем слежку
-		window.electronAPI.invoke('fs-watch:start', rootPath);
+		// Стартуем слежку (типизированный specta-биндинг; fire-and-forget как раньше)
+		commands.fsWatchStart(rootPath);
 
 		// Подписываемся на изменения. Накопительный debounce:
 		// одно перемещение/копирование папки эмитит десятки fs-событий —
@@ -234,7 +235,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 		return () => {
 			// При размонтировании — останавливаем watcher и отписываемся
-			window.electronAPI.invoke('fs-watch:stop', rootPath);
+			commands.fsWatchStop(rootPath);
 			unsubscribe();
 		};
 	}, [instance.columns[0]?.path, type]);
