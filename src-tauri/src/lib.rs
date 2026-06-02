@@ -46,6 +46,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             // fs watcher (мигрирован Stage 1 — call-sites на commands.*, camel-обёртки удалены)
             fs_watch_start,
             fs_watch_stop,
+            // path-утилиты: НЕ через specta — приложение считает их в renderer (чистый TS,
+            // src/Utils/path.ts), а path_join оставлен только как обычная команда для плагинов.
         ])
 }
 
@@ -299,12 +301,6 @@ pub fn run() {
             fonts_get_list,
             fonts_load_one,
             // CamelCase wrappers (frontend compatible)
-            pathJoin,
-            pathBasename,
-            pathDirname,
-            pathExtname,
-            pathParse,
-            pathRelative,
             getFileInfo,
             getFileTypeByExtname,
             testAndCreateFolder,
@@ -356,13 +352,9 @@ pub fn run() {
             load_window_state,
             saveWindowState,
             loadWindowState,
-            // Path utilities
+            // Path utilities: только path_join (его зовут плагины через IPC);
+            // basename/dirname/extname/parse/relative удалены — приложение считает в renderer.
             path_join,
-            path_basename,
-            path_dirname,
-            path_extname,
-            path_parse,
-            path_relative,
             // Window commands
             open_node_window,
             request_node_window_data,

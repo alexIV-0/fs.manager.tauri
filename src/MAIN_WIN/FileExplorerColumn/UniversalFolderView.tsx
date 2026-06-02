@@ -15,7 +15,8 @@ import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimC
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
-import { commands } from '@/bindings';
+import { commands } from '@/Utils/specta';
+import { basename } from '@/Utils/path';
 
 interface UniversalFolderViewProps {
 	type: 'gd' | 'local';
@@ -56,7 +57,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 				const mainFolder = mainFolderArr.find((f) => f.id === activeMainFolder);
 
 				if (localFolder && mainFolder) {
-					const mainFolderName = (await window.electronAPI.invoke('pathBasename', mainFolder.path)) as string;
+					const mainFolderName = basename(mainFolder.path);
 					const localRootFolderPath = joinPath(localFolder, mainFolderName, activeProjectFolder);
 
 					await openRoot('local', localRootFolderPath, { ensureDir: true });

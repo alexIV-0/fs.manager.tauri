@@ -20,15 +20,6 @@ pub struct FileInfo {
     pub extension: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct PathInfo {
-    pub root: String,
-    pub dir: String,
-    pub base: String,
-    pub ext: String,
-    pub name: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CopyMoveOptions {
     #[serde(default)]
@@ -56,6 +47,11 @@ pub struct FontInfo {
 }
 
 // ==================== PATH UTILITIES ====================
+// basename/dirname/extname/parse/relative УДАЛЕНЫ: это чистые строковые операции,
+// приложение делает их в renderer (src/Utils/path.ts → src/PluginAPI/path.ts,
+// кросс-платформенно), без IPC-round-trip'а. Осталась только path_join — её через IPC
+// зовут ПЛАГИНЫ (_template/tauri.ts), поэтому она остаётся обычной #[tauri::command]
+// (без specta-биндинга — типизированного потребителя нет). См. SPECTA_MIGRATION_PLAN.md.
 
 #[tauri::command]
 pub fn path_join(segments: Vec<String>) -> Result<String, String> {
@@ -67,84 +63,6 @@ pub fn path_join(segments: Vec<String>) -> Result<String, String> {
         result.push(segment);
     }
     Ok(result.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn path_basename(file_path: String, ext: Option<String>) -> Result<String, String> {
-    let path = Path::new(&file_path);
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    
-    if let Some(remove_ext) = ext {
-        if name.ends_with(&remove_ext) {
-            return Ok(name[..name.len() - remove_ext.len()].to_string());
-        }
-    }
-    
-    Ok(name)
-}
-
-#[tauri::command]
-pub fn path_dirname(file_path: String) -> Result<String, String> {
-    let path = Path::new(&file_path);
-    path.parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Cannot get parent directory".into())
-}
-
-#[tauri::command]
-pub fn path_extname(file_path: String) -> Result<String, String> {
-    let path = Path::new(&file_path);
-    Ok(path
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default())
-}
-
-#[tauri::command]
-pub fn path_parse(file_path: String) -> Result<PathInfo, String> {
-    let path = Path::new(&file_path);
-    let root = path
-        .components()
-        .next()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir = path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let base = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let name = path
-        .file_stem()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    Ok(PathInfo {
-        root,
-        dir,
-        base,
-        ext,
-        name,
-    })
-}
-
-#[tauri::command]
-pub fn path_relative(from: String, to: String) -> Result<String, String> {
-    let from_path = Path::new(&from);
-    let to_path = Path::new(&to);
-    
-    pathdiff::diff_paths(to_path, from_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Cannot compute relative path".into())
 }
 
 // ==================== FILE INFO ====================

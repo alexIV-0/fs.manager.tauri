@@ -43,20 +43,8 @@ async function waitForPendingListens(): Promise<void> {
  * Маппинг аргументов (позиционные → именованные для Tauri)
  */
 const argMappers: Record<string, (...args: any[]) => any> = {
-	// Path
-	pathJoin: (...args) => {
-		// Если первый аргумент уже массив, используем его
-		if (Array.isArray(args[0])) {
-			return { segments: args[0] };
-		}
-		// Иначе собираем все аргументы в массив
-		return { segments: args };
-	},
-	pathBasename: (filePath, ext?) => ({ filePath, ...(ext ? { ext } : {}) }),
-	pathDirname: (filePath) => ({ filePath }),
-	pathExtname: (filePath) => ({ filePath }),
-	pathParse: (filePath) => ({ filePath }),
-	pathRelative: (from, to) => ({ from, to }),
+	// Path: pathJoin/Basename/Dirname/Extname/Parse/Relative мигрированы на tauri-specta
+	// (commands.path* + unwrap из @/Utils/specta) — мапперы не нужны.
 	// Files
 	getFileInfo: (path) => ({ path }),
 	getFileTypeByExtname: (path) => {

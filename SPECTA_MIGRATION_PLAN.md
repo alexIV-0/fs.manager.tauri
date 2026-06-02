@@ -133,11 +133,30 @@ tauri-specta = { version = "=2.0.0-rc.x", features = ["derive", "typescript"] }
       биндинга `folderPath` → Rust-параметр `folder_path` (specta генерирует camelCase, работает из коробки).
 
 ### Stage 2..N — Помодульная миграция (повторять)
-Порядок по app-call-sites (от простого к сложному): **path-утилиты** (pathBasename ×14, pathDirname ×6,
-pathJoin/pathExtname — много вызовов, чистые функции) → dialog (selectFolders/Files, shell:openPath) →
-preview (preview:*) → fs_commands (getFileInfo/getSomeFromFolder/copyItem/moveItem/…) → processing →
-window_commands → log-window → settings. **http/icon/ae/exec — отдельно/в конце или вместе с плагинами:
-у них нет app-вызовов** (зовут только плагины через `_template/tauri.ts`). Для каждого модуля:
+
+> **Общий хелпер `unwrap()` (введён на path-модуле, `src/Utils/specta.ts`):** большинство команд
+> возвращают `Result`. `unwrap(await commands.x(...))` разворачивает `data` и БРОСАЕТ на ошибке —
+> это 1:1 поведение старого `invoke` (он реджектил при Err), поэтому call-sites переписываются
+> в одну строку без правки обработки ошибок. Импортировать `{ commands, unwrap } from '@/Utils/specta'`
+> (а не из авто-генерируемого `@/bindings`). Где нужна не-бросающая обработка — проверять `r.status`.
+
+> **✅ path-утилиты — ВЫПОЛНЕНО, но НЕ через specta (исключение!).** Сначала мигрировали на
+> `commands.path*`+unwrap, потом осознали: basename/dirname/extname/join — чистые строковые
+> операции, им незачем IPC-round-trip (pathBasename звался ×14 async'ом). Итог: 23 call-site в 11
+> файлах переведены на **синхронный чистый TS** `import { basename, dirname, extname, join } from '@/Utils/path'`.
+> - `src/Utils/path.ts` — единый app-фасад, ре-экспорт из `src/PluginAPI/path.ts` (кросс-платформенный
+>   полифил node:path: POSIX/Windows/UNC). `src/Utils/joinPath.ts` → тонкий ре-экспорт (убран дубль).
+> - Rust: `path_basename/dirname/extname/parse/relative` + `PathInfo` **удалены**; `path_join`
+>   ОСТАВЛЕН обычной `#[tauri::command]` (его зовут ПЛАГИНЫ через IPC, `_template/tauri.ts`), НЕ в specta.
+> - **Вывод-правило:** чистые строковые/вычислительные операции, дублирующие JS — переводить в renderer,
+>   а не типизировать IPC. specta — для команд с реальной работой в Rust (fs/dialog/processing/…).
+> `unwrap()` (`src/Utils/specta.ts`) остаётся для будущих Result-модулей. cargo+tsc зелёные.
+> Ручной тест в приложении ✅: переименование файла, превью, запуск обработки — всё работает.
+
+Порядок по app-call-sites (от простого к сложному): ~~path-утилиты (→ pure TS, не specta)~~ → dialog (selectFolders/Files,
+shell:openPath) → preview (preview:*) → fs_commands (getFileInfo/getSomeFromFolder/copyItem/moveItem/…) →
+processing → window_commands → log-window → settings. **http/icon/ae/exec — отдельно/в конце или вместе
+с плагинами: у них нет app-вызовов** (зовут только плагины через `_template/tauri.ts`). Для каждого модуля:
 - [ ] Найти call-sites: `grep -rn "electronAPI.invoke('<имена модуля>'" src/`.
 - [ ] Переписать на `commands.<camelName>(...)`.
 - [ ] Удалить отработавшие camel-обёртки + алиасы (как только нет легаси-вызовов).

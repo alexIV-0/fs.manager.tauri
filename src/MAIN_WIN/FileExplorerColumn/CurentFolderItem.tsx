@@ -20,6 +20,7 @@ import {
 	createFolder,
 } from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
+import { dirname } from '@/Utils/path';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
@@ -51,7 +52,7 @@ export function CurentFolderItem({
 	const { isEditing, startEditing, inputProps } = useEditableField({
 		initialValue: name,
 		onSave: async (newName) => {
-			const parentDir = (await window.electronAPI.invoke('pathDirname', path)) as string;
+			const parentDir = dirname(path);
 			const newPath = joinPath(parentDir, newName);
 			await renameFolder(path, newPath, onRenamed);
 		},

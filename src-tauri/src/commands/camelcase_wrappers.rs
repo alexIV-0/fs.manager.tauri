@@ -4,36 +4,9 @@
 // Каждая вызывает соответствующую snake_case функцию
 
 // ==================== PATH ====================
-
-#[tauri::command]
-pub fn pathJoin(segments: Vec<String>) -> Result<String, String> {
-    super::fs_commands::path_join(segments)
-}
-
-#[tauri::command]
-pub fn pathBasename(file_path: String, ext: Option<String>) -> Result<String, String> {
-    super::fs_commands::path_basename(file_path, ext)
-}
-
-#[tauri::command]
-pub fn pathDirname(file_path: String) -> Result<String, String> {
-    super::fs_commands::path_dirname(file_path)
-}
-
-#[tauri::command]
-pub fn pathExtname(file_path: String) -> Result<String, String> {
-    super::fs_commands::path_extname(file_path)
-}
-
-#[tauri::command]
-pub fn pathParse(file_path: String) -> Result<super::fs_commands::PathInfo, String> {
-    super::fs_commands::path_parse(file_path)
-}
-
-#[tauri::command]
-pub fn pathRelative(from: String, to: String) -> Result<String, String> {
-    super::fs_commands::path_relative(from, to)
-}
+// pathJoin/pathBasename/pathDirname/pathExtname/pathParse/pathRelative удалены при
+// миграции на tauri-specta. Call-sites зовут commands.path* (unwrap из @/Utils/specta)
+// → snake path_* напрямую. См. SPECTA_MIGRATION_PLAN.md.
 
 // ==================== FILE INFO ====================
 

@@ -10,13 +10,14 @@ import { getDescription } from './utils/getDesription';
 import { getSignal } from './utils/processingAbort';
 import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemToRegistrationProcessDatabase';
 import { joinPath } from '@/Utils/joinPath';
+import { basename } from '@/Utils/path';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
 	const signal = getSignal();
 
-	const projectName: string = await window.electronAPI.invoke('pathBasename', projectPathOnGD);
-	const mainFolderName: string = await window.electronAPI.invoke('pathBasename', mainFolderPath);
+	const projectName = basename(projectPathOnGD);
+	const mainFolderName = basename(mainFolderPath);
 
 	// ── выставляем mainFolderIndex и curentFolderIndex ──────────────────
 	// collectFilesFromFolderFunc читает их из isScanningStore напрямую,
@@ -134,7 +135,7 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 		curSearchProp.output = [item];
 
 		const fileInfo: any = await window.electronAPI.invoke('getFileInfo', item);
-		const curItemName: any = await window.electronAPI.invoke('pathBasename', item);
+		const curItemName = basename(item);
 
 		// Rust FileInfo сериализуется как snake_case (is_dir/is_file). Раньше тут читали
 		// fileInfo.isDirectory (Electron-имя) — поле было undefined, и папки определялись

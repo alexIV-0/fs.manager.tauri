@@ -1,6 +1,7 @@
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
+import { basename } from '@/Utils/path';
 
 export type ProjectFolder = {
 	id: string;
@@ -36,7 +37,7 @@ export const mainFolders_stor = create<MainFoldersStore>()((set, get) => ({
 	mainFolderArr: loadFromLocalStorage(STORAGE_KEY) || [],
 
 	addFolderToMainArr: async (path: string) => {
-		const nameF = await window.electronAPI.invoke('pathBasename', path);
+		const nameF = basename(path);
 		const newFolder = [
 			...get().mainFolderArr,
 			{

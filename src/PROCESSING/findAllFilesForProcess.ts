@@ -13,6 +13,7 @@ import { useErrors_Store } from '@/Store/Processing/useErrors_Store';
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
+import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
@@ -49,7 +50,7 @@ export async function findAllFilesForProcess(clearQueue = true) {
 		const curMainFolder = mainFolders_stor.getState().mainFolderArr[i];
 		if (!curMainFolder.active) continue;
 
-		const mainFolderName = await window.electronAPI.invoke('pathBasename', curMainFolder.path);
+		const mainFolderName = basename(curMainFolder.path);
 
 		// обновляем все папки, вдруг новые добавили — ПЕРЕД сканированием файлов
 		const finalArr = await reloadFolders(curMainFolder);

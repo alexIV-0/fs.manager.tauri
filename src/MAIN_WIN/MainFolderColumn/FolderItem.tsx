@@ -6,6 +6,7 @@ import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { reloadFolders } from '@/PROCESSING/reloadFolders';
 import { loadFromLocalStorage } from '@/Utils/loadSaveToLS';
+import { basename } from '@/Utils/path';
 
 type FolderItemProps = {
 	obj: any;
@@ -24,7 +25,7 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'main');
 
 	useEffect(() => {
-		window.electronAPI.invoke('pathBasename', obj.path).then((name) => setName(name as string));
+		setName(basename(obj.path));
 	}, [obj.path]);
 
 	useEffect(() => {

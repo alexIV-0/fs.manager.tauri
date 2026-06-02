@@ -15,6 +15,7 @@ import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { isDraggingOut, getActiveDragMode, applyExplorerDrop } from '@/Utils/dragOut';
 import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { basename, join } from '@/Utils/path';
 
 interface ColumnFolderViewProps {
 	columns: any[];
@@ -207,9 +208,9 @@ export function ColumnFolderView({
 				const col = columns[idx];
 				for (const filePath of paths) {
 					try {
-						const name = (await window.electronAPI.invoke('pathBasename', filePath)) as string;
+						const name = basename(filePath);
 						const info: any = await window.electronAPI.invoke('getFileInfo', filePath).catch(() => null);
-						const destPath = (await window.electronAPI.invoke('pathJoin', col.path, name)) as string;
+						const destPath = join(col.path, name);
 
 						addItemToColumn(sourceType, idx, {
 							name,
@@ -533,7 +534,7 @@ export function ColumnFolderView({
 									try {
 										const filePath = window.electronAPI.getPathForFile(file);
 										if (!filePath) continue;
-										const destPath = (await window.electronAPI.invoke('pathJoin', col.path, file.name)) as string;
+										const destPath = join(col.path, file.name);
 
 										// Оптимистично добавляем в UI сразу
 										const isDir = !file.type && !file.name.includes('.');

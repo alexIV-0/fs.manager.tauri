@@ -3,6 +3,7 @@ import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 import clipboard from 'tauri-plugin-clipboard-api';
+import { basename, dirname } from '@/Utils/path';
 
 // ── Определяем тип инстанса по пути ────────────────────────────────────────
 // Сначала пытаемся понять, в какой панели реально открыт путь — сравниваем с
@@ -78,9 +79,9 @@ export async function renameFolder(
 	try {
 		await window.electronAPI.invoke('renameFolder', oldPath, newPath);
 
-		const parentPath = (await window.electronAPI.invoke('pathDirname', oldPath)) as string;
-		const oldName = (await window.electronAPI.invoke('pathBasename', oldPath)) as string;
-		const newName = (await window.electronAPI.invoke('pathBasename', newPath)) as string;
+		const parentPath = dirname(oldPath);
+		const oldName = basename(oldPath);
+		const newName = basename(newPath);
 
 		const instanceType = getInstanceType(oldPath);
 		useColumnView_Store.getState().refreshAffectedColumns(instanceType, [parentPath]);
@@ -101,9 +102,9 @@ export async function renameFile(
 		const success = await window.electronAPI.invoke('renameFile', oldPath, newPath);
 		if (!success) return;
 
-		const parentPath = (await window.electronAPI.invoke('pathDirname', oldPath)) as string;
-		const oldName = (await window.electronAPI.invoke('pathBasename', oldPath)) as string;
-		const newName = (await window.electronAPI.invoke('pathBasename', newPath)) as string;
+		const parentPath = dirname(oldPath);
+		const oldName = basename(oldPath);
+		const newName = basename(newPath);
 
 		const instanceType = getInstanceType(oldPath);
 		useColumnView_Store.getState().refreshAffectedColumns(instanceType, [parentPath]);
@@ -224,7 +225,7 @@ export async function pasteFromClipboardFs(destFolderPath: string): Promise<void
 	const instanceType = getInstanceType(destFolderPath); console.log('[pasteFs] type:', type, 'count:', paths.length, 'dest:', destFolderPath);
 
 	for (const srcPath of paths) {
-		const name = (await window.electronAPI.invoke('pathBasename', srcPath)) as string;
+		const name = basename(srcPath);
 		const destPath = joinPath(destFolderPath, name);
 
 		try {
