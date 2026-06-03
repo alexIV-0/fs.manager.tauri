@@ -169,18 +169,11 @@ pub async fn openNodeWindow(app: tauri::AppHandle, data: String, state: tauri::S
 }
 
 // ==================== PROCESSING ====================
-
-#[tauri::command]
-pub fn abortProcessing(state: tauri::State<'_, std::sync::Mutex<super::processing_commands::ProcessingState>>) -> Result<(), String> {
-    super::processing_commands::abort_processing(state)
-}
-
-#[tauri::command]
-pub async fn processItem(app: tauri::AppHandle, item: serde_json::Value, state: tauri::State<'_, std::sync::Mutex<super::processing_commands::ProcessingState>>) -> Result<serde_json::Value, String> {
-    super::processing_commands::process_item(app, item, state).await
-}
+// abortProcessing/processItem удалены при миграции на tauri-specta (commands.abortProcessing).
+// process_item — заглушка, реальная обработка в JS.
 
 // ==================== STATUS BAR / LOGS ====================
+// setStatusBar/sendLog ОСТАВЛЕНЫ — их зовут плагины через _template/tauri.ts (§6).
 
 #[tauri::command]
 pub fn setStatusBar(text: String, app: tauri::AppHandle) -> Result<(), String> {
@@ -192,25 +185,8 @@ pub fn sendLog(level: String, text: String, app: tauri::AppHandle) -> Result<(),
     super::processing_commands::send_log(level, text, app)
 }
 
-#[tauri::command]
-pub fn sendNodeStart(nodeId: String, app: tauri::AppHandle) -> Result<(), String> {
-    super::processing_commands::send_node_start(nodeId, app)
-}
-
-#[tauri::command]
-pub fn sendNodeDone(nodeId: String, output: serde_json::Value, app: tauri::AppHandle) -> Result<(), String> {
-    super::processing_commands::send_node_done(nodeId, output, app)
-}
-
-#[tauri::command]
-pub fn sendNodeError(nodeId: String, message: String, app: tauri::AppHandle) -> Result<(), String> {
-    super::processing_commands::send_node_error(nodeId, message, app)
-}
-
-#[tauri::command]
-pub fn sendProcessComplete(app: tauri::AppHandle) -> Result<(), String> {
-    super::processing_commands::send_process_complete(app)
-}
+// sendNodeStart/sendNodeDone/sendNodeError/sendProcessComplete удалены при миграции на
+// tauri-specta (commands.sendNode*/sendProcessComplete → snake send_node_*/send_process_complete).
 
 // ==================== WINDOW STATE ====================
 // saveWindowState/loadWindowState удалены при миграции на tauri-specta.

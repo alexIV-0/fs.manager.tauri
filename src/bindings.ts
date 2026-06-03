@@ -281,6 +281,152 @@ async logArchiveClear() : Promise<Result<number, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async abortProcessing() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("abort_processing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Переместить файл/папку в папку errors в корне проекта
+ */
+async moveToErrors(itemPath: string, projectPath: string) : Promise<Result<MoveToErrorsResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_to_errors", { itemPath, projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendNodeStart(nodeId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_node_start", { nodeId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendNodeDone(nodeId: string, output: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_node_done", { nodeId, output }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendNodeError(nodeId: string, message: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_node_error", { nodeId, message }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendProcessComplete() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_process_complete") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async logWindowOpen() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_open") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async logWindowClear() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async logWindowGetHistory() : Promise<Result<LogHistory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_get_history") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Экспорт логов. format: "txt" | "json". Пока возвращаем JSON; в будущем — открыть диалог сохранения.
+ */
+async logWindowExport(format: string | null) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_export", { format }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async logWindowEmitItemLog(payload: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_emit_item_log", { payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async logWindowEmitNodeUpdate(payload: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_emit_node_update", { payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async logWindowEmitItemEnd(payload: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_emit_item_end", { payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Loop отправил батч саб-шагов очередной итерации. payload:
+ * { itemId, parentStepId, subSteps: [{ stepId, label, pluginId?, pluginVersion?,
+ * nodeType, cost?, costUnit?, status, logs, errorCount }] }
+ * Дописывает входящие шаги в parent.subSteps и эмитит `log-window:substep-batch` в renderer.
+ */
+async logWindowEmitSubstepBatch(payload: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_emit_substep_batch", { payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Item поставлен в очередь — добавляется в LogState и эмитит событие item-start (с status="queued").
+ */
+async logWindowEmitItemQueued(payload: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_emit_item_queued", { payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Отмена ожидающих item'ов — статус всех queued items меняется на "aborted".
+ */
+async logWindowEmitAbortQueued() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_window_emit_abort_queued") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async appSettingsGet() : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("app_settings_get") };
@@ -430,6 +576,292 @@ async dbRegisterFound(payload: JsonValue) : Promise<Result<string, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getFileInfo(path: string) : Promise<Result<FileInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_file_info", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getFileTypeByExtname(ext: string) : Promise<string> {
+    return await TAURI_INVOKE("get_file_type_by_extname", { ext });
+},
+async testAndCreateFolder(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_and_create_folder", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async testAndCreateFolders(paths: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_and_create_folders", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Создаёт пустой текстовый файл по указанному пути. Если файл уже существует — ошибка.
+ */
+async createTextFile(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_text_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Создаёт папку (если нет) и возвращает её содержимое в формате `{ folders: [], files: [] }`.
+ * Аналог Electron'овского ensureAndReadDir.
+ */
+async ensureAndReadDir(path: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ensure_and_read_dir", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getStat(path: string) : Promise<Result<StatInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_stat", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает путь к временной директории (для полифила node:os.tmpdir).
+ */
+async osTmpdir() : Promise<string> {
+    return await TAURI_INVOKE("os_tmpdir");
+},
+/**
+ * Считает хеш файла по алгоритму (sha256 | sha1 | md5). Возвращает hex.
+ * Для полифила node:crypto.createHash, чтобы не таскать содержимое через IPC.
+ */
+async hashFile(path: string, algo: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hash_file", { path, algo }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async renameFolder(oldPath: string, newPath: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rename_folder", { oldPath, newPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Устанавливает mtime файла/папки на указанный момент времени в миллисекундах от Unix epoch.
+ * Используется в логике автоотключения: при ручном включении папки с устаревшим OUT
+ * фронт двигает mtime, чтобы дать папке окно перед повторным auto-disable.
+ */
+async setPathMtime(path: string, mtimeMs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_path_mtime", { path, mtimeMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async copyItem(sourcePath: string, destinationPath: string, options: CopyMoveOptions | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_item", { sourcePath, destinationPath, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveItem(sourcePath: string, destinationPath: string, options: CopyMoveOptions | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("move_item", { sourcePath, destinationPath, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteItem(itemPath: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_item", { itemPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async readFileSync(filePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_file_sync", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async readMediaPreview(filePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_media_preview", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async writeFile(filePath: string, content: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("write_file", { filePath, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Записывает бинарный файл из base64-строки.
+ * Используется плагинами для сохранения скачанных через fetch результатов
+ * (видео, аудио, изображения). Создаёт родительские директории при необходимости.
+ */
+async writeBinaryFile(filePath: string, dataB64: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("write_binary_file", { filePath, dataB64 }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает путь до файла или '' если файл не существует или является папкой.
+ * Совместимо с Electron: всегда возвращает строку, никогда не бросает ошибку.
+ */
+async checkFilePath(path: string, name: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_file_path", { path, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает путь до папки или '' если не существует.
+ * Если передан путь до файла — возвращает родительскую директорию.
+ * Совместимо с Electron: всегда возвращает строку, никогда не бросает ошибку.
+ */
+async checkFolderPath(path: string, name: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_folder_path", { path, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает объект вида `{[type]: string[]}` — для каждого `{type, ext}` в search
+ * собирает массив **имён** (не полных путей), соответствующих фильтру.
+ * Совместимо с Electron Node-fallback'ом, который ожидают callers вроде
+ * findFilesForSingleFolder и collectFilesFromFolderFunc.
+ */
+async getSomeFromFolder(path: string, search: SearchEntry[] | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_some_from_folder", { path, search }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает имена подпапок (только верхний уровень) для каждой переданной директории.
+ * Output: `Record<dirPath, string[]>`. Если папка не существует — пустой массив.
+ * Использование: главное окно сканирует все «main folders» в одном IPC и получает
+ * списки проектов внутри каждой.
+ */
+async listSubfolders(paths: string[]) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_subfolders", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Рекурсивный поиск. Возвращает `{[type]: string[]}` — относительные пути от `path`,
+ * разбитые по типу (как в Electron'е). Папки тоже могут включаться если в search есть type=folders.
+ */
+async recursiveFindFiles(path: string, search: SearchEntry[] | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recursive_find_files", { path, search }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getUserDataPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_user_data_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Путь к исходникам плагинов (`plugins-dev/` в корне репо) — для PluginBuilderWin.
+ * В dev режиме CWD = корень проекта; для prod — поднимаемся вверх от `src-tauri`,
+ * чтобы добраться до родительской папки с plugins-dev. Если ни тот, ни тот вариант
+ * не подходит — вернёт ошибку.
+ */
+async getPluginsDevPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_plugins_dev_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Количество логических CPU ядер. Из WebView через navigator.hardwareConcurrency
+ * получить нельзя — Safari/WebKit clamp'ит результат до 8 (anti-fingerprinting),
+ * что мешает корректно настроить thread-pool для нативных бинарников (whisper, ffmpeg).
+ */
+async getCpuCount() : Promise<number> {
+    return await TAURI_INVOKE("get_cpu_count");
+},
+/**
+ * Возвращает сегмент платформы в формате, удобном для путей бинарников плагинов:
+ * `mac-arm64`, `mac-x64`, `win-x64`, `linux-x64`, `linux-arm64`.
+ * Из WebView архитектуру macOS определить нельзя (Apple отдаёт "Intel" в navigator
+ * даже на Apple Silicon), поэтому источник правды — Rust runtime.
+ */
+async getPlatformTarget() : Promise<string> {
+    return await TAURI_INVOKE("get_platform_target");
+},
+async fontsGetList() : Promise<Result<FontInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fonts_get_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async fontsLoadOne(fontPath: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fonts_load_one", { fontPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async shellOpenPath(folderPath: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("shell_open_path", { folderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -445,10 +877,15 @@ async dbRegisterFound(payload: JsonValue) : Promise<Result<string, string>> {
 
 export type AEResult = { success: boolean; data: JsonValue | null; error: string | null }
 export type ArchiveDay = { date: string; items: number; bytes: number }
+export type CopyMoveOptions = { use_hash_check?: boolean; overwrite?: boolean }
 export type DialogFilter = { name: string; extensions: string[] }
 export type DocFile = { name: string; fileName: string }
 export type DocSection = { name: string; files: DocFile[] }
+export type FileInfo = { path: string; name: string; size: number; is_dir: boolean; is_file: boolean; modified: number | null; created: number | null; extension: string }
+export type FontInfo = { name: string; path: string; loadable: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type LogHistory = { items: JsonValue[] }
+export type MoveToErrorsResult = { success: boolean; moved_to: string | null; error: string | null }
 export type PreviewResizeOpts = { width: number; height: number; aspectRatio?: number | null; extraHeight?: number | null }
 export type RunScriptInAEArgs = { 
 /**
@@ -475,8 +912,18 @@ keep_temp_files: boolean | null;
  * Таймаут ожидания результата в секундах (по умолчанию 120)
  */
 timeout_sec: number | null }
+/**
+ * Один элемент паттерна поиска. Формат совместим с Electron:
+ * `{ type: 'files'|'folders', ext: string[] }`.
+ * Пустой массив `ext` означает «все расширения».
+ */
+export type SearchEntry = { type?: string; ext?: string[] }
 export type SelectFilesOptions = { multiSelect?: boolean; filters?: DialogFilter[] | null }
 export type SelectFoldersOptions = { multiSelect?: boolean }
+/**
+ * Возвращает метаданные файла (для полифила node:fs.stat).
+ */
+export type StatInfo = { size: number; mtimeMs: number; atimeMs: number; ctimeMs: number; birthtimeMs: number; isFile: boolean; isDir: boolean; isSymlink: boolean }
 export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
 
 /** tauri-specta globals **/

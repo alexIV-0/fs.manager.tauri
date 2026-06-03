@@ -135,7 +135,8 @@ export default function LogApp() {
 
 		const tHistory0 = performance.now();
 		diag('get-history start');
-		api.invoke('log-window:get-history').then((data: any) => {
+		commands.logWindowGetHistory().then((r) => {
+			const data: any = unwrap(r);
 			const tIpc = performance.now() - tHistory0;
 			if (!data) {
 				diag(`get-history empty (ipc=${tIpc.toFixed(0)}ms)`);

@@ -11,6 +11,7 @@ import { getSignal } from './utils/processingAbort';
 import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemToRegistrationProcessDatabase';
 import { joinPath } from '@/Utils/joinPath';
 import { basename } from '@/Utils/path';
+import { commands } from '@/Utils/specta';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
@@ -196,8 +197,8 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 		const curItem: string = objForProcessing.description?.curItem ?? queuedItemId;
 		const displayName = findTime ? `[${findTime}] ${curItem}` : curItem;
 
-		window.electronAPI
-			.invoke('log-window:item-queued', {
+		commands
+			.logWindowEmitItemQueued({
 				itemId: queuedItemId,
 				itemName: displayName,
 				mainFolderName: objForProcessing.description?.mainFolderName ?? '',

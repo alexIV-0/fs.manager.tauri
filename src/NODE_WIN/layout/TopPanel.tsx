@@ -40,7 +40,7 @@ function TopPanel({ title }: TopPanelProps) {
 
 	const handleStop = useCallback(() => {
 		abortNow();
-		window.electronAPI.invoke('abort-processing');
+		commands.abortProcessing();
 		const { setIsScanning, setIsScanningProcess } = isScanningStore.getState();
 		setIsScanningProcess(false);
 		setIsScanning(false);

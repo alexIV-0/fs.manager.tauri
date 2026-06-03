@@ -172,6 +172,10 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 	});
 
 	const filterParts: string[] = [];
+	// Сбрасываем стартовый PTS каждого видеовхода в 0. Иначе overlay синхронизирует
+	// кадры по абсолютному PTS, и вход с ненулевым start_time (edit-list / задержка
+	// кодировщика — частое у разных рендеров) теряет первый кадр и едет на 1 кадр.
+	const ptsReset = 'setpts=PTS-STARTPTS';
 	const bgInputIdx = fgCopies;
 	const bgCellW = isPortrait ? finalW : Math.round(finalW / bgCopies);
 	const bgCellH = isPortrait ? Math.round(finalH / bgCopies) : finalH;
@@ -184,10 +188,10 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 	} else if (bgCopies === 1) {
 		const bgScale = bgInfo.width / bgInfo.height > bgCellW / bgCellH ? `scale=-1:${bgCellH}` : `scale=${bgCellW}:-1`;
 		const extra = bgAdjFilter ? `,${bgAdjFilter}` : '';
-		filterParts.push(`[${bgInputIdx}:v]${bgScale},crop=${bgCellW}:${bgCellH}${extra}[bg_final]`);
+		filterParts.push(`[${bgInputIdx}:v]${ptsReset},${bgScale},crop=${bgCellW}:${bgCellH}${extra}[bg_final]`);
 	} else {
 		const splitLabels = Array.from({ length: bgCopies }, (_, i) => `[bgsrc${i}]`).join('');
-		filterParts.push(`[${bgInputIdx}:v]split=${bgCopies}${splitLabels}`);
+		filterParts.push(`[${bgInputIdx}:v]${ptsReset},split=${bgCopies}${splitLabels}`);
 		const bgScale = bgInfo.width / bgInfo.height > bgCellW / bgCellH ? `scale=-1:${bgCellH}` : `scale=${bgCellW}:-1`;
 		const extra = bgAdjFilter ? `,${bgAdjFilter}` : '';
 		for (let i = 0; i < bgCopies; i++) {
@@ -225,13 +229,13 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 			const shadX = Math.round(fgX + shadow.offsetX);
 			const shadY = Math.round(fgY + shadow.offsetY);
 			const afterShad = `vshadbase${i}`;
-			filterParts.push(`[${i}:v]${scaleFilter},${cropFilter},format=rgba[fgraw${i}]`);
+			filterParts.push(`[${i}:v]${ptsReset},${scaleFilter},${cropFilter},format=rgba[fgraw${i}]`);
 			filterParts.push(`[fgraw${i}]split=2[fgmain${i}][fgsrc${i}]`);
 			filterParts.push(`[fgsrc${i}]geq=r=${sr}:g=${sg}:b=${sb}:a=${sa},boxblur=${blurVal}:1[fgshad${i}]`);
 			filterParts.push(`[${curBase}][fgshad${i}]overlay=${shadX}:${shadY}[${afterShad}]`);
 			filterParts.push(`[${afterShad}][fgmain${i}]overlay=${fgX}:${fgY}${outLabel}`);
 		} else {
-			filterParts.push(`[${i}:v]${scaleFilter},${cropFilter}[fg${i}]`);
+			filterParts.push(`[${i}:v]${ptsReset},${scaleFilter},${cropFilter}[fg${i}]`);
 			filterParts.push(`[${curBase}][fg${i}]overlay=${fgX}:${fgY}${outLabel}`);
 		}
 		curBase = isLast ? 'vout' : `vtmp${i}`;

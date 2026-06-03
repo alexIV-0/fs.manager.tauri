@@ -257,7 +257,7 @@ pub struct LogStats {
     pub debugs: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct LogHistory {
     pub items: Vec<serde_json::Value>,
 }
@@ -907,6 +907,7 @@ pub fn log_message(level: String, message: String, meta: Option<serde_json::Valu
 // (см. историю с зависанием после пересоздания окна). Async-команда крутится в Tauri's
 // async runtime, который сам проксирует webview-builder на main-thread.
 #[tauri::command]
+#[specta::specta]
 pub async fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
     let existed = app.get_webview_window("logWindow").is_some();
     crate::commands::diag_log::write(
@@ -966,6 +967,7 @@ pub fn log_window_get_status(state: tauri::State<Mutex<LogState>>) -> Result<Log
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_get_history(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
@@ -1043,6 +1045,7 @@ pub fn log_window_get_history(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_clear(app: tauri::AppHandle, state: tauri::State<Mutex<LogState>>) -> Result<bool, String> {
     {
         let mut state = state.lock().map_err(|e| e.to_string())?;
@@ -1062,6 +1065,7 @@ pub fn log_window_clear(app: tauri::AppHandle, state: tauri::State<Mutex<LogStat
 
 /// Экспорт логов. format: "txt" | "json". Пока возвращаем JSON; в будущем — открыть диалог сохранения.
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_export(
     format: Option<String>,
     state: tauri::State<Mutex<LogState>>,
@@ -1199,6 +1203,7 @@ fn find_step_index_recursive(steps: &[serde_json::Value], step_id: &str) -> bool
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_emit_item_log(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
@@ -1236,6 +1241,7 @@ pub fn log_window_emit_item_log(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_emit_node_update(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
@@ -1324,6 +1330,7 @@ fn trim_hot_buffer(items: &mut Vec<serde_json::Value>) {
 ///                                         nodeType, cost?, costUnit?, status, logs, errorCount }] }
 /// Дописывает входящие шаги в parent.subSteps и эмитит `log-window:substep-batch` в renderer.
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_emit_substep_batch(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
@@ -1400,6 +1407,7 @@ pub fn log_window_emit_substep_batch(
 
 /// Item поставлен в очередь — добавляется в LogState и эмитит событие item-start (с status="queued").
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_emit_item_queued(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
@@ -1429,6 +1437,7 @@ pub fn log_window_emit_item_queued(
 
 /// Отмена ожидающих item'ов — статус всех queued items меняется на "aborted".
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_emit_abort_queued(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,
@@ -1465,6 +1474,7 @@ pub fn log_window_emit_abort_queued(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn log_window_emit_item_end(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<LogState>>,

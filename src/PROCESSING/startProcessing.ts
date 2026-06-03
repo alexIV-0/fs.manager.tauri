@@ -1,5 +1,6 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
+import { commands } from '@/Utils/specta';
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { getSignal } from './utils/processingAbort';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
@@ -85,7 +86,7 @@ export async function startProcessing() {
 	}
 
 	// Queued-записи в окне логов, которые так и не стартовали (стоп/abort), переводим в aborted.
-	window.electronAPI.invoke('log-window:abort-queued').catch(() => {});
+	commands.logWindowEmitAbortQueued().catch(() => {});
 
 	// Сбрасываем statusBar в idle. Локальный set обновляет стор в этом окне (nodeWin),
 	// а IPC `setStatusBar` транслирует событие в main window — там стор отдельный.
@@ -94,7 +95,7 @@ export async function startProcessing() {
 
 	// Финальный broadcast: node_win получит 'process:complete' и сбросит подсветку
 	// активной ноды через 2 секунды (см. ProcessingEventListener).
-	window.electronAPI.invoke('sendProcessComplete').catch(() => {});
+	commands.sendProcessComplete().catch(() => {});
 
 	window.electronAPI.removeProcessingEvent(handleProcessingEvent);
 	isSubscribed = false;

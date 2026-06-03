@@ -24,7 +24,7 @@ pub struct ProcessingItem {
     pub extra: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct MoveToErrorsResult {
     pub success: bool,
     pub moved_to: Option<String>,
@@ -54,6 +54,7 @@ impl ProcessingState {
 // ==================== COMMANDS ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn abort_processing(state: tauri::State<'_, Mutex<ProcessingState>>) -> Result<(), String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     state.abort_signal.store(true, Ordering::SeqCst);
@@ -116,6 +117,7 @@ pub fn add_processing_error(error: String, state: tauri::State<'_, Mutex<Process
 
 /// Переместить файл/папку в папку errors в корне проекта
 #[tauri::command]
+#[specta::specta]
 pub fn move_to_errors(
     item_path: String,
     project_path: String,
@@ -372,6 +374,7 @@ pub fn send_log(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn send_node_start(
     node_id: String,
     app: tauri::AppHandle,
@@ -384,6 +387,7 @@ pub fn send_node_start(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn send_node_done(
     node_id: String,
     output: serde_json::Value,
@@ -397,6 +401,7 @@ pub fn send_node_done(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn send_node_error(
     node_id: String,
     message: String,
@@ -410,6 +415,7 @@ pub fn send_node_error(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn send_process_complete(app: tauri::AppHandle) -> Result<(), String> {
     app.emit("processing-event", &ProcessingEvent {
         event_type: "process:complete".to_string(),

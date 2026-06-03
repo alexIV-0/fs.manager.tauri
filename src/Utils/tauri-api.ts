@@ -60,7 +60,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	copyItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
 	moveItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
 	deleteItem: (itemPath) => ({ itemPath }),
-	moveToErrors: (itemPath, projectPath) => ({ itemPath, projectPath }),
+	// moveToErrors мигрирован на commands.moveToErrors — маппер не нужен.
 	// IO
 	readFileSync: (filePath) => ({ filePath }),
 	readMediaPreview: (filePath) => ({ filePath }),
@@ -86,15 +86,11 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	// Window
 	openNodeWindow: (data) => ({ data }),
 	// Processing
-	abortProcessing: () => ({}),
 	killAllExecProcesses: () => ({}),
-	processItem: (item) => ({ item }),
 	setStatusBar: (text) => ({ text }),
 	sendLog: (level, text) => ({ level, text }),
-	sendNodeStart: (nodeId) => ({ nodeId }),
-	sendNodeDone: (nodeId, output) => ({ nodeId, output }),
-	sendNodeError: (nodeId, message) => ({ nodeId, message }),
-	sendProcessComplete: () => ({}),
+	// abortProcessing/processItem/sendNode*/sendProcessComplete мигрированы на commands.* — мапперы не нужны.
+	// (setStatusBar/sendLog оставлены — плагинные.)
 	// Dialog: selectFolders/selectFiles/copyToClipboard/showInFolder/openFileWithDefaultApp/
 	// createFolder/renameFile/getNodeObjFromFile/saveFlowToOptionsFolder/getPathsFromFiles
 	// мигрированы на tauri-specta (commands.* + unwrap) — мапперы не нужны.
@@ -133,22 +129,8 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	// (commands.* + unwrap из @/Utils/specta). Мапперы не нужны.
 	// Docs
 	// docs_list/docs_read мигрированы на tauri-specta (commands.docsList/docsRead) — мапперы не нужны.
-	// Log window (alias targets)
-	log_window_open: () => ({}),
-	log_window_close: () => ({}),
-	log_window_get_history: () => ({}),
-	log_window_clear: () => ({}),
-	log_window_has_errors: () => ({}),
-	log_window_get_recent: (count?: number) => ({ count }),
-	log_window_get_errors: () => ({}),
-	log_window_export: (format?: string) => ({ format }),
-	log_window_emit_item_start: (payload: any) => ({ payload }),
-	log_window_emit_item_log: (payload: any) => ({ payload }),
-	log_window_emit_node_update: (payload: any) => ({ payload }),
-	log_window_emit_item_end: (payload: any) => ({ payload }),
-	log_window_emit_item_queued: (payload: any) => ({ payload }),
-	log_window_emit_substep_batch: (payload: any) => ({ payload }),
-	log_window_emit_abort_queued: () => ({}),
+	// Log window: log_window_* мигрированы на tauri-specta (commands.logWindow*) — мапперы не нужны.
+	// (мёртвые toggle/get_status/open_quick/open_errors_only/emit_item_start/console остаются snake-командами.)
 	// log_archive_* мигрированы на tauri-specta (commands.logArchive*) — мапперы не нужны.
 	diag_log_write: (msg: string) => ({ msg }),
 	diag_log_path: () => ({}),
@@ -192,10 +174,9 @@ const commandAliases: Record<string, string> = {
 	openDevTools: 'open_devtools',
 	open_dev_tools: 'openDevTools',
 	'open-node-window': 'openNodeWindow',
-	'abort-processing': 'abortProcessing',
+	// 'abort-processing'/'process-item' мигрированы на commands.* (abortProcessing).
 	'exec-command': 'exec_command',
 	'kill-all-exec-processes': 'killAllExecProcesses',
-	'process-item': 'processItem',
 	// 'fs-watch:start'/'fs-watch:stop' мигрированы на tauri-specta (commands.fsWatchStart/Stop).
 	// preview:* мигрированы на tauri-specta (commands.preview*).
 	'read-media-preview': 'read_media_preview',
@@ -205,22 +186,7 @@ const commandAliases: Record<string, string> = {
 	// App settings / Color types / File types / Program paths — мигрированы на tauri-specta (commands.*).
 	// Docs
 	// 'docs:list'/'docs:read' мигрированы на tauri-specta (commands.docsList/docsRead).
-	// Log window
-	'log-window:open': 'log_window_open',
-	'log-window:close': 'log_window_close',
-	'log-window:get-history': 'log_window_get_history',
-	'log-window:clear': 'log_window_clear',
-	'log-window:has-errors': 'log_window_has_errors',
-	'log-window:get-recent': 'log_window_get_recent',
-	'log-window:get-errors': 'log_window_get_errors',
-	'log-window:export': 'log_window_export',
-	'log-window:emit-item-start': 'log_window_emit_item_start',
-	'log-window:emit-item-log': 'log_window_emit_item_log',
-	'log-window:emit-node-update': 'log_window_emit_node_update',
-	'log-window:emit-item-end': 'log_window_emit_item_end',
-	'log-window:item-queued': 'log_window_emit_item_queued',
-	'log-window:emit-substep-batch': 'log_window_emit_substep_batch',
-	'log-window:abort-queued': 'log_window_emit_abort_queued',
+	// Log window: 'log-window:*' мигрированы на tauri-specta (commands.logWindow*).
 	// 'logs:*' мигрированы на tauri-specta (commands.logArchive*).
 	// Диагностический лог для отладки зависания LogApp (см. src-tauri/src/commands/diag_log.rs).
 	'diag:log': 'diag_log_write',
@@ -228,7 +194,7 @@ const commandAliases: Record<string, string> = {
 	'diag:log-clear': 'diag_log_clear',
 	// Misc PROCESSING channels
 	createTextFile: 'createTextFile',
-	moveToErrors: 'move_to_errors',
+	// moveToErrors мигрирован на commands.moveToErrors.
 	ensureAndReadDir: 'ensure_and_read_dir',
 	get_stat: 'get_stat',
 	os_tmpdir: 'os_tmpdir',
@@ -350,16 +316,6 @@ const tauriLogger = {
 };
 
 /**
- * Log window объект
- */
-const tauriLogWindow = {
-	open: () => tauriInvoke<boolean>('log_window_open'),
-	close: () => tauriInvoke<boolean>('log_window_close'),
-	getHistory: () => tauriInvoke<{ logs: Array<any>; stats: any }>('log_window_get_history'),
-	clear: () => tauriInvoke<boolean>('log_window_clear'),
-};
-
-/**
  * Plugins API объект
  */
 const tauriPlugins = {
@@ -447,8 +403,8 @@ export const tauriAPI = {
 	// Логгер
 	logger: tauriLogger,
 
-	// Окно логов
-	logWindow: tauriLogWindow,
+	// Окно логов: log_window_* мигрированы на tauri-specta (commands.logWindow*) —
+	// мёртвый объект logWindow удалён.
 
 	// Консоль
 	interceptConsole: () => {
@@ -505,10 +461,7 @@ export const tauriAPI = {
 	// Window state: мигрирован на tauri-specta (commands.saveWindowState/loadWindowState).
 	// Сохранение зовётся напрямую из windowAutoSave.ts; загрузка — в Rust на старте.
 
-	// Утилиты
-	hasErrors: () => tauriInvoke<boolean>('log-window:has-errors'),
-	getRecentLogs: (count?: number) => tauriInvoke<Array<any>>('log-window:get-recent', count),
-	getErrors: () => tauriInvoke<Array<any>>('log-window:get-errors'),
+	// hasErrors/getRecentLogs/getErrors удалены (мёртвые; log_window_* мигрированы на commands.*).
 };
 
 /**

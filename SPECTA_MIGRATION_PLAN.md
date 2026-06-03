@@ -209,7 +209,34 @@ tauri-specta = { version = "=2.0.0-rc.x", features = ["derive", "typescript"] }
 > get_history/export/has_errors/get_recent/get_errors/emit_* + структуры LogHistory; diag_log и мёртвые
 > (toggle/status/quick/errors_only/console/log_message) — не трогаем.**
 
-~~settings~~ → ~~docs~~ → ~~window-state~~ → ~~log_archive~~ → **log_window UI** → processing (кроме sendLog/setStatusBar) →
+> **✅ log_window UI — ВЫПОЛНЕНО (часть 2, log-window завершён).** 10 команд (open/clear/get_history/
+> export/emit_item_log/node_update/item_end/substep_batch/item_queued/abort_queued) + `specta::Type` на
+> `LogHistory`. Call-sites в 6 файлах (MainTopPanel/Toolbar/LogApp/startProcessing/findFiles/processItem)
+> → `commands.logWindow*`. Удалены мёртвые `tauriLogWindow` + `hasErrors/getRecentLogs/getErrors` + все
+> log-window:* алиасы/мапперы. Мёртвые команды (toggle/get_status/open_quick/open_errors_only/
+> emit_item_start/intercept_console/restore_console/log_message) и diag_log оставлены snake-командами. cargo+tsc зелёные.
+
+> **✅ processing (app-only) — ВЫПОЛНЕНО.** 6 живых команд (abort_processing, move_to_errors, send_node_start/
+> done/error, send_process_complete) + `specta::Type` на `MoveToErrorsResult`. Call-sites: TopPanel/AppMain
+> (abort), processItem (moveToErrors/sendNode*/complete), startProcessing (complete). Удалены camel-обёртки
+> abortProcessing/processItem/sendNode*/sendProcessComplete + их алиасы/argMappers. **Оставлены (плагинные):
+> set_status_bar/send_log/path_exists** (camel setStatusBar/sendLog + path_exists на шиме). Дохлые
+> tauriAPI-методы (isProcessingAborted/resetProcessingSignal/setProcessingProgress/getProcessingProgress/
+> addProcessingError/processingDeleteItem/getItemInfo/processItem + abort/move/sendNode/complete) — НЕ зовутся,
+> оставлены на финальную dead-code зачистку tauri-api.ts. process_item — заглушка. cargo+tsc зелёные.
+
+> **🚧 fs_commands — Rust-ФУНДАМЕНТ готов (2026-06-03), call-sites батчами.** ~30 snake-команд размечены
+> `#[specta::specta]` (sed) + `specta::Type` на FileInfo/CopyMoveOptions/FontInfo/StatInfo/SearchEntry +
+> в `collect_commands!`. path_join остался plain (плагины). Биндинги есть, cargo+tsc зелёные, app на шиме
+> (export-only). **Осталось: ~86 app-call-sites в ~34 файлах → commands.* (батчами + tsc).** Нюансы:
+> `getFileTypeByExtname(ext)` берёт расширение (старый маппер извлекал из пути!); non-Result у
+> `osTmpdir`/`getCpuCount`/`getPlatformTarget`/`getFileTypeByExtname` (без unwrap); `copyItem`/`moveItem`
+> (options: CopyMoveOptions|null); `getSomeFromFolder(path, search: SearchEntry[]|null)`. **`PluginAPI/fs.ts`+`os.ts`
+> (11) — плагинный слой, отдельный шаг (→ snake invoke, НЕ commands).**
+
+~~settings~~ → ~~docs~~ → ~~window-state~~ → ~~log-window~~ → ~~processing (app-only)~~ →
+**fs call-sites (батчами)** → плагинный слой (PluginAPI/* + _template/tauri.ts → snake) →
+удалить camelcase_wrappers.rs + алиасы/argMappers → dead-code зачистка tauri-api.ts → события (опц.) →
 **fs_commands и плагинный шаблон — В КОНЦЕ, plugin-aware проходом**. http/icon/ae/exec — плагинные. Для каждого модуля:
 - [ ] Найти call-sites: `grep -rn "electronAPI.invoke('<имена модуля>'" src/`.
 - [ ] Переписать на `commands.<camelName>(...)`.
