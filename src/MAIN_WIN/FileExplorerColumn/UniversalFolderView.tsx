@@ -194,7 +194,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			e.preventDefault();
 
 			const fileType = (await window.electronAPI.invoke('getFileTypeByExtname', item.path)) as string;
-			await window.electronAPI.invoke('preview:open', JSON.stringify({ filePath: item.path, fileType }));
+			unwrap(await commands.previewOpen(JSON.stringify({ filePath: item.path, fileType })));
 		},
 	});
 

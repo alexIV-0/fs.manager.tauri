@@ -106,9 +106,10 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 	}, [loaded, load]);
 
 	useEffect(() => {
-		window.electronAPI
-			.invoke('program_paths_get')
-			.then((raw: unknown) => {
+		commands
+			.programPathsGet()
+			.then((r) => {
+				const raw: unknown = unwrap(r);
 				const map: Record<string, string> = {};
 				if (Array.isArray(raw)) {
 					for (const entry of raw) {

@@ -158,27 +158,8 @@ pub fn shellOpenPath(folderPath: String) -> Result<(), String> {
 // fs_watch_start/fs_watch_stop напрямую. См. SPECTA_MIGRATION_PLAN.md.
 
 // ==================== PREVIEW ====================
-
-#[tauri::command]
-pub async fn previewResize(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-    opts: super::fs_commands::PreviewResizeOpts,
-    state: tauri::State<'_, std::sync::Mutex<super::window_commands::PreviewWindowState>>,
-    bounds_state: tauri::State<'_, std::sync::Mutex<super::preview_bounds::PreviewBoundsState>>,
-) -> Result<(), String> {
-    super::window_commands::preview_resize(app, window, opts, state, bounds_state).await
-}
-
-#[tauri::command]
-pub async fn previewOpen(
-    app: tauri::AppHandle,
-    data: String,
-    state: tauri::State<'_, std::sync::Mutex<super::window_commands::PreviewWindowState>>,
-    bounds_state: tauri::State<'_, std::sync::Mutex<super::preview_bounds::PreviewBoundsState>>,
-) -> Result<(), String> {
-    super::window_commands::preview_open(app, data, state, bounds_state).await
-}
+// previewResize/previewOpen удалены при миграции на tauri-specta. Call-sites зовут
+// commands.previewResize/previewOpen → snake preview_resize/preview_open. См. SPECTA_MIGRATION_PLAN.md.
 
 // ==================== WINDOW ====================
 
@@ -232,13 +213,5 @@ pub fn sendProcessComplete(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 // ==================== WINDOW STATE ====================
-
-#[tauri::command]
-pub fn saveWindowState(label: String, state: super::window_state::WindowState, app: tauri::AppHandle) -> Result<(), String> {
-    super::window_state::save_window_state(label, state, app)
-}
-
-#[tauri::command]
-pub fn loadWindowState(label: String, app: tauri::AppHandle) -> Result<Option<super::window_state::WindowState>, String> {
-    super::window_state::load_window_state(label, app)
-}
+// saveWindowState/loadWindowState удалены при миграции на tauri-specta.
+// Call-sites зовут commands.saveWindowState/loadWindowState → snake save/load_window_state.

@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { installGlobalPolyfills } from '@/PluginAPI/globals';
+import { commands, unwrap } from '@/Utils/specta';
 
 // Слушаем события только текущего webview-окна. `listen()` из `@tauri-apps/api/event`
 // по умолчанию использует target { kind: 'Any' } и принимает события emit_to(),
@@ -81,11 +82,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	shellOpenPath: (folderPath) => ({ folderPath }),
 	// Watch: fsWatchStart/fsWatchStop мигрированы на tauri-specta (commands.*) — маппер не нужен.
 	// Preview
-	previewResize: (opts) => ({ opts }),
-	previewOpen: (data) => ({ data }),
-	preview_detect_alpha: (filePath: string) => ({ filePath }),
-	preview_transcode_webm: (filePath: string) => ({ filePath }),
-	preview_delete_temp: (filePath: string) => ({ filePath }),
+	// preview:* мигрированы на tauri-specta (commands.preview* + unwrap) — мапперы не нужны.
 	// Window
 	openNodeWindow: (data) => ({ data }),
 	// Processing
@@ -105,8 +102,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	openDevTools: () => ({}),
 	openUrl: (url) => ({ url }),
 	// Window state
-	saveWindowState: (label, state) => ({ label, state }),
-	loadWindowState: (label) => ({ label }),
+	// saveWindowState/loadWindowState мигрированы на tauri-specta (commands.*) — мапперы не нужны.
 	// FFmpeg
 	ffmpeg_get_path: () => ({}),
 	ffprobe_get_path: () => ({}),
@@ -133,25 +129,10 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	plugin_manager_install: (filePath) => ({ filePath }),
 	plugin_manager_delete: (pluginId, version) => ({ pluginId, version }),
 	plugin_manager_destroy: () => ({}),
-	// App settings
-	app_settings_get: () => ({}),
-	app_settings_set: (settings: any) => ({ settings }),
-	app_settings_patch: (patch: any) => ({ patch }),
-	// Color types
-	color_types_get: () => ({}),
-	color_types_set: (types: any) => ({ types }),
-	color_types_rescan: () => ({}),
-	color_types_add: (name: string, defaultLimit?: number) => ({ name, defaultLimit }),
-	color_types_remove: (name: string) => ({ name }),
-	// File types
-	file_types_get: () => ({}),
-	file_types_set: (types: any) => ({ types }),
-	// Program paths
-	program_paths_get: () => ({}),
-	program_paths_set: (paths: any) => ({ paths }),
+	// App settings / Color types / File types / Program paths — мигрированы на tauri-specta
+	// (commands.* + unwrap из @/Utils/specta). Мапперы не нужны.
 	// Docs
-	docs_list: () => ({}),
-	docs_read: (sectionName: string, fileName: string) => ({ sectionName, fileName }),
+	// docs_list/docs_read мигрированы на tauri-specta (commands.docsList/docsRead) — мапперы не нужны.
 	// Log window (alias targets)
 	log_window_open: () => ({}),
 	log_window_close: () => ({}),
@@ -168,10 +149,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	log_window_emit_item_queued: (payload: any) => ({ payload }),
 	log_window_emit_substep_batch: (payload: any) => ({ payload }),
 	log_window_emit_abort_queued: () => ({}),
-	log_archive_list_days: () => ({}),
-	log_archive_get_day: (date: string) => ({ date }),
-	log_archive_cleanup: () => ({}),
-	log_archive_clear: () => ({}),
+	// log_archive_* мигрированы на tauri-specta (commands.logArchive*) — мапперы не нужны.
 	diag_log_write: (msg: string) => ({ msg }),
 	diag_log_path: () => ({}),
 	diag_log_clear: () => ({}),
@@ -181,8 +159,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	path_exists: (path: string) => ({ path }),
 	os_tmpdir: () => ({}),
 	hash_file: (path: string, algo?: string) => ({ path, algo }),
-	cleanup_auto_delete: (localFolder: string) => ({ localFolder }),
-	db_register_found: (payload: any) => ({ payload }),
+	// cleanup_auto_delete/db_register_found мигрированы на commands.* — мапперы не нужны.
 	// HTTP via Rust (no CORS)
 	// Tauri сопоставляет аргументы по имени параметра Rust-функции.
 	// Все три команды объявлены как fn http_xxx(args: ...) → оборачиваем в { args }.
@@ -220,35 +197,14 @@ const commandAliases: Record<string, string> = {
 	'kill-all-exec-processes': 'killAllExecProcesses',
 	'process-item': 'processItem',
 	// 'fs-watch:start'/'fs-watch:stop' мигрированы на tauri-specta (commands.fsWatchStart/Stop).
-	'preview:resize': 'previewResize',
-	'preview:open': 'previewOpen',
-	'preview:detect-alpha': 'preview_detect_alpha',
-	'preview:transcode-webm': 'preview_transcode_webm',
-	'preview:delete-temp': 'preview_delete_temp',
-	'preview:make-alpha-webm': 'preview_transcode_webm',
+	// preview:* мигрированы на tauri-specta (commands.preview*).
 	'read-media-preview': 'read_media_preview',
 	// Fonts
 	'fonts:get-list': 'fontsGetList',
 	'fonts:load-one': 'fontsLoadOne',
-	// App settings
-	'app-settings:get': 'app_settings_get',
-	'app-settings:set': 'app_settings_set',
-	'app-settings:patch': 'app_settings_patch',
-	// Color types
-	'color-types:get': 'color_types_get',
-	'color-types:set': 'color_types_set',
-	'color-types:rescan': 'color_types_rescan',
-	'color-types:add': 'color_types_add',
-	'color-types:remove': 'color_types_remove',
-	// File types
-	'file-types:get': 'file_types_get',
-	'file-types:set': 'file_types_set',
-	// Program paths
-	'program-paths:get': 'program_paths_get',
-	'program-paths:set': 'program_paths_set',
+	// App settings / Color types / File types / Program paths — мигрированы на tauri-specta (commands.*).
 	// Docs
-	'docs:list': 'docs_list',
-	'docs:read': 'docs_read',
+	// 'docs:list'/'docs:read' мигрированы на tauri-specta (commands.docsList/docsRead).
 	// Log window
 	'log-window:open': 'log_window_open',
 	'log-window:close': 'log_window_close',
@@ -265,10 +221,7 @@ const commandAliases: Record<string, string> = {
 	'log-window:item-queued': 'log_window_emit_item_queued',
 	'log-window:emit-substep-batch': 'log_window_emit_substep_batch',
 	'log-window:abort-queued': 'log_window_emit_abort_queued',
-	'logs:list-days': 'log_archive_list_days',
-	'logs:get-day': 'log_archive_get_day',
-	'logs:cleanup': 'log_archive_cleanup',
-	'logs:clear-archive': 'log_archive_clear',
+	// 'logs:*' мигрированы на tauri-specta (commands.logArchive*).
 	// Диагностический лог для отладки зависания LogApp (см. src-tauri/src/commands/diag_log.rs).
 	'diag:log': 'diag_log_write',
 	'diag:log-path': 'diag_log_path',
@@ -280,8 +233,7 @@ const commandAliases: Record<string, string> = {
 	get_stat: 'get_stat',
 	os_tmpdir: 'os_tmpdir',
 	hash_file: 'hash_file',
-	'cleanup:auto-delete': 'cleanup_auto_delete',
-	'db:registerFound': 'db_register_found',
+	// 'cleanup:auto-delete'/'db:registerFound' мигрированы на commands.* (cleanupAutoDelete/dbRegisterFound).
 };
 
 /**
@@ -550,9 +502,8 @@ export const tauriAPI = {
 	sendNodeError: (nodeId: string, message: string) => tauriInvoke<void>('sendNodeError', nodeId, message),
 	sendProcessComplete: () => tauriInvoke<void>('sendProcessComplete'),
 
-	// Window state
-	saveWindowState: (label: string, state: any) => tauriInvoke<void>('saveWindowState', label, state),
-	loadWindowState: (label: string) => tauriInvoke<any | null>('loadWindowState', label),
+	// Window state: мигрирован на tauri-specta (commands.saveWindowState/loadWindowState).
+	// Сохранение зовётся напрямую из windowAutoSave.ts; загрузка — в Rust на старте.
 
 	// Утилиты
 	hasErrors: () => tauriInvoke<boolean>('log-window:has-errors'),
@@ -564,8 +515,8 @@ export const tauriAPI = {
  * Docs API объект (window.docs)
  */
 const tauriDocs = {
-	list: () => tauriInvoke<Array<{ name: string; files: Array<{ name: string; fileName: string }> }>>('docs_list'),
-	read: (sectionName: string, fileName: string) => tauriInvoke<string>('docs_read', sectionName, fileName),
+	list: () => commands.docsList().then(unwrap),
+	read: (sectionName: string, fileName: string) => commands.docsRead(sectionName, fileName).then(unwrap),
 };
 
 /**

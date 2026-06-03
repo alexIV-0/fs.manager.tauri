@@ -1,5 +1,6 @@
 import { toFileUrl } from '@/Utils/mediaUtils';
 import { CheckerboardBg } from '@/Utils/CheckerboardBg';
+import { commands } from '@/Utils/specta';
 
 const MAX_DIM = 1280;
 
@@ -22,11 +23,7 @@ export function ImagePreview({ filePath }: { filePath: string }) {
 			h = MAX_DIM;
 		}
 
-		window.electronAPI.invoke('preview:resize', {
-			width: w,
-			height: h,
-			aspectRatio: nw / nh,
-		});
+		commands.previewResize({ width: w, height: h, aspectRatio: nw / nh });
 	};
 
 	return (

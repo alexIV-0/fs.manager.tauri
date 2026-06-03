@@ -3,7 +3,7 @@
  */
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
-import { invoke } from '@tauri-apps/api/core';
+import { commands, unwrap } from '@/Utils/specta';
 
 interface WindowState {
 	width: number;
@@ -30,16 +30,13 @@ async function saveCurrentWindowState(window: ReturnType<typeof getCurrentWebvie
 			window.isMaximized(),
 		]);
 
-		await invoke('saveWindowState', {
-			label: window.label,
-			state: {
-				width: size.width,
-				height: size.height,
-				x: position.x,
-				y: position.y,
-				is_maximized: isMaximized,
-			},
-		});
+		unwrap(await commands.saveWindowState(window.label, {
+			width: size.width,
+			height: size.height,
+			x: position.x,
+			y: position.y,
+			is_maximized: isMaximized,
+		}));
 		console.log('[WindowState] Saved:', { width: size.width, height: size.height, x: position.x, y: position.y });
 	} catch (error) {
 		console.error('[WindowState] Failed to save state:', error);

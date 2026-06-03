@@ -1,4 +1,6 @@
 import { AutocompletePropertyControlProps, Property } from '@/NODE_WIN/definitions/types';
+import { commands, unwrap } from '@/Utils/specta';
+import { basename, dirname } from '@/Utils/path';
 import { List, ListItem, ListItemButton, Paper, Popper, Stack, TextField, Typography } from '@mui/material';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
@@ -97,10 +99,10 @@ function AutocompletePath(props: AutocompletePathProps) {
 	/** Получение родительской директории */
 	const getParentPath = useCallback(async (path: string): Promise<string | null> => {
 		try {
-			const parentPath = await window.electronAPI.invoke<string>('pathDirname', path);
+			const parentPath = dirname(path);
 			// Проверяем, не достигли ли мы корня
-			const basename = await window.electronAPI.invoke<string>('pathBasename', path);
-			if (!basename || basename === path) {
+			const baseName = basename(path);
+			if (!baseName || baseName === path) {
 				return null;
 			}
 			return parentPath;
@@ -351,7 +353,7 @@ function AutocompletePath(props: AutocompletePathProps) {
 	const handleSpecialOption = async (type: 'file' | 'folder') => {
 		setShowDropdown(false);
 		if (type === 'file') {
-			const result = await window.electronAPI.invoke<string[]>('selectFiles', { multiSelect: false });
+			const result = unwrap(await commands.selectFiles({ multiSelect: false }));
 			if (result && result.length > 0) {
 				// Получаем относительный путь от базовой папки
 				const selectedPath = result[0];
@@ -369,7 +371,7 @@ function AutocompletePath(props: AutocompletePathProps) {
 				}
 			}
 		} else {
-			const result = await window.electronAPI.invoke<string[]>('selectFolders', { multiSelect: false });
+			const result = unwrap(await commands.selectFolders({ multiSelect: false }));
 			if (result && result.length > 0) {
 				const selectedPath = result[0];
 				if (baseFolder && selectedPath.startsWith(baseFolder)) {

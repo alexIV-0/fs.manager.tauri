@@ -93,7 +93,7 @@ pub fn append_item(app: &tauri::AppHandle, group: &Value) {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 pub struct ArchiveDay {
     pub date: String,
     pub items: usize,
@@ -102,6 +102,7 @@ pub struct ArchiveDay {
 
 /// Список доступных дней архива, отсортированный по убыванию даты (сначала свежие).
 #[tauri::command]
+#[specta::specta]
 pub fn log_archive_list_days(app: tauri::AppHandle) -> Result<Vec<ArchiveDay>, String> {
     let dir = logs_dir(&app)?;
     let mut days: Vec<ArchiveDay> = Vec::new();
@@ -135,6 +136,7 @@ pub fn log_archive_list_days(app: tauri::AppHandle) -> Result<Vec<ArchiveDay>, S
 
 /// Читает все лог-группы за указанный день. date — "YYYY-MM-DD".
 #[tauri::command]
+#[specta::specta]
 pub fn log_archive_get_day(app: tauri::AppHandle, date: String) -> Result<Vec<Value>, String> {
     if !is_valid_day(&date) {
         return Err(format!("invalid date: {}", date));
@@ -154,6 +156,7 @@ pub fn log_archive_get_day(app: tauri::AppHandle, date: String) -> Result<Vec<Va
 
 /// Удаляет архивные файлы старше retentionDays. Возвращает число удалённых файлов.
 #[tauri::command]
+#[specta::specta]
 pub fn log_archive_cleanup(app: tauri::AppHandle) -> Result<usize, String> {
     let days = retention_days(&app);
     if days <= 0 {
@@ -188,6 +191,7 @@ pub fn log_archive_cleanup(app: tauri::AppHandle) -> Result<usize, String> {
 
 /// Полностью очищает архив логов (ручная кнопка). Возвращает число удалённых файлов.
 #[tauri::command]
+#[specta::specta]
 pub fn log_archive_clear(app: tauri::AppHandle) -> Result<usize, String> {
     let dir = logs_dir(&app)?;
     let mut deleted = 0usize;

@@ -163,9 +163,54 @@ tauri-specta = { version = "=2.0.0-rc.x", features = ["derive", "typescript"] }
 > window_commands.open_devtools, не dialog). **Это снесло ОДИН из двух файлов-обёрток (цель плана).**
 > cargo+tsc зелёные; ручной тест — выбор папок/файлов (была ловушка!), save/load flow, clipboard.
 
-Порядок по app-call-sites (от простого к сложному): ~~path-утилиты (→ pure TS, не specta)~~ → ~~dialog~~ → preview (preview:*) → fs_commands (getFileInfo/getSomeFromFolder/copyItem/moveItem/…) →
-processing → window_commands → log-window → settings. **http/icon/ae/exec — отдельно/в конце или вместе
-с плагинами: у них нет app-вызовов** (зовут только плагины через `_template/tauri.ts`). Для каждого модуля:
+> **✅ preview — ВЫПОЛНЕНО.** 5 команд (`preview_open`/`preview_resize`/`preview_detect_alpha`/
+> `preview_transcode_webm`/`preview_delete_temp`) размечены, `PreviewResizeOpts` (в fs_commands.rs) +
+> `specta::Type`. 9 call-sites в 5 файлах (4× preview:resize, preview:open, detect-alpha/transcode/delete-temp)
+> → `commands.preview*`. camel `previewResize/previewOpen` удалены, 6 алиасов + 5 argMappers убраны.
+> Нюансы: `preview_open(data: string)` — JSON-строка (передаём `JSON.stringify`); 3 стаба имели `_file_path`
+> — переименованы в `file_path` (+`let _ =`) чтобы биндинг был чистый `filePath`, а не `_filePath`;
+> в `.then`-цепочках (VideoPreview) `unwrap(r)` внутри then → ошибка уходит в существующий `.catch`.
+> cargo+tsc зелёные; ручной тест — открыть превью видео/аудио/картинки/текста, ресайз окна.
+
+> **⚠️ КЛЮЧЕВАЯ НАХОДКА (2026-06-02): fs_commands СИЛЬНО завязан на плагины.** Плагины через тот же
+> шим (`window.electronAPI.invoke` в `_template/tauri.ts`) зовут МНОГО fs-camel-обёрток: getFileInfo,
+> copyItem, moveItem, getSomeFromFolder, readFileSync, writeFile, deleteItem, testAndCreateFolder,
+> recursiveFindFiles, shellOpenPath, fontsGetList, getCpuCount, getOptionsFolder, getPlatformTarget,
+> getPluginsDevPath + snake get_stat/hash_file/os_tmpdir/write_binary_file. → **эти обёртки+мапперы+алиасы
+> УДАЛЯТЬ НЕЛЬЗЯ** (сломаем плагины, §6). Из «мелких» модулей плагины зовут только `sendLog`/`setStatusBar`.
+>
+> **Следствия:**
+> - Для fs миграция = только перевод app-call-sites на `commands.*` (type-safety на горячих путях),
+>   обёртки остаются для плагинов. Cruft-removal ≈ 0. Поэтому fs отложен на plugin-aware проход.
+> - Финал «удалить camelcase_wrappers.rs целиком» ЗАБЛОКИРОВАН до миграции плагинов (перевод
+>   `_template/tauri.ts` на snake-имена + пересборка плагинов). Это отдельный кусок.
+> - **Полностью чистые модули (нет плагинного overlap): window, log-window, settings, docs.** Их и
+>   мигрируем сейчас — обёртки/алиасы удаляются чисто. processing — почти чистый (кроме sendLog/setStatusBar).
+
+> **✅ settings — ВЫПОЛНЕНО (чистый от плагинов модуль).** 14 команд (app_settings/color_types/
+> file_types/program_paths + cleanup_auto_delete/db_register_found) размечены `#[specta::specta]`
+> (структур нет — все возвращают `serde_json::Value`/`String`). Call-sites: `appSettings_client.ts`
+> (8), `pathPattern_store.ts` (фабрику `createTauriPatternStore` отрефакторил: строки-каналы →
+> типизированные load/save-функции), `TabMain.tsx`, `runProcessing.ts`, `sendFindItem...ts`.
+> Удалены 14 kebab-алиасов + 14 argMappers (camel-обёрток у settings не было). Нюанс: `Value` → `JsonValue`,
+> касты к доменным типам через `as unknown as AppSettings/ColorTypesFile`. cargo+tsc зелёные.
+> Ручной тест: настройки (вкладки), color/file types, program paths, cleanup, db-register при обработке.
+
+Порядок (ПЕРЕСМОТРЕН — сначала чистые от плагинов): ~~path (pure TS)~~ → ~~dialog~~ → ~~preview~~ →
+> **✅ window-state — ВЫПОЛНЕНО.** `save_window_state`/`load_window_state` + `specta::Type` на `WindowState`.
+> Единственный call-site `src/Utils/windowAutoSave.ts` → `commands.saveWindowState(label, state)`. Удалены
+> camel-обёртки saveWindowState/loadWindowState + argMappers + мёртвые типизированные методы tauriAPI.
+> Загрузка стейта — в Rust на старте (JS loadWindowState не использовался). cargo+tsc зелёные.
+> (Остальное в window_commands — node-window data-flow/open_node_window — завязано на события, отложено на этап событий.)
+
+> **✅ log_archive — ВЫПОЛНЕНО (часть 1 log-window).** 4 команды (log_archive_list_days/get_day/cleanup/clear)
+> + `specta::Type` на `ArchiveDay`. Call-sites: runProcessing (logs:cleanup), LogApp ×3 (list-days/get-day/clear-archive).
+> Удалены 4 logs:* алиаса + 4 argMappers. cargo+tsc зелёные. **Осталось log_window (UI): open/close/clear/
+> get_history/export/has_errors/get_recent/get_errors/emit_* + структуры LogHistory; diag_log и мёртвые
+> (toggle/status/quick/errors_only/console/log_message) — не трогаем.**
+
+~~settings~~ → ~~docs~~ → ~~window-state~~ → ~~log_archive~~ → **log_window UI** → processing (кроме sendLog/setStatusBar) →
+**fs_commands и плагинный шаблон — В КОНЦЕ, plugin-aware проходом**. http/icon/ae/exec — плагинные. Для каждого модуля:
 - [ ] Найти call-sites: `grep -rn "electronAPI.invoke('<имена модуля>'" src/`.
 - [ ] Переписать на `commands.<camelName>(...)`.
 - [ ] Удалить отработавшие camel-обёртки + алиасы (как только нет легаси-вызовов).

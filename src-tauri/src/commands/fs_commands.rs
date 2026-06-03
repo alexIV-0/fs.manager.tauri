@@ -28,7 +28,7 @@ pub struct CopyMoveOptions {
     pub overwrite: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResizeOpts {
     pub width: f64,

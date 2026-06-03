@@ -8,6 +8,7 @@
 
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
+import { commands } from '@/Utils/specta';
 import { findAllFilesForProcess } from './findAllFilesForProcess';
 import { finalyWating } from './utils/finalyWating';
 import { startProcessing } from './startProcessing';
@@ -26,10 +27,10 @@ export let timeToWait = {
 function triggerCleanup(): Promise<unknown> {
 	// Чистим архив логов (файлы старше logs.retentionDays) в том же безопасном окне,
 	// что и автоудаление папок — когда очередь обработки пуста.
-	const logsCleanup = window.electronAPI.invoke('logs:cleanup').catch(() => {});
+	const logsCleanup = commands.logArchiveCleanup().catch(() => {});
 	const localFolder = localFolders_stor.getState().localFolder;
 	if (!localFolder) return logsCleanup;
-	const foldersCleanup = window.electronAPI.invoke('cleanup:auto-delete', localFolder).catch(() => {});
+	const foldersCleanup = commands.cleanupAutoDelete(localFolder).catch(() => {});
 	return Promise.all([logsCleanup, foldersCleanup]);
 }
 

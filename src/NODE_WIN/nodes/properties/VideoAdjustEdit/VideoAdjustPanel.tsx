@@ -6,6 +6,7 @@
 //   3. BG Layer — copies, blur/brightness/contrast/saturation/hFlip
 
 import { memo } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, Divider, Typography } from '@mui/material';
 import { greyColor } from '@/Store/Color/grayColor';
 import PanelSlider from '../PanelSlider';
@@ -36,12 +37,12 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 	const numBorder = greyColor(30);
 
 	const selectFile = (cb: (path: string) => void) => {
-		(window as any).electronAPI
-			.invoke('selectFiles', {
+		commands
+			.selectFiles({
 				multiSelect: false,
 				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp'] }],
 			})
-			.then((paths: string[]) => { if (paths?.length > 0) cb(paths[0]); })
+			.then((r) => { const paths = unwrap(r); if (paths?.length > 0) cb(paths[0]); })
 			.catch(() => {});
 	};
 

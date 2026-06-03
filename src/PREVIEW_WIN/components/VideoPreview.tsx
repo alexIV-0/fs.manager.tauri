@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { toFileUrl, formatTime } from '@/Utils/mediaUtils';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 
@@ -55,11 +56,7 @@ export function VideoPreview({ filePath }: { filePath: string }) {
 				`aspect=${(window.innerWidth / window.innerHeight).toFixed(4)}`
 			);
 
-			window.electronAPI.invoke('preview:resize', {
-				width: w,
-				height: h,
-				aspectRatio: vw / vh,
-			});
+			commands.previewResize({ width: w, height: h, aspectRatio: vw / vh });
 
 			// Через 200мс проверим, как окно и видео-элемент фактически выглядят
 			setTimeout(() => {
@@ -94,15 +91,15 @@ export function VideoPreview({ filePath }: { filePath: string }) {
 		setTranscodedPath('');
 		setTranscoding(false);
 
-		(window as any).electronAPI.invoke('preview:detect-alpha', filePath)
-			.then((isAlpha: boolean) => {
-				if (mounted) setHasAlpha(!!isAlpha);
+		commands.previewDetectAlpha(filePath)
+			.then((r) => {
+				if (mounted) setHasAlpha(!!unwrap(r));
 			})
 			.catch(() => {});
 
 		return () => {
 			mounted = false;
-			if (transcodedPath) (window as any).electronAPI.invoke('preview:delete-temp', transcodedPath).catch(() => {});
+			if (transcodedPath) commands.previewDeleteTemp(transcodedPath).catch(() => {});
 		};
 	}, [filePath]);
 
@@ -117,8 +114,9 @@ export function VideoPreview({ filePath }: { filePath: string }) {
 		}
 		setError(false);
 		setTranscoding(true);
-		(window as any).electronAPI.invoke('preview:transcode-webm', filePath)
-			.then((p: string) => {
+		commands.previewTranscodeWebm(filePath)
+			.then((r) => {
+				const p = unwrap(r);
 				console.log('[VideoPreview] transcode result:', p);
 				if (p) {
 					setTranscodedPath(p);

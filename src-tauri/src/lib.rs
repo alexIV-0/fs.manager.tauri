@@ -46,6 +46,12 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             // fs watcher (мигрирован Stage 1 — call-sites на commands.*, camel-обёртки удалены)
             fs_watch_start,
             fs_watch_stop,
+            // preview (мигрирован — call-sites на commands.*, camel previewResize/previewOpen удалены)
+            preview_open,
+            preview_resize,
+            preview_detect_alpha,
+            preview_transcode_webm,
+            preview_delete_temp,
             // dialog/shell/файловые (мигрированы — реальные реализации, snake-имена,
             // dialog_commands_camel.rs удалён)
             select_folders,
@@ -60,6 +66,33 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             get_paths_from_files,
             request_data_preview,
             open_dev_tools,
+            // docs (чистый от плагинов) — мигрирован на commands.*
+            docs_list,
+            docs_read,
+            // window-state (чистый) — мигрирован на commands.*
+            save_window_state,
+            load_window_state,
+            // log_archive (чистый) — мигрирован на commands.*
+            log_archive_list_days,
+            log_archive_get_day,
+            log_archive_cleanup,
+            log_archive_clear,
+            // settings (app_settings/color_types/file_types/program_paths + cleanup/db) —
+            // чистый от плагинов модуль, мигрирован на commands.*
+            app_settings_get,
+            app_settings_set,
+            app_settings_patch,
+            color_types_get,
+            color_types_set,
+            color_types_rescan,
+            color_types_add,
+            color_types_remove,
+            file_types_get,
+            file_types_set,
+            program_paths_get,
+            program_paths_set,
+            cleanup_auto_delete,
+            db_register_found,
             // path-утилиты: НЕ через specta — приложение считает их в renderer (чистый TS,
             // src/Utils/path.ts), а path_join оставлен только как обычная команда для плагинов.
         ])
@@ -337,8 +370,6 @@ pub fn run() {
             fontsGetList,
             fontsLoadOne,
             shellOpenPath,
-            previewResize,
-            previewOpen,
             openNodeWindow,
             abortProcessing,
             processItem,
@@ -361,11 +392,9 @@ pub fn run() {
             get_paths_from_files,
             request_data_preview,
             open_dev_tools,
-            // Window state
+            // Window state (мигрирован на specta — camel saveWindowState/loadWindowState удалены)
             save_window_state,
             load_window_state,
-            saveWindowState,
-            loadWindowState,
             // Path utilities: только path_join (его зовут плагины через IPC);
             // basename/dirname/extname/parse/relative удалены — приложение считает в renderer.
             path_join,

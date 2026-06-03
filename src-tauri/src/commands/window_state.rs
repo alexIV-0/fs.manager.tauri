@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::Manager;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct WindowState {
     pub width: f64,
     pub height: f64,
@@ -23,6 +23,7 @@ fn get_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// Сохранить состояние окна
 #[tauri::command]
+#[specta::specta]
 pub fn save_window_state(
     label: String,
     state: WindowState,
@@ -48,6 +49,7 @@ pub fn save_window_state(
 
 /// Загрузить состояние окна
 #[tauri::command]
+#[specta::specta]
 pub fn load_window_state(
     label: String,
     app: tauri::AppHandle,

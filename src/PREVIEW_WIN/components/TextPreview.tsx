@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
+import { commands } from '@/Utils/specta';
 
 const WINDOW_W = 900;
 const WINDOW_H = 620;
@@ -47,10 +48,7 @@ export function TextPreview({ filePath }: { filePath: string }) {
 	useEffect(() => {
 		setModified(false);
 
-		window.electronAPI.invoke('preview:resize', {
-			width: WINDOW_W,
-			height: WINDOW_H,
-		});
+		commands.previewResize({ width: WINDOW_W, height: WINDOW_H });
 
 		let disposed = false;
 

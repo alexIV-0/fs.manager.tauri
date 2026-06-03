@@ -420,6 +420,7 @@ pub async fn send_data_to_node_window(app: tauri::AppHandle, data: serde_json::V
 //   * Любой resize/move сохраняет bounds под текущим типом и ставит lock=true.
 
 #[tauri::command]
+#[specta::specta]
 pub async fn preview_open(
     app: tauri::AppHandle,
     data: String,
@@ -670,20 +671,26 @@ fn on_preview_destroyed(app: &tauri::AppHandle, label: &str, file_type: &str) {
 /// Пока возвращаем false — Quick Look альфа-channel webm работать не будет, но
 /// обычные видео будут проигрываться нормально.
 #[tauri::command]
-pub fn preview_detect_alpha(_file_path: String) -> Result<bool, String> {
+#[specta::specta]
+pub fn preview_detect_alpha(file_path: String) -> Result<bool, String> {
+    let _ = file_path;
     Ok(false)
 }
 
 /// Стаб: транскодит webm в нужный формат для проигрывания альфа-канала.
 /// Возвращает None — frontend упадёт в catch и проиграет оригинал.
 #[tauri::command]
-pub fn preview_transcode_webm(_file_path: String) -> Result<Option<String>, String> {
+#[specta::specta]
+pub fn preview_transcode_webm(file_path: String) -> Result<Option<String>, String> {
+    let _ = file_path;
     Ok(None)
 }
 
 /// Стаб: удаляет временный файл после транскодинга.
 #[tauri::command]
-pub fn preview_delete_temp(_file_path: String) -> Result<(), String> {
+#[specta::specta]
+pub fn preview_delete_temp(file_path: String) -> Result<(), String> {
+    let _ = file_path;
     Ok(())
 }
 
@@ -697,6 +704,7 @@ pub fn preview_delete_temp(_file_path: String) -> Result<(), String> {
 ///     Иначе ресайзим под native-размеры видео.
 ///   * Aspect-constraint (для пользовательского drag-ресайза) ставим всегда.
 #[tauri::command]
+#[specta::specta]
 pub async fn preview_resize(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,

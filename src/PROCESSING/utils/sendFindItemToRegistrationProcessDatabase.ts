@@ -1,3 +1,5 @@
+import { commands, unwrap } from '@/Utils/specta';
+
 export async function sendFindItemToRegistrationProcessDatabase(_item: any): Promise<void> {
 	try {
 		const d = _item.description ?? {};
@@ -34,7 +36,7 @@ export async function sendFindItemToRegistrationProcessDatabase(_item: any): Pro
 			plugins,
 		};
 
-		const itemId: string = await window.electronAPI.invoke('db:registerFound', payload);
+		const itemId = unwrap(await commands.dbRegisterFound(payload as any));
 		_item.description.dbItemId = itemId;
 	} catch (e) {
 		console.warn('[registerFound] failed:', e);

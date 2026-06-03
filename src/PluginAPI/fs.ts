@@ -173,7 +173,9 @@ export async function copyFile(src: string, dst: string): Promise<void> {
 export const copyFileSync = copyFile;
 
 export async function rename(oldPath: string, newPath: string): Promise<void> {
-	await api().invoke('renameFile', oldPath, newPath);
+	// snake-имя: camel-обёртка renameFile удалена при миграции dialog на specta.
+	// Плагины зовут реальную команду напрямую (объект-payload, Tauri camelCase→snake).
+	await api().invoke('rename_file', { oldPath, newPath });
 }
 export const renameSync = rename;
 

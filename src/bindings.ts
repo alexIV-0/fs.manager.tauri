@@ -40,6 +40,69 @@ async fsWatchStop(folderPath: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async previewOpen(data: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_open", { data }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Подгонка окна под видео + установка aspect-constraint.
+ * 
+ * Логика (доработка Electron'овской):
+ * * Bounds сохраняются под ключом "{type}_{orientation}" — отдельно vertical/
+ * horizontal/square. Это решает проблему letterbox'а при переключении между
+ * 9:16 и 16:9 видео — каждая ориентация имеет свои сохранённые размеры.
+ * * Если для текущей ориентации есть сохранённые bounds — применяем их.
+ * Иначе ресайзим под native-размеры видео.
+ * * Aspect-constraint (для пользовательского drag-ресайза) ставим всегда.
+ */
+async previewResize(opts: PreviewResizeOpts) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_resize", { opts }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Стаб: определяет наличие альфа-канала в видео. Реальная реализация требует ffprobe.
+ * Пока возвращаем false — Quick Look альфа-channel webm работать не будет, но
+ * обычные видео будут проигрываться нормально.
+ */
+async previewDetectAlpha(filePath: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_detect_alpha", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Стаб: транскодит webm в нужный формат для проигрывания альфа-канала.
+ * Возвращает None — frontend упадёт в catch и проиграет оригинал.
+ */
+async previewTranscodeWebm(filePath: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_transcode_webm", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Стаб: удаляет временный файл после транскодинга.
+ */
+async previewDeleteTemp(filePath: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_delete_temp", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async selectFolders(options: SelectFoldersOptions | null) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("select_folders", { options }) };
@@ -135,6 +198,238 @@ async openDevTools() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async docsList() : Promise<Result<DocSection[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("docs_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async docsRead(sectionName: string, fileName: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("docs_read", { sectionName, fileName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сохранить состояние окна
+ */
+async saveWindowState(label: string, state: WindowState) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_window_state", { label, state }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Загрузить состояние окна
+ */
+async loadWindowState(label: string) : Promise<Result<WindowState | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("load_window_state", { label }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Список доступных дней архива, отсортированный по убыванию даты (сначала свежие).
+ */
+async logArchiveListDays() : Promise<Result<ArchiveDay[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_archive_list_days") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Читает все лог-группы за указанный день. date — "YYYY-MM-DD".
+ */
+async logArchiveGetDay(date: string) : Promise<Result<JsonValue[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_archive_get_day", { date }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удаляет архивные файлы старше retentionDays. Возвращает число удалённых файлов.
+ */
+async logArchiveCleanup() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_archive_cleanup") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Полностью очищает архив логов (ручная кнопка). Возвращает число удалённых файлов.
+ */
+async logArchiveClear() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("log_archive_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async appSettingsGet() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_settings_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async appSettingsSet(settings: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_settings_set", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async appSettingsPatch(patch: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("app_settings_patch", { patch }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async colorTypesGet() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("color_types_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async colorTypesSet(types: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("color_types_set", { types }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Пересканит установленные плагины и обновит список colorTypes:
+ * — добавляет новые colorType (которые встречаются в `ui.json#data.colorType`)
+ * — помечает orphan: true тем, что больше не используются ни одним плагином
+ * — ничего не удаляет (юзер может вернуть плагин обратно)
+ * 
+ * Порт `electron/main/settings/colorTypes.ts#rescanColorTypes`.
+ */
+async colorTypesRescan() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("color_types_rescan") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async colorTypesAdd(name: string, defaultLimit: number | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("color_types_add", { name, defaultLimit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async colorTypesRemove(name: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("color_types_remove", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async fileTypesGet() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("file_types_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async fileTypesSet(types: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("file_types_set", { types }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async programPathsGet() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("program_paths_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async programPathsSet(paths: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("program_paths_set", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Автоудаление старых результатов в локальной папке-зеркале.
+ * 
+ * Структура локальной папки строго фиксирована:
+ * localFolder/mainFolderName/projectName/findTime/...
+ * 
+ * Правила:
+ * - `findTime` (уровень 3) — удаляется целиком, если самый свежий файл в её
+ * поддереве старше `cleanup.retentionDays`. Возраст считается по
+ * max(mtime файлов в поддереве), а не по mtime самой папки — иначе удаление
+ * соседей бампало бы mtime родителя.
+ * - `projectName` (уровень 2) — удаляется, ТОЛЬКО если после чистки findTime
+ * в ней не осталось ни файлов, ни поддиректорий. По возрасту НЕ удаляется.
+ * - `mainFolderName` (уровень 1) — то же, что и `projectName`: только если
+ * полностью пустая после прохода.
+ * 
+ * Сами пустые `projectName`/`mainFolderName` создадутся снова при следующем
+ * скане, если в источнике появятся новые файлы.
+ * 
+ * Безопасность вызова: запускать ТОЛЬКО когда очередь обработки пуста и
+ * новый скан ещё не стартовал (см. runProcessing.ts). Этот вызов конкурирует
+ * с findAllFilesForProcess по тем же путям, и удаление их «из под ног»
+ * процессинга и было причиной поломок в Electron-версии.
+ */
+async cleanupAutoDelete(localFolder: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cleanup_auto_delete", { localFolder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Стаб для db:registerFound. Реальный online-DB sync не реализован,
+ * но фронту нужен **строковый** dbItemId для трекинга item'а в LogWindow и processItem.
+ * Возвращаем детерминированный ID на основе pathForDelete + findTime — так чтобы
+ * повторный вызов на тот же item дал тот же ID (как и должно быть при идемпотентной регистрации).
+ */
+async dbRegisterFound(payload: JsonValue) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("db_register_found", { payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -149,8 +444,12 @@ async openDevTools() : Promise<Result<null, string>> {
 /** user-defined types **/
 
 export type AEResult = { success: boolean; data: JsonValue | null; error: string | null }
+export type ArchiveDay = { date: string; items: number; bytes: number }
 export type DialogFilter = { name: string; extensions: string[] }
+export type DocFile = { name: string; fileName: string }
+export type DocSection = { name: string; files: DocFile[] }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type PreviewResizeOpts = { width: number; height: number; aspectRatio?: number | null; extraHeight?: number | null }
 export type RunScriptInAEArgs = { 
 /**
  * Путь к исполняемому файлу AE (aerender или After Effects.app)
@@ -178,6 +477,7 @@ keep_temp_files: boolean | null;
 timeout_sec: number | null }
 export type SelectFilesOptions = { multiSelect?: boolean; filters?: DialogFilter[] | null }
 export type SelectFoldersOptions = { multiSelect?: boolean }
+export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
 
 /** tauri-specta globals **/
 
