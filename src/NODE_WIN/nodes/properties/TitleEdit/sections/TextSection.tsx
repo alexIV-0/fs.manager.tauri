@@ -6,6 +6,7 @@ import { Search } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
 import { SectionAccordion, Row, ColorRow, SliderRow } from './SectionUI';
 import { SectionProps } from './sectionTypes';
+import { commands, unwrap } from '@/Utils/specta';
 
 interface FontListItem {
 	name: string;
@@ -19,7 +20,7 @@ async function loadFont(font: FontListItem): Promise<boolean> {
 	if (!font.loadable) return false;
 	if (loadedFontNames.has(font.name)) return true;
 	try {
-		const dataUrl = await window.tauriAPI.invoke<string>('fonts:load-one', font.path);
+		const dataUrl = unwrap(await commands.fontsLoadOne(font.path));
 		if (!dataUrl) return false;
 		const face = new FontFace(font.name, `url("${dataUrl}")`);
 		await face.load();
@@ -97,8 +98,9 @@ export const TextSection = memo(function TextSection({ settings, expanded, onTog
 	// ── Загрузка списка ───────────────────────────────────────────────────────
 
 	useEffect(() => {
-		window.tauriAPI
-			.invoke<FontListItem[]>('fonts:get-list')
+		commands
+			.fontsGetList()
+			.then(unwrap)
 			.then(async (list) => {
 				setFonts(list);
 				const current = list.find((f) => f.name === settings.text.font);
