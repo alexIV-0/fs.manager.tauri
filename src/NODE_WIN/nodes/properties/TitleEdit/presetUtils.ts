@@ -3,9 +3,7 @@
 import { getPresetsDir } from '@/NODE_WIN/utils/getPresetDir';
 import { TitlePresetItem, TitleSettings } from './types';
 import { joinPath } from '@/Utils/joinPath';
-import { tauriAPI } from '@/Utils/tauri-api';
-
-const api = tauriAPI;
+import { commands, unwrap } from '@/Utils/specta';
 
 // ── Пути ─────────────────────────────────────────────────────────────────────
 
@@ -23,11 +21,11 @@ async function getPresetDataPath(id: string): Promise<string> {
 
 export async function loadPresetIndex(): Promise<TitlePresetItem[]> {
 	const indexPath = await getIndexPath();
-	const exists = await api.invoke<string>('checkFilePath', indexPath);
+	const exists = unwrap(await commands.checkFilePath(indexPath, null));
 	if (!exists) return [];
 
 	try {
-		const raw = await api.invoke<string>('readFileSync', indexPath);
+		const raw = unwrap(await commands.readFileSync(indexPath));
 		return JSON.parse(raw) as TitlePresetItem[];
 	} catch {
 		return [];
@@ -36,18 +34,18 @@ export async function loadPresetIndex(): Promise<TitlePresetItem[]> {
 
 export async function savePresetIndex(items: TitlePresetItem[]): Promise<void> {
 	const indexPath = await getIndexPath();
-	await api.invoke('writeFile', indexPath, JSON.stringify(items, null, 2));
+	unwrap(await commands.writeFile(indexPath, JSON.stringify(items, null, 2)));
 }
 
 // ── Данные пресета ────────────────────────────────────────────────────────────
 
 export async function loadPresetData(id: string): Promise<TitleSettings | null> {
 	const dataPath = await getPresetDataPath(id);
-	const exists = await api.invoke<string>('checkFilePath', dataPath);
+	const exists = unwrap(await commands.checkFilePath(dataPath, null));
 	if (!exists) return null;
 
 	try {
-		const raw = await api.invoke<string>('readFileSync', dataPath);
+		const raw = unwrap(await commands.readFileSync(dataPath));
 		return JSON.parse(raw) as TitleSettings;
 	} catch {
 		return null;
@@ -56,14 +54,14 @@ export async function loadPresetData(id: string): Promise<TitleSettings | null> 
 
 export async function savePresetData(id: string, settings: TitleSettings): Promise<void> {
 	const dataPath = await getPresetDataPath(id);
-	await api.invoke('writeFile', dataPath, JSON.stringify(settings, null, 2));
+	unwrap(await commands.writeFile(dataPath, JSON.stringify(settings, null, 2)));
 }
 
 // ── Удаление ──────────────────────────────────────────────────────────────────
 
 export async function deletePreset(id: string): Promise<void> {
 	const dataPath = await getPresetDataPath(id);
-	await api.invoke('deleteItem', dataPath);
+	unwrap(await commands.deleteItem(dataPath));
 }
 
 // ── Сохранение нового пресета ─────────────────────────────────────────────────

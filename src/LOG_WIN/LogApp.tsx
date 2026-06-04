@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, CssBaseline, Tab, Tabs, ThemeProvider, createTheme } from '@mui/material';
 import { Archive, Zap } from 'lucide-react';
 import { themeOptions } from '../theme/themeOptions';
@@ -15,7 +16,7 @@ const theme = createTheme(themeOptions);
 // `diag:log` алиасом и diag_log.rs модулем.
 function diag(msg: string) {
 	try {
-		(window as any).electronAPI?.invoke?.('diag:log', `[LogApp] ${msg}`);
+		(window as any).tauriAPI?.invoke?.('diag:log', `[LogApp] ${msg}`);
 	} catch {
 		/* noop */
 	}
@@ -130,11 +131,12 @@ export default function LogApp() {
 	// ── IPC ──────────────────────────────────────────────────────────────────
 
 	useEffect(() => {
-		const api = (window as any).electronAPI;
+		const api = (window as any).tauriAPI;
 
 		const tHistory0 = performance.now();
 		diag('get-history start');
-		api.invoke('log-window:get-history').then((data: any) => {
+		commands.logWindowGetHistory().then((r) => {
+			const data: any = unwrap(r);
 			const tIpc = performance.now() - tHistory0;
 			if (!data) {
 				diag(`get-history empty (ipc=${tIpc.toFixed(0)}ms)`);
@@ -340,9 +342,8 @@ export default function LogApp() {
 	}, []);
 
 	const loadArchiveDays = useCallback(async () => {
-		const api = (window as any).electronAPI;
 		try {
-			const days = await api.invoke('logs:list-days');
+			const days = unwrap(await commands.logArchiveListDays());
 			setArchiveDays(Array.isArray(days) ? days : []);
 		} catch {
 			setArchiveDays([]);
@@ -350,12 +351,11 @@ export default function LogApp() {
 	}, []);
 
 	const openArchiveDay = useCallback(async (date: string) => {
-		const api = (window as any).electronAPI;
 		setArchiveLoading(true);
 		setArchiveDate(date);
 		setArchiveExpanded(new Set());
 		try {
-			const groups = await api.invoke('logs:get-day', date);
+			const groups = unwrap(await commands.logArchiveGetDay(date));
 			setArchiveItems((Array.isArray(groups) ? groups : []).map((g: any) => ({ ...g, itemLogs: g.itemLogs ?? [] })));
 		} catch {
 			setArchiveItems([]);
@@ -373,8 +373,7 @@ export default function LogApp() {
 	);
 
 	const handleClearArchive = useCallback(async () => {
-		const api = (window as any).electronAPI;
-		await api.invoke('logs:clear-archive').catch(() => {});
+		commands.logArchiveClear().catch(() => {});
 		setArchiveItems([]);
 		setArchiveDate(null);
 		loadArchiveDays();

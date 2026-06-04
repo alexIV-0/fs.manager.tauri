@@ -1,5 +1,6 @@
 // NodeApp.tsx
 import { usePathStore } from '@/Store/Node/usePathStore';
+import { commands, unwrap } from '@/Utils/specta';
 import { useSavedState } from '@/Store/Node/useSavedState';
 import { rebuildColorTypes } from '@/Store/Color/buildColorTypes';
 import ThemeWrapper from '@/theme/ThemeWrapper';
@@ -31,7 +32,7 @@ function NodeApp() {
 	const [pluginUINodes, setPluginUINodes] = useState<CollectedUINode[]>([]);
 
 	// F12 toggles this window's DevTools (dev/devtools builds). Mirrors PreviewApp.
-	useKeyboardShortcut({ key: 'F12', skipOnInput: false, callback: () => window.electronAPI.openDevTools() });
+	useKeyboardShortcut({ key: 'F12', skipOnInput: false, callback: () => window.tauriAPI.openDevTools() });
 
 	useEffect(() => {
 		let isMounted = true;
@@ -98,15 +99,15 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 		const handler = (_: unknown, data: string) => {
 			addPath(data);
 		};
-		window.electronAPI.onUpdateData(handler);
+		window.tauriAPI.onUpdateData(handler);
 
 		if (!initialized.current) {
 			initialized.current = true;
-			window.electronAPI.requestData();
+			window.tauriAPI.requestData();
 		}
 
 		return () => {
-			window.electronAPI.removeUpdateData(handler);
+			window.tauriAPI.removeUpdateData(handler);
 		};
 	}, [addPath]);
 
@@ -120,10 +121,10 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 			// Раньше: 3 sequential IPC по одной папке. Теперь: один батч-вызов,
 			// внутри nativeFs создаёт все три параллельно через tokio thread pool.
 			const folders = ['IN', 'options', 'OUT'].map((f) => joinPath(path, f));
-			await window.electronAPI.invoke('testAndCreateFolders', folders);
-			const newState = await window.electronAPI.invoke('getNodeObjFromFile', path);
+			unwrap(await commands.testAndCreateFolders(folders));
+			const newState = unwrap(await commands.getNodeObjFromFile(path));
 			if (cancelled) return;
-			setSavedState(newState as SavedState);
+			setSavedState(newState as unknown as SavedState);
 		};
 
 		init();

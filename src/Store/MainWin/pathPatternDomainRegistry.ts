@@ -33,7 +33,7 @@ export const patternDomainRegistry: Record<PatternDomain, DomainHandlers> = {
 		// },
 		onChange: async (_paths, store) => {
 			// console.log('onChange', _paths);
-			// await window.electronAPI.invoke('getOptionsFolder');
+			// await window.tauriAPI.invoke('getOptionsFolder');
 		},
 		onRemove: () => {
 			// обновить node definitions

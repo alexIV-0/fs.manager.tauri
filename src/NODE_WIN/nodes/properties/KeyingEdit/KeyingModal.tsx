@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/KeyingEdit/KeyingModal.tsx
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Typography } from '@mui/material';
 import { KeyingSettings, defaultKeyingSettings } from './types';
 import ModalShell from '../ModalShell';
@@ -44,7 +45,7 @@ export default function KeyingModal({ value, onSave, onClose }: KeyingModalProps
 		if (!saved) return;
 		const abs = toAbsolutePath(saved, projectPath);
 		(async () => {
-			const exists = await (window as any).electronAPI.invoke('checkFilePath', abs).catch(() => false);
+			const exists = await commands.checkFilePath(abs, null).then(unwrap).catch(() => false);
 			if (exists) setEffectiveFilePath(abs);
 		})();
 		// eslint-disable-next-line react-hooks/exhaustive-deps

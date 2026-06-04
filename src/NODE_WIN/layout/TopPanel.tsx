@@ -1,4 +1,5 @@
 import { greyColor } from '@/Store/Color/grayColor';
+import { commands, unwrap } from '@/Utils/specta';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { runProcessingForSingleFolder } from '@/PROCESSING/runProcessingForSingleFolder';
@@ -31,7 +32,7 @@ function TopPanel({ title }: TopPanelProps) {
 
 		// Сначала сохраняем текущее состояние нод
 		const flow = reactFlow.toObject();
-		await window.electronAPI.invoke('saveFlowToOptionsFolder', path, flow);
+		unwrap(await commands.saveFlowToOptionsFolder(path, flow as any));
 
 		// Запускаем обработку только для этой папки
 		await runProcessingForSingleFolder(path);
@@ -39,7 +40,7 @@ function TopPanel({ title }: TopPanelProps) {
 
 	const handleStop = useCallback(() => {
 		abortNow();
-		window.electronAPI.invoke('abort-processing');
+		commands.abortProcessing();
 		const { setIsScanning, setIsScanningProcess } = isScanningStore.getState();
 		setIsScanningProcess(false);
 		setIsScanning(false);

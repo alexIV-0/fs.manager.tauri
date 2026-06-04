@@ -3,6 +3,7 @@ import { Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, Di
 import { greyColor } from '@/Store/Color/grayColor';
 import type { PluginJsonData, UiJsonData } from './types';
 import { joinPath } from '@/Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
 
 interface LoadPluginDialogProps {
 	open: boolean;
@@ -26,10 +27,8 @@ export function LoadPluginDialog({ open, onClose, onLoad }: LoadPluginDialogProp
 		setError(null);
 		(async () => {
 			try {
-				const devPath = await window.electronAPI.invoke<string>('getPluginsDevPath');
-				const result = await window.electronAPI.invoke<Record<string, string[]>>('getSomeFromFolder', devPath, [
-					{ type: 'folders', ext: [] },
-				]);
+				const devPath = unwrap(await commands.getPluginsDevPath());
+				const result: any = unwrap(await commands.getSomeFromFolder(devPath, [{ type: 'folders', ext: [] }]));
 				const folders: string[] = result?.folders ?? [];
 				setPlugins(folders.filter((f) => !f.startsWith('_')));
 			} catch (e: any) {
@@ -49,19 +48,19 @@ export function LoadPluginDialog({ open, onClose, onLoad }: LoadPluginDialogProp
 
 	const handleSelect = async (folderName: string) => {
 		try {
-			const devPath = await window.electronAPI.invoke<string>('getPluginsDevPath');
+			const devPath = unwrap(await commands.getPluginsDevPath());
 			const folderPath = joinPath(devPath, folderName);
 
-			const pjRaw = await window.electronAPI.invoke<string>('readFileSync', joinPath(folderPath, 'plugin.json'));
+			const pjRaw = unwrap(await commands.readFileSync(joinPath(folderPath, 'plugin.json')));
 			const pluginJson: PluginJsonData = JSON.parse(pjRaw);
 
-			const ujRaw = await window.electronAPI.invoke<string>('readFileSync', joinPath(folderPath, 'ui.json'));
+			const ujRaw = unwrap(await commands.readFileSync(joinPath(folderPath, 'ui.json')));
 			const uiJson: UiJsonData = JSON.parse(ujRaw);
 
 			let scriptContent: string | null = null;
 			try {
 				const scriptName = pluginJson.main.replace('.js', '.ts');
-				scriptContent = await window.electronAPI.invoke<string>('readFileSync', joinPath(folderPath, scriptName));
+				scriptContent = unwrap(await commands.readFileSync(joinPath(folderPath, scriptName)));
 			} catch {
 				/* no script yet */
 			}

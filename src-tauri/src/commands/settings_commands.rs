@@ -135,6 +135,7 @@ fn write_json(path: &PathBuf, value: &Value) -> Result<(), String> {
 // ==================== App Settings ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn app_settings_get(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -148,6 +149,7 @@ pub fn app_settings_get(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn app_settings_set(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -162,6 +164,7 @@ pub fn app_settings_set(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn app_settings_patch(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -218,6 +221,7 @@ pub fn app_settings_patch(
 /// с findAllFilesForProcess по тем же путям, и удаление их «из под ног»
 /// процессинга и было причиной поломок в Electron-версии.
 #[tauri::command]
+#[specta::specta]
 pub fn cleanup_auto_delete(
     app: tauri::AppHandle,
     local_folder: String,
@@ -408,6 +412,7 @@ fn max_mtime_in_subtree(dir: &std::path::Path) -> std::time::SystemTime {
 /// Возвращаем детерминированный ID на основе pathForDelete + findTime — так чтобы
 /// повторный вызов на тот же item дал тот же ID (как и должно быть при идемпотентной регистрации).
 #[tauri::command]
+#[specta::specta]
 pub fn db_register_found(
     payload: Value,
     db_state: tauri::State<Mutex<super::db_analytics::DbState>>,
@@ -466,6 +471,7 @@ pub fn db_register_found(
 // ==================== Color Types ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn color_types_get(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -479,6 +485,7 @@ pub fn color_types_get(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn color_types_set(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -499,6 +506,7 @@ pub fn color_types_set(
 ///
 /// Порт `electron/main/settings/colorTypes.ts#rescanColorTypes`.
 #[tauri::command]
+#[specta::specta]
 pub fn color_types_rescan(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -633,6 +641,7 @@ pub fn color_types_rescan(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn color_types_add(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -664,6 +673,7 @@ pub fn color_types_add(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn color_types_remove(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -686,6 +696,7 @@ pub fn color_types_remove(
 // ==================== File Types ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn file_types_get(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -699,6 +710,7 @@ pub fn file_types_get(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn file_types_set(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -715,6 +727,7 @@ pub fn file_types_set(
 // ==================== Program Paths ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn program_paths_get(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,
@@ -728,6 +741,7 @@ pub fn program_paths_get(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn program_paths_set(
     app: tauri::AppHandle,
     state: tauri::State<Mutex<AppSettingsState>>,

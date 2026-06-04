@@ -12,7 +12,7 @@
 // Используется в NODE_WIN (на старте окна) и в MainTopPanel (Docs модалка).
 
 import { loadFromLocalStorage } from './loadSaveToLS';
-import type { PluginUINode } from '@/types/electron';
+import type { PluginUINode } from '@/types/global';
 
 export interface CollectedUINode extends PluginUINode {
 	pluginEnabled: boolean;
@@ -75,7 +75,7 @@ function readColorOverrides(): Map<string, string> {
 }
 
 export async function loadAllUINodes(): Promise<CollectedUINode[]> {
-	const rust = (await window.electronAPI.invoke<RustUINode[]>('plugins:get-all-ui-nodes')) ?? [];
+	const rust = (await window.tauriAPI.invoke<RustUINode[]>('plugins:get-all-ui-nodes')) ?? [];
 	const enabledMap = readEnabledMap();
 	const colorOverrides = readColorOverrides();
 

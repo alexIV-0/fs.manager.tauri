@@ -1,4 +1,4 @@
-// tauri-api.d.ts - типы для Tauri API (совместимы с electron.d.ts)
+// global.d.ts — ambient-типы Tauri API: глобал window.tauriAPI + общие типы плагинов/UI.
 
 // ==================== БАЗОВЫЕ ТИПЫ ====================
 export interface PluginManifest {
@@ -184,9 +184,8 @@ export interface ITauriAPI {
 // ==================== ГЛОБАЛЬНОЕ ОБЪЯВЛЕНИЕ ====================
 declare global {
 	interface Window {
-		electronAPI: ITauriAPI; // Для обратной совместимости
 		tauriAPI: ITauriAPI;
-		log: typeof window.electronAPI.logger;
+		log: typeof window.tauriAPI.logger;
 
 		invoke: <T = unknown>(channel: string, ...args: any[]) => Promise<T>;
 

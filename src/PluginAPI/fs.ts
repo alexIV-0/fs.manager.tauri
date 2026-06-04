@@ -2,7 +2,7 @@
 // даже те, что в Node.js были sync (readFileSync, existsSync и т.п.).
 // При использовании плагины ДОЛЖНЫ добавлять `await`.
 
-const api = () => (window as any).electronAPI;
+import { commands, unwrap } from '@/Utils/specta';
 
 // ─── Stat ────────────────────────────────────────────────────────────────────
 
@@ -40,8 +40,7 @@ function makeStats(raw: any): Stats {
 }
 
 export async function stat(p: string): Promise<Stats> {
-	// Передаём строку; argMapper в tauri-api.ts оборачивает в { path }.
-	const raw = await api().invoke('get_stat', p);
+	const raw = unwrap(await commands.getStat(p));
 	return makeStats(raw);
 }
 
@@ -53,7 +52,7 @@ export const lstatSync = stat;
 // ─── Existence ───────────────────────────────────────────────────────────────
 
 export async function exists(p: string): Promise<boolean> {
-	const checked = await api().invoke('checkFilePath', p);
+	const checked = unwrap(await commands.checkFilePath(p, null));
 	return Boolean(checked);
 }
 export const existsSync = exists;
@@ -67,7 +66,7 @@ interface ReadFileOptions {
 
 export async function readFile(p: string, opts?: ReadFileOptions | string): Promise<string> {
 	const encoding = typeof opts === 'string' ? opts : opts?.encoding;
-	const content = (await api().invoke('readFileSync', p)) as string;
+	const content = unwrap(await commands.readFileSync(p));
 	if (encoding && encoding !== 'utf-8' && encoding !== 'utf8') {
 		// В renderer мы не возвращаем Buffer; для бинарных нужд использовать hashFile/etc.
 		console.warn(`[@plugin-api/fs] readFile encoding "${encoding}" not supported, returning utf-8 string`);
@@ -83,7 +82,7 @@ export async function writeFile(
 	data: string,
 	_opts?: ReadFileOptions | string,
 ): Promise<void> {
-	await api().invoke('writeFile', p, data);
+	unwrap(await commands.writeFile(p, data));
 }
 export const writeFileSync = writeFile;
 
@@ -106,24 +105,24 @@ interface MkdirOptions {
 }
 
 export async function mkdir(p: string, _opts?: MkdirOptions): Promise<void> {
-	await api().invoke('testAndCreateFolder', p);
+	unwrap(await commands.testAndCreateFolder(p));
 }
 export const mkdirSync = mkdir;
 
 export async function rmdir(p: string): Promise<void> {
-	await api().invoke('deleteItem', p);
+	unwrap(await commands.deleteItem(p));
 }
 export const rmdirSync = rmdir;
 
 export async function rm(p: string, _opts?: { recursive?: boolean; force?: boolean }): Promise<void> {
-	await api().invoke('deleteItem', p);
+	unwrap(await commands.deleteItem(p));
 }
 export const rmSync = rm;
 
 // ─── Unlink ──────────────────────────────────────────────────────────────────
 
 export async function unlink(p: string): Promise<void> {
-	await api().invoke('deleteItem', p);
+	unwrap(await commands.deleteItem(p));
 }
 export const unlinkSync = unlink;
 
@@ -143,10 +142,12 @@ interface ReaddirOptions {
 
 export async function readdir(p: string, opts?: ReaddirOptions): Promise<any[]> {
 	// getSomeFromFolder возвращает legacy-форму `{files: string[], folders: string[]}`.
-	const raw = (await api().invoke('getSomeFromFolder', p, [
-		{ type: 'files', ext: [] },
-		{ type: 'folders', ext: [] },
-	])) as { files?: string[]; folders?: string[] };
+	const raw = unwrap(
+		await commands.getSomeFromFolder(p, [
+			{ type: 'files', ext: [] },
+			{ type: 'folders', ext: [] },
+		]),
+	) as unknown as { files?: string[]; folders?: string[] };
 
 	const files = raw?.files ?? [];
 	const folders = raw?.folders ?? [];
@@ -168,12 +169,12 @@ export const readdirSync = readdir;
 // ─── Copy / Rename ───────────────────────────────────────────────────────────
 
 export async function copyFile(src: string, dst: string): Promise<void> {
-	await api().invoke('copyItem', src, dst, { overwrite: true });
+	unwrap(await commands.copyItem(src, dst, { overwrite: true }));
 }
 export const copyFileSync = copyFile;
 
 export async function rename(oldPath: string, newPath: string): Promise<void> {
-	await api().invoke('renameFile', oldPath, newPath);
+	unwrap(await commands.renameFile(oldPath, newPath));
 }
 export const renameSync = rename;
 

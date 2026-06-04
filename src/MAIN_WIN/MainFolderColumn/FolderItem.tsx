@@ -6,6 +6,7 @@ import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { reloadFolders } from '@/PROCESSING/reloadFolders';
 import { loadFromLocalStorage } from '@/Utils/loadSaveToLS';
+import { basename } from '@/Utils/path';
 
 type FolderItemProps = {
 	obj: any;
@@ -24,7 +25,7 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 	const isColumnFocused = useColumnFocus_store((s) => s.focusedColumn === 'main');
 
 	useEffect(() => {
-		window.electronAPI.invoke('pathBasename', obj.path).then((name) => setName(name as string));
+		setName(basename(obj.path));
 	}, [obj.path]);
 
 	useEffect(() => {
@@ -98,18 +99,18 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 		<ListItem
 			disablePadding
 			ref={listItemRef}
-			style={{ '--hover-bg': idleHighlight ? 'rgba(255, 213, 0, 0.28)' : '#ffffff0b' } as React.CSSProperties}
+			style={{ '--hover-bg': idleHighlight ? 'rgba(255, 191, 0, 0.25)' : '#ffffff0b' } as React.CSSProperties}
 			sx={{
 				height: '34px',
 				backgroundColor:
 					isActive && idleHighlight
-						? 'rgba(255, 213, 0, 0.32)'
+						? 'rgba(255, 191, 0, 0.25)'
 						: isActive
 							? isColumnFocused
 								? '#007bff4c'
-								: 'rgba(255,255,255,0.08)'
+								: 'rgba(150,150,150,0.22)'
 							: idleHighlight
-								? 'rgba(255, 213, 0, 0.18)'
+								? 'rgba(255, 191, 0, 0.15)'
 								: 'transparent',
 				position: 'relative',
 				'&:hover': {
@@ -129,7 +130,7 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 					width: '100%',
 					overflow: 'hidden',
 					cursor: 'pointer',
-					...(isActive && isColumnFocused && { '& .MuiListItemText-primary': { color: '#64afffff', fontWeight: 600 } }),
+					...(isActive && { '& .MuiListItemText-primary': { color: '#64afffff', fontWeight: 600 } }),
 				}}
 			>
 				{name}

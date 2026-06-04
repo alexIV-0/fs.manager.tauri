@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/ConvertEdit/ConvertPanel.tsx
 
 import { memo, useRef, useCallback, useState, useEffect } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, Button, Checkbox, Divider, MenuItem, Select, Tooltip, Typography } from '@mui/material';
 import { FolderOpen, X as XIcon } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
@@ -916,12 +917,12 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 	// can't: in WKWebView the File object has no `.path`, so the preview would get a
 	// bare filename and fail to load. Mirrors VideoAdjustPanel.
 	const selectPreviewFile = useCallback(() => {
-		(window as any).electronAPI
-			.invoke('selectFiles', {
+		commands
+			.selectFiles({
 				multiSelect: false,
 				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'mp3', 'wav', 'aac', 'flac'] }],
 			})
-			.then((paths: string[]) => { if (paths?.length > 0) onSelectFile(paths[0]); })
+			.then((r) => { const paths = unwrap(r); if (paths?.length > 0) onSelectFile(paths[0]); })
 			.catch(() => {});
 	}, [onSelectFile]);
 

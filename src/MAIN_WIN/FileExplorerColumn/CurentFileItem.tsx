@@ -20,7 +20,9 @@ import {
 	showInFinder,
 } from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
+import { dirname } from '@/Utils/path';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
 interface CurrentFileItemProps {
 	name: string;
@@ -48,7 +50,7 @@ export function CurrentFileItem({
 	const { isEditing, startEditing, inputProps } = useEditableField({
 		initialValue: name,
 		onSave: async (newName) => {
-			const parentPath = (await window.electronAPI.invoke('pathDirname', path)) as string;
+			const parentPath = dirname(path);
 			const newPath = joinPath(parentPath, newName);
 			await renameFile(path, newPath, onRenamed);
 		},
@@ -83,7 +85,7 @@ export function CurrentFileItem({
 
 	// Вставить рядом (в ту же папку что и файл)
 	const handlePaste = async () => {
-		const parentPath = (await window.electronAPI.invoke('pathDirname', path)) as string;
+		const parentPath = dirname(path);
 		await pasteFromClipboardFs(parentPath);
 	};
 

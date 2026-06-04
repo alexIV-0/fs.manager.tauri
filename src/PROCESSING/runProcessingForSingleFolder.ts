@@ -15,6 +15,7 @@ import { findFilesForSingleFolder } from './findFilesForSingleFolder';
 import { startProcessing } from './startProcessing';
 import { startProcessContext } from './utils/processingAbort';
 import { formatNameByPattern } from '@/Utils/formatNameByPattern';
+import { dirname } from '@/Utils/path';
 
 export async function runProcessingForSingleFolder(folderPath: string) {
 	const { clearWorkProjectState } = useWorkProject_Store.getState();
@@ -29,7 +30,7 @@ export async function runProcessingForSingleFolder(folderPath: string) {
 	const year = dateTime.slice(0, 4);
 	const findDateName = dateTime.slice(5);
 
-	const mainFolderPath: string = await window.electronAPI.invoke('pathDirname', folderPath);
+	const mainFolderPath = dirname(folderPath);
 
 	console.groupCollapsed(`[Single run] ${findDateName}`);
 

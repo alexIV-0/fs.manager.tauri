@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import {
 	DndContext,
 	closestCenter,
@@ -137,10 +138,10 @@ export const PluginSortableList: React.FC = () => {
 
 	// Добавление тестового плагина
 	const handleAddPlugin = async () => {
-		const filePaths = await window.electronAPI.invoke<string[]>('selectFiles', {
+		const filePaths = unwrap(await commands.selectFiles({
 			multiSelect: true,
 			filters: [{ name: 'FSM Plugin', extensions: ['fsmplug'] }],
-		});
+		}));
 
 		if (!filePaths || filePaths.length === 0) return;
 

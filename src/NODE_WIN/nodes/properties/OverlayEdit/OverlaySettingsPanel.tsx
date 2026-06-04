@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/OverlayEdit/OverlaySettingsPanel.tsx
 
 import { memo } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, Typography, Divider } from '@mui/material';
 import { greyColor } from '@/Store/Color/grayColor';
 import { OverlayFormatSettings } from './types';
@@ -123,12 +124,12 @@ function OverlaySettingsPanel({
 	};
 
 	const selectFile = (cb: (path: string) => void) => {
-		(window as any).electronAPI
-			.invoke('selectFiles', {
+		commands
+			.selectFiles({
 				multiSelect: false,
 				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp'] }],
 			})
-			.then((paths: string[]) => { if (paths?.length > 0) cb(paths[0]); })
+			.then((r) => { const paths = unwrap(r); if (paths?.length > 0) cb(paths[0]); })
 			.catch(() => {});
 	};
 

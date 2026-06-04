@@ -1,6 +1,6 @@
 // utils/loadPluginUIs.ts
 import { plugin_Store } from '@/Store/MainWin/plugin_store';
-import { PluginUINode } from '@/types/electron';
+import { PluginUINode } from '@/types/global';
 
 export async function loadPluginUINodes(): Promise<PluginUINode[]> {
 	const state = plugin_Store.getState();
@@ -18,7 +18,7 @@ export async function loadPluginUINodes(): Promise<PluginUINode[]> {
 
 		try {
 			// Загружаем UI данные через IPC
-			const uiData = await window.electronAPI.invoke('plugins:get-plugin-ui', plugin.id, plugin.version);
+			const uiData = await window.tauriAPI.invoke('plugins:get-plugin-ui', plugin.id, plugin.version);
 
 			if (uiData) {
 				// Добавляем метаданные плагина

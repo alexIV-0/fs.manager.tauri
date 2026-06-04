@@ -10,8 +10,9 @@ import { basename, dirname, join } from '@plugin-api/path';
 import { loadPlugin } from '@/PluginAPI/loader';
 import { acquirePool, releasePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
+import { commands, unwrap } from '@/Utils/specta';
 
-const api = () => (window as any).electronAPI;
+const api = () => (window as any).tauriAPI;
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ async function pathExists(p: string): Promise<boolean> {
 	// `checkFilePath` отбрасывает папки (внутри стоит `!p.is_file() → return ""`), поэтому
 	// для проверки «вообще существует ли путь» (файл или папка) используем `path_exists`.
 	// Без этого фикса для папок postProcess получал pathForDeleteExists=false → SKIPPED.
-	return Boolean(await api().invoke('path_exists', p));
+	return Boolean(unwrap(await commands.pathExists(p)));
 }
 
 /**
@@ -74,7 +75,7 @@ async function markFolderAsError(
 		const newPath = join(dirname(folderPath), newName);
 
 		send('log', { level: 'warn', text: `[markFolderAsError] invoke renameFolder: ${folderPath} -> ${newPath}`, itemId });
-		const renameResult = await api().invoke('renameFolder', folderPath, newPath);
+		const renameResult = unwrap(await commands.renameFolder(folderPath, newPath));
 		send('log', { level: 'warn', text: `[markFolderAsError] renameFolder result: ${JSON.stringify(renameResult)}`, itemId });
 
 		send('log', {
@@ -108,11 +109,7 @@ async function moveToErrorsFolder(
 		// переносит файл и переименовывает папку с датой. JS-реализация существовала
 		// исторически (порт из Electron), но дублировала логику и ломалась на
 		// несоответствии формы ответа `getSomeFromFolder`.
-		const res = (await api().invoke('moveToErrors', pathForDelete, projectPath)) as {
-			success: boolean;
-			moved_to?: string | null;
-			error?: string | null;
-		};
+		const res = unwrap(await commands.moveToErrors(pathForDelete, projectPath));
 		send('log', { level: 'warn', text: `[moveToErrorsFolder] moveToErrors result: ${JSON.stringify(res)}`, itemId });
 
 		if (!res?.success) {
@@ -181,8 +178,8 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 
 		// Forward в logWindow через Rust emit-команды
 		if (type === 'item:start') {
-			api()
-				.invoke('log-window:item-queued', {
+			commands
+				.logWindowEmitItemQueued({
 					itemId: payload.itemId,
 					itemName: payload.itemName,
 					mainFolderName: payload.mainFolderName ?? '',
@@ -196,8 +193,8 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 				})
 				.catch(() => {});
 		} else if (type === 'item:end') {
-			api()
-				.invoke('log-window:emit-item-end', {
+			commands
+				.logWindowEmitItemEnd({
 					itemId: payload.itemId,
 					status: payload.status,
 					endTime: new Date().toISOString(),
@@ -206,8 +203,8 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 				})
 				.catch(() => {});
 		} else if (type === 'node:start') {
-			api()
-				.invoke('log-window:emit-node-update', {
+			commands
+				.logWindowEmitNodeUpdate({
 					itemId: payload.itemId,
 					nodeId: payload.nodeId,
 					status: 'running',
@@ -217,10 +214,10 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 			// Broadcast в node_win (через Rust → app.emit "processing-event").
 			// Для саб-шагов loop'а nodeId суффиксирован ('#k'), а граф знает только оригинальный
 			// id — поэтому в node-graph шлём graphNodeId (без суффикса), если он передан.
-			api().invoke('sendNodeStart', payload.graphNodeId ?? payload.nodeId).catch(() => {});
+			commands.sendNodeStart(payload.graphNodeId ?? payload.nodeId).catch(() => {});
 		} else if (type === 'node:done') {
-			api()
-				.invoke('log-window:emit-node-update', {
+			commands
+				.logWindowEmitNodeUpdate({
 					itemId: payload.itemId,
 					nodeId: payload.nodeId,
 					status: 'done',
@@ -228,22 +225,22 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					finalCost: payload.finalCost,
 				})
 				.catch(() => {});
-			api().invoke('sendNodeDone', payload.graphNodeId ?? payload.nodeId, payload.output ?? null).catch(() => {});
+			commands.sendNodeDone(payload.graphNodeId ?? payload.nodeId, payload.output ?? null).catch(() => {});
 		} else if (type === 'node:error') {
-			api()
-				.invoke('log-window:emit-node-update', {
+			commands
+				.logWindowEmitNodeUpdate({
 					itemId: payload.itemId,
 					nodeId: payload.nodeId,
 					status: 'error',
 					endTime: new Date().toISOString(),
 				})
 				.catch(() => {});
-			api().invoke('sendNodeError', payload.graphNodeId ?? payload.nodeId, payload.message ?? '').catch(() => {});
+			commands.sendNodeError(payload.graphNodeId ?? payload.nodeId, payload.message ?? '').catch(() => {});
 		} else if (type === 'process:complete') {
-			api().invoke('sendProcessComplete').catch(() => {});
+			commands.sendProcessComplete().catch(() => {});
 		} else if (type === 'log' || type === 'error') {
-			api()
-				.invoke('log-window:emit-item-log', {
+			commands
+				.logWindowEmitItemLog({
 					id: Math.random().toString(36).slice(2, 9),
 					timestamp: new Date().toISOString(),
 					level: type === 'error' ? 'error' : payload.level ?? 'info',
@@ -255,7 +252,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 				})
 				.catch(() => {});
 		} else if (type === 'statusbar') {
-			api().invoke('setStatusBar', payload.text ?? '').catch(() => {});
+			api().invoke('set_status_bar', { text: payload.text ?? '' }).catch(() => {});
 		}
 	};
 
@@ -321,7 +318,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 		if (allStepsSucceeded && !ctx.signal.aborted && deleteAfter) {
 			send('log', { level: 'warn', text: `[processItem.postProcess] → DELETE branch`, itemId });
 			try {
-				await api().invoke('deleteItem', pathForDelete);
+				unwrap(await commands.deleteItem(pathForDelete));
 				send('log', { level: 'info', text: `[processItem] Deleted original: ${basename(pathForDelete)}`, itemId });
 			} catch {
 				send('log', { level: 'warn', text: `[processItem] Failed to delete original: ${basename(pathForDelete)}`, itemId });
@@ -562,7 +559,7 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 			// как из executeStep полетят node:start/log события с суффиксированным stepId,
 			// иначе find_step_mut не найдёт саб-шаг и логи свалятся в itemLogs.
 			try {
-				await api().invoke('log-window:emit-substep-batch', {
+				await commands.logWindowEmitSubstepBatch({
 					itemId: ctx.itemId,
 					parentStepId: stepId,
 					subSteps: batchSubSteps,

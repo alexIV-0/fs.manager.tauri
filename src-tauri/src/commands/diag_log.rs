@@ -6,7 +6,7 @@
 //
 // Использование:
 //   - из Rust:    diag_log::write(&app, "msg");  diag_log::bump_item_log();
-//   - из JS:      window.electronAPI.invoke('diag:log', "msg");
+//   - из JS:      window.tauriAPI.invoke('diag:log', "msg");
 //
 // После воспроизведения зависания — открыть файл и прислать содержимое.
 

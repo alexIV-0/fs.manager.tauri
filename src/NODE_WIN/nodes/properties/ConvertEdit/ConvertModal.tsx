@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/ConvertEdit/ConvertModal.tsx
 
 import { useState, useCallback, useEffect } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { ConvertSettings, defaultConvertSettings } from './types';
 import ModalShell from '../ModalShell';
 import ConvertPanel from './ConvertPanel';
@@ -45,7 +46,7 @@ export default function ConvertModal({ value, onSave, onClose }: ConvertModalPro
 		if (!saved) return;
 		const abs = toAbsolutePath(saved, projectPath);
 		(async () => {
-			const exists = await (window as any).electronAPI.invoke('checkFilePath', abs).catch(() => false);
+			const exists = await commands.checkFilePath(abs, null).then(unwrap).catch(() => false);
 			if (exists) setEffectiveFilePath(abs);
 		})();
 		// eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,4 +1,5 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
+import { commands } from '@/Utils/specta';
 import { AlertTriangle, Blocks, BookOpen, Hammer, Settings, Wrench } from 'lucide-react';
 import OptionsPopover from './options/Options.Popover';
 import { useState, useEffect } from 'react';
@@ -39,8 +40,8 @@ export function MainTopPanel() {
 		setDocOpen(true);
 	};
 
-	const openDevTools = () => window.electronAPI.openDevTools();
-	const openLogWindow = () => window.electronAPI.invoke('log-window:open');
+	const openDevTools = () => window.tauriAPI.openDevTools();
+	const openLogWindow = () => commands.logWindowOpen();
 
 	const hasMissingPlugins = getFilteredGroups().some((group) => group.plugins.some((p) => !p.exists));
 

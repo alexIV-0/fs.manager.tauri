@@ -1,4 +1,5 @@
 import { PathNavigatorProperty, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { commands, unwrap } from '@/Utils/specta';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
@@ -60,10 +61,10 @@ function PathNavigator({ property, onChange }: PathNavigatorProps) {
 			if (!projectPath) return;
 			const dirPath = segsUpTo.length > 0 ? joinPath(projectPath, ...segsUpTo) : projectPath;
 			try {
-				const result = (await window.electronAPI.invoke('getSomeFromFolder', dirPath, [
+				const result = unwrap(await commands.getSomeFromFolder(dirPath, [
 					{ type: 'folders', ext: [] },
 					{ type: 'files', ext: [] },
-				])) as { folders: string[]; files: string[] };
+				])) as unknown as { folders: string[]; files: string[] };
 				const folders: FsItem[] = (result?.folders ?? []).map((name) => ({ name, isDir: true }));
 				const files: FsItem[] = (result?.files ?? []).map((name) => ({ name, isDir: false }));
 				setItems([...folders, ...files]);
@@ -110,7 +111,7 @@ function PathNavigator({ property, onChange }: PathNavigatorProps) {
 			if (activeSegIndex === null) return;
 
 			if (item.name === 'Custom File...') {
-				const paths = (await window.electronAPI.invoke('selectFiles', { multiSelect: false })) as string[];
+				const paths = unwrap(await commands.selectFiles({ multiSelect: false }));
 				if (paths?.length) {
 					const newValue = paths[0];
 					setValue(newValue);
@@ -129,7 +130,7 @@ function PathNavigator({ property, onChange }: PathNavigatorProps) {
 			}
 
 			if (item.name === 'Custom Folder...') {
-				const paths = (await window.electronAPI.invoke('selectFolders', { multiSelect: false })) as string[];
+				const paths = unwrap(await commands.selectFolders({ multiSelect: false }));
 				if (paths?.length) {
 					const newValue = paths[0];
 					setValue(newValue);

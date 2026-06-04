@@ -1,4 +1,6 @@
 import { AutocompletePropertyControlProps, Property } from '@/NODE_WIN/definitions/types';
+import { commands, unwrap } from '@/Utils/specta';
+import { basename, dirname } from '@/Utils/path';
 import { List, ListItem, ListItemButton, Paper, Popper, Stack, TextField, Typography } from '@mui/material';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
@@ -52,17 +54,17 @@ function AutocompletePath(props: AutocompletePathProps) {
 	const loadDirectoryContents = useCallback(async (path: string) => {
 		try {
 			// Проверяем существование пути
-			const checkedPath = await window.electronAPI.invoke('checkFilePath', path);
+			const checkedPath = unwrap(await commands.checkFilePath(path, null));
 			if (!checkedPath) {
 				setFilteredOptions([]);
 				return;
 			}
 
 			// Получаем содержимое папки
-			const result: any = await window.electronAPI.invoke('getSomeFromFolder', path, [
+			const result: any = unwrap(await commands.getSomeFromFolder(path, [
 				{ type: 'folders', ext: [] },
 				{ type: 'files', ext: [] },
-			]);
+			]));
 
 			if (!result || !Array.isArray(result)) {
 				setFilteredOptions([]);
@@ -97,10 +99,10 @@ function AutocompletePath(props: AutocompletePathProps) {
 	/** Получение родительской директории */
 	const getParentPath = useCallback(async (path: string): Promise<string | null> => {
 		try {
-			const parentPath = await window.electronAPI.invoke<string>('pathDirname', path);
+			const parentPath = dirname(path);
 			// Проверяем, не достигли ли мы корня
-			const basename = await window.electronAPI.invoke<string>('pathBasename', path);
-			if (!basename || basename === path) {
+			const baseName = basename(path);
+			if (!baseName || baseName === path) {
 				return null;
 			}
 			return parentPath;
@@ -113,13 +115,13 @@ function AutocompletePath(props: AutocompletePathProps) {
 	/** Чтение ключей JSON для режима 'json' */
 	const loadJsonKeys = useCallback(async (jsonPath: string, selectedKeys: string[]) => {
 		try {
-			const checkedPath = await window.electronAPI.invoke('checkFilePath', jsonPath);
+			const checkedPath = unwrap(await commands.checkFilePath(jsonPath, null));
 			if (!checkedPath) {
 				setFilteredOptions([]);
 				return;
 			}
 
-			const jsonContent: string = await window.electronAPI.invoke('readFileSync', checkedPath);
+			const jsonContent: string = unwrap(await commands.readFileSync(checkedPath));
 			const jsonData = JSON.parse(jsonContent);
 
 			// Находим текущий уровень вложенности
@@ -185,7 +187,7 @@ function AutocompletePath(props: AutocompletePathProps) {
 				// Проверяем, является ли последний чип директорией
 				const lastChipPath = path;
 
-				const exists = await window.electronAPI.invoke('checkFilePath', lastChipPath);
+				const exists = unwrap(await commands.checkFilePath(lastChipPath, null));
 				if (exists) {
 					await loadDirectoryContents(lastChipPath);
 				} else {
@@ -351,7 +353,7 @@ function AutocompletePath(props: AutocompletePathProps) {
 	const handleSpecialOption = async (type: 'file' | 'folder') => {
 		setShowDropdown(false);
 		if (type === 'file') {
-			const result = await window.electronAPI.invoke<string[]>('selectFiles', { multiSelect: false });
+			const result = unwrap(await commands.selectFiles({ multiSelect: false }));
 			if (result && result.length > 0) {
 				// Получаем относительный путь от базовой папки
 				const selectedPath = result[0];
@@ -369,7 +371,7 @@ function AutocompletePath(props: AutocompletePathProps) {
 				}
 			}
 		} else {
-			const result = await window.electronAPI.invoke<string[]>('selectFolders', { multiSelect: false });
+			const result = unwrap(await commands.selectFolders({ multiSelect: false }));
 			if (result && result.length > 0) {
 				const selectedPath = result[0];
 				if (baseFolder && selectedPath.startsWith(baseFolder)) {

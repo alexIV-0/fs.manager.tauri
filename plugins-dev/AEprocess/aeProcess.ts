@@ -40,12 +40,19 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 		tempScriptPath: fileTo,
 	};
 
+	// Макс. время ожидания AE (НЕ время рендера — лимит «зависания», timecode-контрол
+	// хранит секунды). Можно подать timecode-узлом на вход. Дефолт — 10 минут.
+	const DEFAULT_MAX_WAIT_SEC = 600;
+	const importMaxWait = Array.isArray(_item.import?.maxWaitTime) ? _item.import.maxWaitTime[0] : undefined;
+	let maxWaitSec = toSeconds(importMaxWait) || toSeconds(_item.maxWaitTime);
+	if (!Number.isFinite(maxWaitSec) || maxWaitSec <= 0) maxWaitSec = DEFAULT_MAX_WAIT_SEC;
+
 	const result = await ae.runScript({
 		aePath,
 		scriptPath: aeScript,
 		inObj,
 		// tempDir — оставляем дефолт (system temp), Rust сам разрулит уникальные имена.
-		timeoutSec: 600, // 10 мин — для долгих рендеров
+		timeoutSec: Math.round(maxWaitSec),
 	});
 
 	if (result.success) {
@@ -57,4 +64,18 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 
 	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
 	return finalFile;
+}
+
+/** Таймкод → секунды. Принимает число (уже секунды), "HH:MM:SS", "MM:SS" или число строкой. */
+function toSeconds(v: any): number {
+	if (v == null) return 0;
+	if (typeof v === 'number') return v;
+	const s = String(v).trim();
+	const m = s.match(/^(\d+):(\d{2}):(\d{2})$/) || s.match(/^(\d+):(\d{2})$/);
+	if (m) {
+		const p = m.slice(1).map(Number);
+		return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+	}
+	const n = parseFloat(s.replace(',', '.'));
+	return Number.isFinite(n) ? n : 0;
 }

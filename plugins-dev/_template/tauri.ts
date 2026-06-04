@@ -1,5 +1,5 @@
 // Helper для плагинов в Tauri WebView.
-// Оборачивает window.electronAPI.invoke в типизированные асинхронные API.
+// Оборачивает window.tauriAPI.invoke в типизированные асинхронные API.
 //
 // Использование в плагине:
 //   import { fs, ffmpeg, exec, ae, paths } from '../_template/tauri';
@@ -12,7 +12,7 @@
 // ─── Низкоуровневый invoke ───────────────────────────────────────────────────
 
 type InvokeFn = (cmd: string, ...args: any[]) => Promise<any>;
-const api = (): { invoke: InvokeFn } => (window as any).electronAPI;
+const api = (): { invoke: InvokeFn } => (window as any).tauriAPI;
 
 // ─── fs: файловые операции через Tauri IPC ───────────────────────────────────
 
@@ -52,14 +52,14 @@ export const fs = {
 	/** true если путь существует (файл или папка). Не бросает и не шумит в логи —
 	 * использует Rust-команду path_exists, которая возвращает bool. */
 	exists(p: string): Promise<boolean> {
-		return api().invoke('path_exists', p);
+		return api().invoke('path_exists', { path: p });
 	},
 
 	/** Проверка что путь существует И это файл. */
 	async existsFile(p: string): Promise<boolean> {
-		if (!(await api().invoke('path_exists', p))) return false;
+		if (!(await api().invoke('path_exists', { path: p }))) return false;
 		try {
-			const s = await api().invoke('get_stat', p);
+			const s = await api().invoke('get_stat', { path: p });
 			return Boolean(s?.isFile);
 		} catch {
 			return false;
@@ -68,9 +68,9 @@ export const fs = {
 
 	/** Проверка что путь существует И это папка. */
 	async existsFolder(p: string): Promise<boolean> {
-		if (!(await api().invoke('path_exists', p))) return false;
+		if (!(await api().invoke('path_exists', { path: p }))) return false;
 		try {
-			const s = await api().invoke('get_stat', p);
+			const s = await api().invoke('get_stat', { path: p });
 			return Boolean(s?.isDir);
 		} catch {
 			return false;
@@ -78,37 +78,37 @@ export const fs = {
 	},
 
 	read(p: string): Promise<string> {
-		return api().invoke('readFileSync', p);
+		return api().invoke('read_file_sync', { filePath: p });
 	},
 
 	write(p: string, content: string): Promise<any> {
-		return api().invoke('writeFile', p, content);
+		return api().invoke('write_file', { filePath: p, content });
 	},
 
 	copy(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
-		return api().invoke('copyItem', src, dst, opts);
+		return api().invoke('copy_item', { sourcePath: src, destinationPath: dst, options: opts });
 	},
 
 	move(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
-		return api().invoke('moveItem', src, dst, opts);
+		return api().invoke('move_item', { sourcePath: src, destinationPath: dst, options: opts });
 	},
 
 	/** Удаляет файл или папку (рекурсивно). Возвращает true если что-то было удалено. */
 	remove(p: string): Promise<boolean> {
-		return api().invoke('deleteItem', p);
+		return api().invoke('delete_item', { itemPath: p });
 	},
 
 	/** Создаёт папку (рекурсивно). Если уже есть — ничего не делает. */
 	mkdir(p: string): Promise<void> {
-		return api().invoke('testAndCreateFolder', p);
+		return api().invoke('test_and_create_folder', { path: p });
 	},
 
 	stat(p: string): Promise<Stat> {
-		return api().invoke('get_stat', p);
+		return api().invoke('get_stat', { path: p });
 	},
 
 	info(p: string): Promise<FileInfo> {
-		return api().invoke('getFileInfo', p);
+		return api().invoke('get_file_info', { path: p });
 	},
 
 	/** Возвращает true если source.mtime > dest.mtime. Используется для overwriteOldest. */
@@ -125,12 +125,12 @@ export const fs = {
 	 * Rust-команда поддерживает только ключи 'files' и 'folders'; кастомные типы
 	 * (video, image...) фильтруйте сами по ext через fs.filesByExt. */
 	someFromFolder(folder: string, search?: SearchPattern[]): Promise<{ files: string[]; folders: string[] }> {
-		return api().invoke('getSomeFromFolder', folder, search);
+		return api().invoke('get_some_from_folder', { path: folder, search: search ?? null });
 	},
 
 	/** Рекурсивный поиск по фильтру. Аналогичные ограничения по ключам. */
 	recursiveFind(folder: string, search?: SearchPattern[]): Promise<{ files: string[]; folders: string[] }> {
-		return api().invoke('recursiveFindFiles', folder, search);
+		return api().invoke('recursive_find_files', { path: folder, search: search ?? null });
 	},
 
 	/** Возвращает имена файлов в папке, отфильтрованные по расширениям.
@@ -156,7 +156,7 @@ export const fs = {
 	},
 
 	hash(p: string, algo: 'sha256' | 'sha1' | 'md5' = 'sha256'): Promise<string> {
-		return api().invoke('hash_file', p, algo);
+		return api().invoke('hash_file', { path: p, algo });
 	},
 
 	/** Превращает локальный путь в URL для нативного fetch (asset://...).
@@ -185,7 +185,7 @@ export const fs = {
 			binary += String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + chunk)));
 		}
 		const b64 = btoa(binary);
-		const written = (await api().invoke('write_binary_file', p, b64)) as number;
+		const written = (await api().invoke('write_binary_file', { filePath: p, dataB64: b64 })) as number;
 		return written;
 	},
 };
@@ -240,16 +240,21 @@ export const http = {
 		});
 	},
 
-	/** Скачивает URL в локальный файл. Возвращает количество байт. */
+	/** Скачивает URL в локальный файл. Возвращает количество байт.
+	 *  Передай `nodeId` и/или `statusText`, чтобы прогресс скачивания отображался
+	 *  в статусбаре/ноде (тот же формат, что у ffmpeg-прогресса). Без них —
+	 *  тихое скачивание, как раньше. */
 	download(
 		url: string,
 		dest: string,
-		opts: { headers?: [string, string][] } = {},
+		opts: { headers?: [string, string][]; nodeId?: string; statusText?: string } = {},
 	): Promise<number> {
 		return api().invoke('http_download', {
 			url,
 			dest,
 			headers: opts.headers,
+			nodeId: opts.nodeId,
+			statusText: opts.statusText,
 		});
 	},
 };
@@ -591,7 +596,7 @@ export const ae = {
 export const paths = {
 	/** Папка пользовательских настроек приложения. */
 	optionsFolder(): Promise<string> {
-		return api().invoke('getOptionsFolder');
+		return api().invoke('get_user_data_path');
 	},
 
 	join(segments: string[]): Promise<string> {
@@ -605,13 +610,13 @@ export const paths = {
 
 	/** Корневая папка plugins-dev (где лежат собранные/dev-плагины с их ресурсами). */
 	pluginsDev(): Promise<string> {
-		return api().invoke('getPluginsDevPath');
+		return api().invoke('get_plugins_dev_path');
 	},
 
 	/** Сегмент платформы для путей к нативным бинарникам:
 	 *  `mac-arm64` | `mac-x64` | `win-x64` | `win-arm64` | `linux-x64` | `linux-arm64`. */
 	platformTarget(): Promise<string> {
-		return api().invoke('getPlatformTarget');
+		return api().invoke('get_platform_target');
 	},
 };
 
@@ -621,7 +626,7 @@ export const system = {
 	/** Реальное количество логических ядер CPU. В отличие от
 	 *  `navigator.hardwareConcurrency` (Safari clamp'ит до 8) — даёт честное число. */
 	cpuCount(): Promise<number> {
-		return api().invoke('getCpuCount');
+		return api().invoke('get_cpu_count');
 	},
 };
 
@@ -635,7 +640,7 @@ export interface SystemFont {
 
 export const fonts = {
 	list(): Promise<SystemFont[]> {
-		return api().invoke('fontsGetList');
+		return api().invoke('fonts_get_list');
 	},
 
 	/** Поиск шрифта по нормализованному имени (без -/_/пробелов, case-insensitive).
@@ -655,19 +660,19 @@ export const fonts = {
 
 export const log = {
 	info(text: string): Promise<void> {
-		return api().invoke('sendLog', 'info', text);
+		return api().invoke('send_log', { level: 'info', text });
 	},
 	warn(text: string): Promise<void> {
-		return api().invoke('sendLog', 'warn', text);
+		return api().invoke('send_log', { level: 'warn', text });
 	},
 	error(text: string): Promise<void> {
-		return api().invoke('sendLog', 'error', text);
+		return api().invoke('send_log', { level: 'error', text });
 	},
 };
 
 export const statusBar = {
 	set(text: string): Promise<void> {
-		return api().invoke('setStatusBar', text);
+		return api().invoke('set_status_bar', { text });
 	},
 };
 
@@ -688,11 +693,11 @@ export function sendToMW(type: string, payload: any): void {
 	// Fallback (вне processing-контекста): прямой IPC.
 	if (type === 'statusbar') {
 		const text = typeof payload === 'string' ? payload : payload?.text ?? '';
-		api().invoke('setStatusBar', String(text)).catch(() => {});
+		api().invoke('set_status_bar', { text: String(text) }).catch(() => {});
 	} else if (type === 'log') {
 		const level = (payload?.level as 'info' | 'warn' | 'error' | 'debug') ?? 'info';
 		const text = typeof payload === 'string' ? payload : payload?.text ?? payload?.message ?? '';
-		api().invoke('sendLog', level, String(text)).catch(() => {});
+		api().invoke('send_log', { level, text: String(text) }).catch(() => {});
 	}
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { toFileUrl, formatTime } from '@/Utils/mediaUtils';
+import { commands } from '@/Utils/specta';
 
 const CANVAS_H = 180;
 const CONTROLS_H = 68;
@@ -35,10 +36,7 @@ export function AudioPreview({ filePath }: { filePath: string }) {
 	}, [volume]);
 
 	useEffect(() => {
-		window.electronAPI.invoke('preview:resize', {
-			width: WINDOW_W,
-			height: CANVAS_H + CONTROLS_H,
-		});
+		commands.previewResize({ width: WINDOW_W, height: CANVAS_H + CONTROLS_H });
 
 		const audio = audioRef.current;
 		if (!audio) return;

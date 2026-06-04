@@ -9,6 +9,7 @@ import { LoadPluginDialog } from './LoadPluginDialog';
 import type { PluginJsonData, UiJsonData } from './types';
 import { DEFAULT_PLUGIN_JSON, makeDefaultUiJson, generateScriptTemplate, normalizeUiJson } from './types';
 import { joinPath } from '@/Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main PluginBuilderModal
@@ -152,7 +153,7 @@ export function PluginBuilderModal({ open, onClose }: PluginBuilderModalProps) {
 			const loadedFolder = loadedPath.split(/[\\/]/).pop();
 			if (loadedFolder === pluginJson.id) return loadedPath;
 		}
-		const devPath = await window.electronAPI.invoke<string>('getPluginsDevPath');
+		const devPath = unwrap(await commands.getPluginsDevPath());
 		return joinPath(devPath, pluginJson.id);
 	};
 
@@ -164,18 +165,19 @@ export function PluginBuilderModal({ open, onClose }: PluginBuilderModalProps) {
 
 			// Сохраняем только изменённые файлы
 			if (pluginJsonChanged || !initialPluginJsonRef.current) {
-				await window.electronAPI.invoke('writeFile', joinPath(folder, 'plugin.json'), JSON.stringify(pluginJson, null, '\t'));
+				unwrap(await commands.writeFile(joinPath(folder, 'plugin.json'), JSON.stringify(pluginJson, null, '\t')));
 			}
 			if (uiJsonChanged || !initialUiJsonRef.current) {
-				await window.electronAPI.invoke('writeFile', joinPath(folder, 'ui.json'), JSON.stringify(uiJson, null, '\t'));
+				unwrap(await commands.writeFile(joinPath(folder, 'ui.json'), JSON.stringify(uiJson, null, '\t')));
 			}
 			if (scriptChanged || !initialScriptRef.current) {
 				const scriptName = pluginJson.main.replace('.js', '.ts');
 				const scriptPath = joinPath(folder, scriptName);
-				await window.electronAPI.invoke(
-					'writeFile',
-					scriptPath,
-					scriptContent ?? generateScriptTemplate(pluginJson.main.replace(/\.js$/, 'Func')),
+				unwrap(
+					await commands.writeFile(
+						scriptPath,
+						scriptContent ?? generateScriptTemplate(pluginJson.main.replace(/\.js$/, 'Func')),
+					),
 				);
 			}
 
@@ -203,7 +205,7 @@ export function PluginBuilderModal({ open, onClose }: PluginBuilderModalProps) {
 		setBuilding(true);
 		setStatus(null);
 		try {
-			const result = await window.electronAPI.invoke<{
+			const result = await window.tauriAPI.invoke<{
 				success: boolean;
 				stdout?: string;
 				stderr?: string;

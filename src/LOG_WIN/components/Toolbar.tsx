@@ -1,4 +1,5 @@
 import { Box, Chip, IconButton, InputAdornment, Stack, TextField, Tooltip } from '@mui/material';
+import { commands } from '@/Utils/specta';
 import { AlertTriangle, Download, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import type { SourceFilter, TabKey } from '../types';
 import { LEVELS } from '../utils';
@@ -32,7 +33,7 @@ export function Toolbar({
 	onLoadArchiveDays,
 	onClearArchive,
 }: ToolbarProps) {
-	const api = (window as any).electronAPI;
+	const api = (window as any).tauriAPI;
 	return (
 		<Box sx={{ px: 1.5, py: 0.75, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}>
 			<Stack direction='row' alignItems='center' spacing={0.75} flexWrap='nowrap'>
@@ -123,18 +124,18 @@ export function Toolbar({
 					</IconButton>
 				</Tooltip>
 				<Tooltip title='Экспорт TXT'>
-					<IconButton size='small' onClick={() => api.invoke('log-window:export', 'txt')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
+					<IconButton size='small' onClick={() => commands.logWindowExport('txt')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
 						<Download size={15} />
 					</IconButton>
 				</Tooltip>
 				<Tooltip title='Экспорт JSON'>
-					<IconButton size='small' onClick={() => api.invoke('log-window:export', 'json')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
+					<IconButton size='small' onClick={() => commands.logWindowExport('json')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
 						<Download size={15} />
 					</IconButton>
 				</Tooltip>
 				{tab === 'live' ? (
 					<Tooltip title='Очистить текущие'>
-						<IconButton size='small' onClick={() => api.invoke('log-window:clear')} sx={{ color: 'text.secondary', flexShrink: 0 }}>
+						<IconButton size='small' onClick={() => commands.logWindowClear()} sx={{ color: 'text.secondary', flexShrink: 0 }}>
 							<Trash2 size={15} />
 						</IconButton>
 					</Tooltip>

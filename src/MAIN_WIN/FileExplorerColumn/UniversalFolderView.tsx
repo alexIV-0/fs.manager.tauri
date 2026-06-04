@@ -15,6 +15,8 @@ import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimC
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
+import { basename } from '@/Utils/path';
 
 interface UniversalFolderViewProps {
 	type: 'gd' | 'local';
@@ -55,7 +57,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 				const mainFolder = mainFolderArr.find((f) => f.id === activeMainFolder);
 
 				if (localFolder && mainFolder) {
-					const mainFolderName = (await window.electronAPI.invoke('pathBasename', mainFolder.path)) as string;
+					const mainFolderName = basename(mainFolder.path);
 					const localRootFolderPath = joinPath(localFolder, mainFolderName, activeProjectFolder);
 
 					await openRoot('local', localRootFolderPath, { ensureDir: true });
@@ -135,7 +137,8 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			e.preventDefault();
 			const cols = state.instances[type].columns;
 			if (cols.length === 0) return;
-			await pasteFromClipboardFs(cols[cols.length - 1].path);
+			const pasteTarget = state.activeColumnPath && cols.some((c) => c.path === state.activeColumnPath) ? state.activeColumnPath : cols[cols.length - 1].path;
+			await pasteFromClipboardFs(pasteTarget);
 		},
 	});
 
@@ -190,8 +193,8 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 			e.preventDefault();
 
-			const fileType = (await window.electronAPI.invoke('getFileTypeByExtname', item.path)) as string;
-			await window.electronAPI.invoke('preview:open', JSON.stringify({ filePath: item.path, fileType }));
+			const fileType = await commands.getFileTypeByExtname(item.path.split('.').pop() || '');
+			unwrap(await commands.previewOpen(JSON.stringify({ filePath: item.path, fileType })));
 		},
 	});
 
@@ -202,14 +205,14 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 		const rootPath = rootCol.path;
 
-		// Стартуем слежку
-		window.electronAPI.invoke('fs-watch:start', rootPath);
+		// Стартуем слежку (типизированный specta-биндинг; fire-and-forget как раньше)
+		commands.fsWatchStart(rootPath);
 
 		// Подписываемся на изменения. Накопительный debounce:
 		// одно перемещение/копирование папки эмитит десятки fs-событий —
 		// собираем их все и в конце обновляем все затронутые колонки
 		// (и источник, и приёмник), а не только последний путь.
-		const unsubscribe = window.electronAPI.onFsChanged((changedPath: string) => {
+		const unsubscribe = window.tauriAPI.onFsChanged((changedPath: string) => {
 			if (!changedPath) return;
 			pendingChangedPaths.current.add(changedPath);
 
@@ -233,7 +236,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 		return () => {
 			// При размонтировании — останавливаем watcher и отписываемся
-			window.electronAPI.invoke('fs-watch:stop', rootPath);
+			commands.fsWatchStop(rootPath);
 			unsubscribe();
 		};
 	}, [instance.columns[0]?.path, type]);
@@ -243,9 +246,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 	// ==============================
 	const handleSelectFolder = async () => {
 		try {
-			const folderPaths = await window.electronAPI.invoke('selectFolders', {
-				multiSelect: false,
-			});
+			const folderPaths = unwrap(await commands.selectFolders({ multiSelect: false }));
 			if (folderPaths && Array.isArray(folderPaths) && folderPaths.length > 0) {
 				localFolders_stor.getState().updateLocalFolder(folderPaths[0]);
 			}

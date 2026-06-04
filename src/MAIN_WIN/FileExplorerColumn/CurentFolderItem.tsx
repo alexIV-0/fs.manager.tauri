@@ -20,7 +20,9 @@ import {
 	createFolder,
 } from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
+import { dirname } from '@/Utils/path';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
 interface CurentFolderItemProps {
 	name: string;
@@ -50,7 +52,7 @@ export function CurentFolderItem({
 	const { isEditing, startEditing, inputProps } = useEditableField({
 		initialValue: name,
 		onSave: async (newName) => {
-			const parentDir = (await window.electronAPI.invoke('pathDirname', path)) as string;
+			const parentDir = dirname(path);
 			const newPath = joinPath(parentDir, newName);
 			await renameFolder(path, newPath, onRenamed);
 		},
@@ -117,7 +119,7 @@ export function CurentFolderItem({
 						: isSelected
 							? isActiveSelection
 								? '#007bff4c'
-								: 'rgba(255,255,255,0.08)'
+								: 'rgba(150,150,150,0.22)'
 							: 'transparent',
 					outline: isMultiSelected ? '1px solid #007bff66' : 'none',
 					'&:hover': { backgroundColor: isMultiSelected ? '#007bff44' : '#ffffff0b' },
@@ -173,7 +175,7 @@ export function CurentFolderItem({
 								textOverflow: 'ellipsis',
 								fontWeight: isSelected ? 600 : 400,
 								fontSize: '1.2rem',
-								color: isSelected ? (isActiveSelection ? '#64afffff' : '#ffffffd9') : '#ffffffd9',
+								color: isSelected ? '#64afffff' : '#ffffffd9',
 								opacity: isCut ? 0.4 : 1,
 								cursor: 'pointer',
 								transition: 'color 0.2s ease, opacity 0.2s ease',

@@ -1,12 +1,15 @@
 /**
- * Tauri API adapter - заменяет window.electronAPI
+ * Tauri API adapter — реализация глобала window.tauriAPI (бывш. window.electronAPI, Electron-эра).
  * Все вызовы к IPC идут через @tauri-apps/api invoke/listen
+ * Это тонкий шим для ПЛАГИНОВ (snake-команды + named-payload) и событий; приложение
+ * напрямую использует типобезопасные commands.* из @/Utils/specta (tauri-specta).
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { installGlobalPolyfills } from '@/PluginAPI/globals';
+import { commands, unwrap } from '@/Utils/specta';
 
 // Слушаем события только текущего webview-окна. `listen()` из `@tauri-apps/api/event`
 // по умолчанию использует target { kind: 'Any' } и принимает события emit_to(),
@@ -16,7 +19,7 @@ import { installGlobalPolyfills } from '@/PluginAPI/globals';
 const currentWebviewWindow = getCurrentWebviewWindow();
 
 // Совместимость типов
-interface IpcRendererEvent {
+interface TauriEventArg {
 	type: string;
 	payload: any;
 }
@@ -43,92 +46,28 @@ async function waitForPendingListens(): Promise<void> {
  * Маппинг аргументов (позиционные → именованные для Tauri)
  */
 const argMappers: Record<string, (...args: any[]) => any> = {
-	// Path
-	pathJoin: (...args) => {
-		// Если первый аргумент уже массив, используем его
-		if (Array.isArray(args[0])) {
-			return { segments: args[0] };
-		}
-		// Иначе собираем все аргументы в массив
-		return { segments: args };
-	},
-	pathBasename: (filePath, ext?) => ({ filePath, ...(ext ? { ext } : {}) }),
-	pathDirname: (filePath) => ({ filePath }),
-	pathExtname: (filePath) => ({ filePath }),
-	pathParse: (filePath) => ({ filePath }),
-	pathRelative: (from, to) => ({ from, to }),
-	// Files
-	getFileInfo: (path) => ({ path }),
-	getFileTypeByExtname: (path) => {
-		// Извлекаем расширение из пути
-		const ext = path.split('.').pop() || '';
-		return { ext };
-	},
-	testAndCreateFolder: (path) => ({ path }),
-	testAndCreateFolders: (paths) => ({ paths }),
-	renameFolder: (oldPath, newPath) => ({ oldPath, newPath }),
-	setPathMtime: (path, mtimeMs) => ({ path, mtimeMs }),
-	copyItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
-	moveItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
-	deleteItem: (itemPath) => ({ itemPath }),
-	moveToErrors: (itemPath, projectPath) => ({ itemPath, projectPath }),
-	// IO
-	readFileSync: (filePath) => ({ filePath }),
+	// Path / Files / IO / Check / Fonts / Shell — camel-обёртки УДАЛЕНЫ (camelcase_wrappers.rs снесён):
+	// приложение ходит через commands.* (tauri-specta), плагины — через snake-имена + named-payload.
+	// Соответствующие camel-argMappers больше не нужны.
 	readMediaPreview: (filePath) => ({ filePath }),
 	read_media_preview: (filePath) => ({ filePath }),
-	writeFile: (filePath, content) => ({ filePath, content }),
-	write_binary_file: (filePath: string, dataB64: string) => ({ filePath, dataB64 }),
-	getSomeFromFolder: (path, search?) => ({ path, ...(search ? { search } : {}) }),
-	listSubfolders: (paths) => ({ paths }),
-	recursiveFindFiles: (path, search?) => ({ path, ...(search ? { search } : {}) }),
-	// Check
-	checkFilePath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
-	checkFolderPath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
-	// Plugins dev path (for PluginBuilderWin)
-	getPluginsDevPath: () => ({}),
-	// Fonts
-	fontsGetList: () => ({}),
-	fontsLoadOne: (fontPath) => ({ fontPath }),
-	// Shell
-	shellOpenPath: (folderPath) => ({ folderPath }),
-	// Watch
-	fsWatchStart: (folderPath) => ({ folderPath }),
-	fsWatchStop: (folderPath) => ({ folderPath }),
-	// Preview
-	previewResize: (opts) => ({ opts }),
-	previewOpen: (data) => ({ data }),
-	preview_detect_alpha: (filePath: string) => ({ filePath }),
-	preview_transcode_webm: (filePath: string) => ({ filePath }),
-	preview_delete_temp: (filePath: string) => ({ filePath }),
+	// write_binary_file/get_stat/path_exists/hash_file argMappers удалены: плагинный _template/tauri.ts
+	// теперь шлёт named-payload на snake-команды напрямую (Tauri сам camelCase→snake).
 	// Window
-	openNodeWindow: (data) => ({ data }),
+	open_node_window: (data) => ({ data }),
 	// Processing
-	abortProcessing: () => ({}),
 	killAllExecProcesses: () => ({}),
-	processItem: (item) => ({ item }),
-	setStatusBar: (text) => ({ text }),
-	sendLog: (level, text) => ({ level, text }),
-	sendNodeStart: (nodeId) => ({ nodeId }),
-	sendNodeDone: (nodeId, output) => ({ nodeId, output }),
-	sendNodeError: (nodeId, message) => ({ nodeId, message }),
-	sendProcessComplete: () => ({}),
-	// Dialog
-	selectFolders: (options?) => ({ ...(options ? { options } : {}) }),
-	selectFiles: (options?) => ({ ...(options ? { options } : {}) }),
-	copyToClipboard: (path) => ({ path }),
-	showInFolder: (path) => ({ path }),
-	openFileWithDefaultApp: (path) => ({ path }),
-	createFolder: (path) => ({ path }),
-	renameFile: (oldPath, newPath) => ({ oldPath, newPath }),
-	getNodeObjFromFile: (path) => ({ path }),
-	saveFlowToOptionsFolder: (path, flow) => ({ path, flow }),
-	getPathsFromFiles: (files) => ({ files }),
+	// setStatusBar/sendLog camel-обёртки удалены — плагины и app теперь зовут snake
+	// set_status_bar/send_log с named-payload напрямую (argMapper не нужен).
+	// abortProcessing/processItem/sendNode*/sendProcessComplete мигрированы на commands.* — мапперы не нужны.
+	// Dialog: selectFolders/selectFiles/copyToClipboard/showInFolder/openFileWithDefaultApp/
+	// createFolder/renameFile/getNodeObjFromFile/saveFlowToOptionsFolder/getPathsFromFiles
+	// мигрированы на tauri-specta (commands.* + unwrap) — мапперы не нужны.
 	requestDataPreview: () => ({}),
 	openDevTools: () => ({}),
 	openUrl: (url) => ({ url }),
 	// Window state
-	saveWindowState: (label, state) => ({ label, state }),
-	loadWindowState: (label) => ({ label }),
+	// saveWindowState/loadWindowState мигрированы на tauri-specta (commands.*) — мапперы не нужны.
 	// FFmpeg
 	ffmpeg_get_path: () => ({}),
 	ffprobe_get_path: () => ({}),
@@ -155,56 +94,20 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	plugin_manager_install: (filePath) => ({ filePath }),
 	plugin_manager_delete: (pluginId, version) => ({ pluginId, version }),
 	plugin_manager_destroy: () => ({}),
-	// App settings
-	app_settings_get: () => ({}),
-	app_settings_set: (settings: any) => ({ settings }),
-	app_settings_patch: (patch: any) => ({ patch }),
-	// Color types
-	color_types_get: () => ({}),
-	color_types_set: (types: any) => ({ types }),
-	color_types_rescan: () => ({}),
-	color_types_add: (name: string, defaultLimit?: number) => ({ name, defaultLimit }),
-	color_types_remove: (name: string) => ({ name }),
-	// File types
-	file_types_get: () => ({}),
-	file_types_set: (types: any) => ({ types }),
-	// Program paths
-	program_paths_get: () => ({}),
-	program_paths_set: (paths: any) => ({ paths }),
+	// App settings / Color types / File types / Program paths — мигрированы на tauri-specta
+	// (commands.* + unwrap из @/Utils/specta). Мапперы не нужны.
 	// Docs
-	docs_list: () => ({}),
-	docs_read: (sectionName: string, fileName: string) => ({ sectionName, fileName }),
-	// Log window (alias targets)
-	log_window_open: () => ({}),
-	log_window_close: () => ({}),
-	log_window_get_history: () => ({}),
-	log_window_clear: () => ({}),
-	log_window_has_errors: () => ({}),
-	log_window_get_recent: (count?: number) => ({ count }),
-	log_window_get_errors: () => ({}),
-	log_window_export: (format?: string) => ({ format }),
-	log_window_emit_item_start: (payload: any) => ({ payload }),
-	log_window_emit_item_log: (payload: any) => ({ payload }),
-	log_window_emit_node_update: (payload: any) => ({ payload }),
-	log_window_emit_item_end: (payload: any) => ({ payload }),
-	log_window_emit_item_queued: (payload: any) => ({ payload }),
-	log_window_emit_substep_batch: (payload: any) => ({ payload }),
-	log_window_emit_abort_queued: () => ({}),
-	log_archive_list_days: () => ({}),
-	log_archive_get_day: (date: string) => ({ date }),
-	log_archive_cleanup: () => ({}),
-	log_archive_clear: () => ({}),
+	// docs_list/docs_read мигрированы на tauri-specta (commands.docsList/docsRead) — мапперы не нужны.
+	// Log window: log_window_* мигрированы на tauri-specta (commands.logWindow*) — мапперы не нужны.
+	// (мёртвые toggle/get_status/open_quick/open_errors_only/emit_item_start/console остаются snake-командами.)
+	// log_archive_* мигрированы на tauri-specta (commands.logArchive*) — мапперы не нужны.
 	diag_log_write: (msg: string) => ({ msg }),
 	diag_log_path: () => ({}),
 	diag_log_clear: () => ({}),
 	createTextFile: (path: string) => ({ path }),
 	ensure_and_read_dir: (path: string) => ({ path }),
-	get_stat: (path: string) => ({ path }),
-	path_exists: (path: string) => ({ path }),
 	os_tmpdir: () => ({}),
-	hash_file: (path: string, algo?: string) => ({ path, algo }),
-	cleanup_auto_delete: (localFolder: string) => ({ localFolder }),
-	db_register_found: (payload: any) => ({ payload }),
+	// cleanup_auto_delete/db_register_found мигрированы на commands.* — мапперы не нужны.
 	// HTTP via Rust (no CORS)
 	// Tauri сопоставляет аргументы по имени параметра Rust-функции.
 	// Все три команды объявлены как fn http_xxx(args: ...) → оборачиваем в { args }.
@@ -230,81 +133,37 @@ const commandAliases: Record<string, string> = {
 	'plugins:list': 'plugin_manager_list',
 	'plugins:install': 'plugin_manager_install',
 	'plugins:delete': 'plugin_manager_delete',
-	getUserDataPath: 'getOptionsFolder',
-	'shell:openPath': 'shellOpenPath',
+	// getUserDataPath/'shell:openPath' удалены: вели на снесённые camel-обёртки getOptionsFolder/shellOpenPath.
+	// App зовёт commands.getUserDataPath/shellOpenPath (snake), плагины — snake-имена напрямую.
 	'request-data': 'request_data',
 	requestData: 'request_data',
 	openDevTools: 'open_devtools',
 	open_dev_tools: 'openDevTools',
-	'open-node-window': 'openNodeWindow',
-	'abort-processing': 'abortProcessing',
+	'open-node-window': 'open_node_window',
+	// 'abort-processing'/'process-item' мигрированы на commands.* (abortProcessing).
 	'exec-command': 'exec_command',
 	'kill-all-exec-processes': 'killAllExecProcesses',
-	'process-item': 'processItem',
-	'fs-watch:start': 'fsWatchStart',
-	'fs-watch:stop': 'fsWatchStop',
-	'preview:resize': 'previewResize',
-	'preview:open': 'previewOpen',
-	'preview:detect-alpha': 'preview_detect_alpha',
-	'preview:transcode-webm': 'preview_transcode_webm',
-	'preview:delete-temp': 'preview_delete_temp',
-	'preview:make-alpha-webm': 'preview_transcode_webm',
+	// 'fs-watch:start'/'fs-watch:stop' мигрированы на tauri-specta (commands.fsWatchStart/Stop).
+	// preview:* мигрированы на tauri-specta (commands.preview*).
 	'read-media-preview': 'read_media_preview',
-	// Fonts
-	'fonts:get-list': 'fontsGetList',
-	'fonts:load-one': 'fontsLoadOne',
-	// App settings
-	'app-settings:get': 'app_settings_get',
-	'app-settings:set': 'app_settings_set',
-	'app-settings:patch': 'app_settings_patch',
-	// Color types
-	'color-types:get': 'color_types_get',
-	'color-types:set': 'color_types_set',
-	'color-types:rescan': 'color_types_rescan',
-	'color-types:add': 'color_types_add',
-	'color-types:remove': 'color_types_remove',
-	// File types
-	'file-types:get': 'file_types_get',
-	'file-types:set': 'file_types_set',
-	// Program paths
-	'program-paths:get': 'program_paths_get',
-	'program-paths:set': 'program_paths_set',
+	// Fonts: 'fonts:get-list'/'fonts:load-one' удалены — вели на снесённые camel fontsGetList/fontsLoadOne.
+	// App settings / Color types / File types / Program paths — мигрированы на tauri-specta (commands.*).
 	// Docs
-	'docs:list': 'docs_list',
-	'docs:read': 'docs_read',
-	// Log window
-	'log-window:open': 'log_window_open',
-	'log-window:close': 'log_window_close',
-	'log-window:get-history': 'log_window_get_history',
-	'log-window:clear': 'log_window_clear',
-	'log-window:has-errors': 'log_window_has_errors',
-	'log-window:get-recent': 'log_window_get_recent',
-	'log-window:get-errors': 'log_window_get_errors',
-	'log-window:export': 'log_window_export',
-	'log-window:emit-item-start': 'log_window_emit_item_start',
-	'log-window:emit-item-log': 'log_window_emit_item_log',
-	'log-window:emit-node-update': 'log_window_emit_node_update',
-	'log-window:emit-item-end': 'log_window_emit_item_end',
-	'log-window:item-queued': 'log_window_emit_item_queued',
-	'log-window:emit-substep-batch': 'log_window_emit_substep_batch',
-	'log-window:abort-queued': 'log_window_emit_abort_queued',
-	'logs:list-days': 'log_archive_list_days',
-	'logs:get-day': 'log_archive_get_day',
-	'logs:cleanup': 'log_archive_cleanup',
-	'logs:clear-archive': 'log_archive_clear',
+	// 'docs:list'/'docs:read' мигрированы на tauri-specta (commands.docsList/docsRead).
+	// Log window: 'log-window:*' мигрированы на tauri-specta (commands.logWindow*).
+	// 'logs:*' мигрированы на tauri-specta (commands.logArchive*).
 	// Диагностический лог для отладки зависания LogApp (см. src-tauri/src/commands/diag_log.rs).
 	'diag:log': 'diag_log_write',
 	'diag:log-path': 'diag_log_path',
 	'diag:log-clear': 'diag_log_clear',
 	// Misc PROCESSING channels
 	createTextFile: 'createTextFile',
-	moveToErrors: 'move_to_errors',
+	// moveToErrors мигрирован на commands.moveToErrors.
 	ensureAndReadDir: 'ensure_and_read_dir',
 	get_stat: 'get_stat',
 	os_tmpdir: 'os_tmpdir',
 	hash_file: 'hash_file',
-	'cleanup:auto-delete': 'cleanup_auto_delete',
-	'db:registerFound': 'db_register_found',
+	// 'cleanup:auto-delete'/'db:registerFound' мигрированы на commands.* (cleanupAutoDelete/dbRegisterFound).
 };
 
 /**
@@ -421,16 +280,6 @@ const tauriLogger = {
 };
 
 /**
- * Log window объект
- */
-const tauriLogWindow = {
-	open: () => tauriInvoke<boolean>('log_window_open'),
-	close: () => tauriInvoke<boolean>('log_window_close'),
-	getHistory: () => tauriInvoke<{ logs: Array<any>; stats: any }>('log_window_get_history'),
-	clear: () => tauriInvoke<boolean>('log_window_clear'),
-};
-
-/**
  * Plugins API объект
  */
 const tauriPlugins = {
@@ -465,11 +314,11 @@ const tauriPlugins = {
  */
 export const tauriAPI = {
 	// Обработчики событий
-	onUpdateData: (callback: (event: IpcRendererEvent, data: any) => void) => {
+	onUpdateData: (callback: (event: TauriEventArg, data: any) => void) => {
 		tauriOn('update-data', callback);
 	},
 	requestData: () => tauriSend('request-data'),
-	removeUpdateData: (callback: (event: IpcRendererEvent, data: any) => void) => {
+	removeUpdateData: (callback: (event: TauriEventArg, data: any) => void) => {
 		tauriOff('update-data', callback);
 	},
 	requestNodeWindowData: () => tauriInvoke('requestNodeWindowData'),
@@ -481,18 +330,8 @@ export const tauriAPI = {
 	off: tauriOff,
 	send: tauriSend,
 
-	// Dialog & Shell
-	selectFolders: (options?: { multiSelect?: boolean }) => tauriInvoke<string[]>('selectFolders', options),
-	selectFiles: (options?: { multiSelect?: boolean; filters?: any[] }) => tauriInvoke<string[]>('selectFiles', options),
-	copyToClipboard: (path: string) => tauriInvoke<void>('copyToClipboard', path),
-	showInFolder: (path: string) => tauriInvoke<void>('showInFolder', path),
-	openFileWithDefaultApp: (path: string) => tauriInvoke<void>('openFileWithDefaultApp', path),
-	createFolder: (path: string) => tauriInvoke<void>('createFolder', path),
-	renameFile: (oldPath: string, newPath: string) => tauriInvoke<boolean>('renameFile', oldPath, newPath),
-	getNodeObjFromFile: (path: string) => tauriInvoke<any>('getNodeObjFromFile', path),
-	saveFlowToOptionsFolder: (path: string, flow: any) => tauriInvoke<any>('saveFlowToOptionsFolder', path, flow),
-	getPathsFromFiles: (_files: string[]) => tauriInvoke<string[]>('getPathsFromFiles', _files),
-	requestDataFromMainWindow: () => tauriInvoke<void>('requestDataPreview'),
+	// Dialog & Shell: мигрированы на tauri-specta (commands.* + unwrap из @/Utils/specta).
+	// openDevTools оставлен — это window_commands.open_devtools (отдельная команда, не dialog).
 	openDevTools: () => tauriInvoke<void>('open_devtools'),
 
 	// Логирование
@@ -528,8 +367,8 @@ export const tauriAPI = {
 	// Логгер
 	logger: tauriLogger,
 
-	// Окно логов
-	logWindow: tauriLogWindow,
+	// Окно логов: log_window_* мигрированы на tauri-specta (commands.logWindow*) —
+	// мёртвый объект logWindow удалён.
 
 	// Консоль
 	interceptConsole: () => {
@@ -560,45 +399,28 @@ export const tauriAPI = {
 	}) => tauriInvoke<{ success: boolean; data?: any; error?: string }>('run_script_in_ae', args),
 	launchAEWithScript: (aePath: string, scriptPath: string) => tauriInvoke<void>('launch_ae_with_script', aePath, scriptPath),
 
-	// Процессинг
-	abortProcessing: () => tauriInvoke<void>('abortProcessing'),
+	// Процессинг: остаются exec_command (зовут плагины) + kill-all-exec-processes.
+	// Мёртвые camel-методы удалены — их команды мигрированы на commands.* или снесены вместе
+	// с camelcase_wrappers.rs, а сами методы нигде не вызывались:
+	// abortProcessing/moveToErrors/sendNodeStart/Done/Error/sendProcessComplete/setStatusBar/sendLog/
+	// isProcessingAborted/resetProcessingSignal/set+getProcessingProgress/addProcessingError/
+	// processingDeleteItem/pathExists/getItemInfo/processItem.
 	killAllExecProcesses: () => tauriInvoke<void>('kill-all-exec-processes'),
 	execCommand: (args: { cmd: string; args: string[]; cwd?: string; nodeId?: string; env?: [string, string][] }) =>
 		tauriInvoke<any>('exec-command', args),
-	isProcessingAborted: () => tauriInvoke<boolean>('isProcessingAborted'),
-	resetProcessingSignal: () => tauriInvoke<void>('resetProcessingSignal'),
-	setProcessingProgress: (currentStep: string, total: number, completed: number) =>
-		tauriInvoke<void>('setProcessingProgress', currentStep, total, completed),
-	getProcessingProgress: () => tauriInvoke<any>('getProcessingProgress'),
-	addProcessingError: (error: string) => tauriInvoke<void>('addProcessingError', error),
-	moveToErrors: (itemPath: string, projectPath: string) => tauriInvoke<any>('moveToErrors', itemPath, projectPath),
-	processingDeleteItem: (itemPath: string) => tauriInvoke<boolean>('processingDeleteItem', itemPath),
-	pathExists: (path: string) => tauriInvoke<boolean>('pathExists', path),
-	getItemInfo: (path: string) => tauriInvoke<any>('getItemInfo', path),
-	processItem: (item: any) => tauriInvoke<any>('processItem', item),
-	setStatusBar: (text: string) => tauriInvoke<void>('setStatusBar', text),
-	sendLog: (level: string, text: string) => tauriInvoke<void>('sendLog', level, text),
-	sendNodeStart: (nodeId: string) => tauriInvoke<void>('sendNodeStart', nodeId),
-	sendNodeDone: (nodeId: string, output: any) => tauriInvoke<void>('sendNodeDone', nodeId, output),
-	sendNodeError: (nodeId: string, message: string) => tauriInvoke<void>('sendNodeError', nodeId, message),
-	sendProcessComplete: () => tauriInvoke<void>('sendProcessComplete'),
 
-	// Window state
-	saveWindowState: (label: string, state: any) => tauriInvoke<void>('saveWindowState', label, state),
-	loadWindowState: (label: string) => tauriInvoke<any | null>('loadWindowState', label),
+	// Window state: мигрирован на tauri-specta (commands.saveWindowState/loadWindowState).
+	// Сохранение зовётся напрямую из windowAutoSave.ts; загрузка — в Rust на старте.
 
-	// Утилиты
-	hasErrors: () => tauriInvoke<boolean>('log-window:has-errors'),
-	getRecentLogs: (count?: number) => tauriInvoke<Array<any>>('log-window:get-recent', count),
-	getErrors: () => tauriInvoke<Array<any>>('log-window:get-errors'),
+	// hasErrors/getRecentLogs/getErrors удалены (мёртвые; log_window_* мигрированы на commands.*).
 };
 
 /**
  * Docs API объект (window.docs)
  */
 const tauriDocs = {
-	list: () => tauriInvoke<Array<{ name: string; files: Array<{ name: string; fileName: string }> }>>('docs_list'),
-	read: (sectionName: string, fileName: string) => tauriInvoke<string>('docs_read', sectionName, fileName),
+	list: () => commands.docsList().then(unwrap),
+	read: (sectionName: string, fileName: string) => commands.docsRead(sectionName, fileName).then(unwrap),
 };
 
 /**
@@ -639,7 +461,7 @@ export async function initTauriAPI() {
 		// ДО загрузки любого плагина через plugin:// протокол.
 		installGlobalPolyfills();
 
-		(window as any).electronAPI = tauriAPI;
+		(window as any).tauriAPI = tauriAPI;
 		(window as any).log = tauriAPI.logger;
 		(window as any).invoke = tauriAPI.invoke;
 		(window as any).plugins = tauriPlugins;

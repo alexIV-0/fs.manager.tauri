@@ -8,7 +8,7 @@ use tauri::Manager;
 
 // ==================== TYPES ====================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct FileInfo {
     pub path: String,
     pub name: String,
@@ -20,16 +20,7 @@ pub struct FileInfo {
     pub extension: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct PathInfo {
-    pub root: String,
-    pub dir: String,
-    pub base: String,
-    pub ext: String,
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 pub struct CopyMoveOptions {
     #[serde(default)]
     pub use_hash_check: bool,
@@ -37,7 +28,7 @@ pub struct CopyMoveOptions {
     pub overwrite: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewResizeOpts {
     pub width: f64,
@@ -48,7 +39,7 @@ pub struct PreviewResizeOpts {
     pub extra_height: Option<f64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct FontInfo {
     pub name: String,
     pub path: String,
@@ -56,6 +47,11 @@ pub struct FontInfo {
 }
 
 // ==================== PATH UTILITIES ====================
+// basename/dirname/extname/parse/relative УДАЛЕНЫ: это чистые строковые операции,
+// приложение делает их в renderer (src/Utils/path.ts → src/PluginAPI/path.ts,
+// кросс-платформенно), без IPC-round-trip'а. Осталась только path_join — её через IPC
+// зовут ПЛАГИНЫ (_template/tauri.ts), поэтому она остаётся обычной #[tauri::command]
+// (без specta-биндинга — типизированного потребителя нет). См. SPECTA_MIGRATION_PLAN.md.
 
 #[tauri::command]
 pub fn path_join(segments: Vec<String>) -> Result<String, String> {
@@ -69,87 +65,10 @@ pub fn path_join(segments: Vec<String>) -> Result<String, String> {
     Ok(result.to_string_lossy().to_string())
 }
 
-#[tauri::command]
-pub fn path_basename(file_path: String, ext: Option<String>) -> Result<String, String> {
-    let path = Path::new(&file_path);
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    
-    if let Some(remove_ext) = ext {
-        if name.ends_with(&remove_ext) {
-            return Ok(name[..name.len() - remove_ext.len()].to_string());
-        }
-    }
-    
-    Ok(name)
-}
-
-#[tauri::command]
-pub fn path_dirname(file_path: String) -> Result<String, String> {
-    let path = Path::new(&file_path);
-    path.parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Cannot get parent directory".into())
-}
-
-#[tauri::command]
-pub fn path_extname(file_path: String) -> Result<String, String> {
-    let path = Path::new(&file_path);
-    Ok(path
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default())
-}
-
-#[tauri::command]
-pub fn path_parse(file_path: String) -> Result<PathInfo, String> {
-    let path = Path::new(&file_path);
-    let root = path
-        .components()
-        .next()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .unwrap_or_default();
-    let dir = path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let base = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let name = path
-        .file_stem()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    Ok(PathInfo {
-        root,
-        dir,
-        base,
-        ext,
-        name,
-    })
-}
-
-#[tauri::command]
-pub fn path_relative(from: String, to: String) -> Result<String, String> {
-    let from_path = Path::new(&from);
-    let to_path = Path::new(&to);
-    
-    pathdiff::diff_paths(to_path, from_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Cannot compute relative path".into())
-}
-
 // ==================== FILE INFO ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_file_info(path: String) -> Result<FileInfo, String> {
     let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
     let std_path = Path::new(&path);
@@ -183,6 +102,7 @@ pub fn get_file_info(path: String) -> Result<FileInfo, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_file_type_by_extname(
     ext: String,
     state: tauri::State<std::sync::Mutex<super::settings_commands::AppSettingsState>>,
@@ -210,12 +130,13 @@ pub fn get_file_type_by_extname(
 // ==================== FILE OPERATIONS ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn test_and_create_folder(path: String) -> Result<(), String> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
 
 /// Возвращает метаданные файла (для полифила node:fs.stat).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StatInfo {
     pub size: u64,
@@ -229,6 +150,7 @@ pub struct StatInfo {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_stat(path: String) -> Result<StatInfo, String> {
     let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
     let to_ms = |t: std::io::Result<std::time::SystemTime>| -> f64 {
@@ -251,6 +173,7 @@ pub fn get_stat(path: String) -> Result<StatInfo, String> {
 
 /// Возвращает путь к временной директории (для полифила node:os.tmpdir).
 #[tauri::command]
+#[specta::specta]
 pub fn os_tmpdir() -> String {
     std::env::temp_dir().to_string_lossy().to_string()
 }
@@ -258,6 +181,7 @@ pub fn os_tmpdir() -> String {
 /// Считает хеш файла по алгоритму (sha256 | sha1 | md5). Возвращает hex.
 /// Для полифила node:crypto.createHash, чтобы не таскать содержимое через IPC.
 #[tauri::command]
+#[specta::specta]
 pub fn hash_file(path: String, algo: Option<String>) -> Result<String, String> {
     use std::io::Read;
     let algo = algo.unwrap_or_else(|| "sha256".to_string()).to_lowercase();
@@ -300,6 +224,7 @@ pub fn hash_file(path: String, algo: Option<String>) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn test_and_create_folders(paths: Vec<String>) -> Result<Vec<String>, String> {
     for p in &paths {
         let pb = std::path::Path::new(p);
@@ -314,6 +239,7 @@ pub fn test_and_create_folders(paths: Vec<String>) -> Result<Vec<String>, String
 /// Создаёт папку (если нет) и возвращает её содержимое в формате `{ folders: [], files: [] }`.
 /// Аналог Electron'овского ensureAndReadDir.
 #[tauri::command]
+#[specta::specta]
 pub fn ensure_and_read_dir(path: String) -> Result<serde_json::Value, String> {
     if !std::path::Path::new(&path).is_absolute() {
         return Err(format!("[ensure_and_read_dir] path is not absolute: {}", path));
@@ -344,6 +270,7 @@ pub fn ensure_and_read_dir(path: String) -> Result<serde_json::Value, String> {
 
 /// Создаёт пустой текстовый файл по указанному пути. Если файл уже существует — ошибка.
 #[tauri::command]
+#[specta::specta]
 pub fn create_text_file(path: String) -> Result<(), String> {
     if std::path::Path::new(&path).exists() {
         return Err(format!("File already exists: {}", path));
@@ -355,6 +282,7 @@ pub fn create_text_file(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn rename_folder(old_path: String, new_path: String) -> Result<(), String> {
     fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
 }
@@ -363,6 +291,7 @@ pub fn rename_folder(old_path: String, new_path: String) -> Result<(), String> {
 /// Используется в логике автоотключения: при ручном включении папки с устаревшим OUT
 /// фронт двигает mtime, чтобы дать папке окно перед повторным auto-disable.
 #[tauri::command]
+#[specta::specta]
 pub fn set_path_mtime(path: String, mtime_ms: f64) -> Result<(), String> {
     let p = Path::new(&path);
     if !p.exists() {
@@ -375,6 +304,7 @@ pub fn set_path_mtime(path: String, mtime_ms: f64) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn copy_item(
     source_path: String,
     destination_path: String,
@@ -426,6 +356,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn move_item(
     source_path: String,
     destination_path: String,
@@ -466,6 +397,7 @@ pub fn move_item(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn delete_item(item_path: String) -> Result<bool, String> {
     let path = Path::new(&item_path);
     
@@ -485,11 +417,13 @@ pub fn delete_item(item_path: String) -> Result<bool, String> {
 // ==================== READ/WRITE FILES ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn read_file_sync(file_path: String) -> Result<String, String> {
     fs::read_to_string(&file_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn read_media_preview(file_path: String) -> Result<String, String> {
     let path = Path::new(&file_path);
     
@@ -564,6 +498,7 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn write_file(file_path: String, content: String) -> Result<serde_json::Value, String> {
     let path = Path::new(&file_path);
 
@@ -580,6 +515,7 @@ pub fn write_file(file_path: String, content: String) -> Result<serde_json::Valu
 /// Используется плагинами для сохранения скачанных через fetch результатов
 /// (видео, аудио, изображения). Создаёт родительские директории при необходимости.
 #[tauri::command]
+#[specta::specta]
 pub fn write_binary_file(file_path: String, data_b64: String) -> Result<u64, String> {
     let path = Path::new(&file_path);
     if let Some(parent) = path.parent() {
@@ -631,6 +567,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
 /// Возвращает путь до файла или '' если файл не существует или является папкой.
 /// Совместимо с Electron: всегда возвращает строку, никогда не бросает ошибку.
 #[tauri::command]
+#[specta::specta]
 pub fn check_file_path(path: String, name: Option<String>) -> Result<String, String> {
     let check_path = if let Some(n) = name {
         PathBuf::from(&path).join(n).to_string_lossy().to_string()
@@ -648,6 +585,7 @@ pub fn check_file_path(path: String, name: Option<String>) -> Result<String, Str
 /// Если передан путь до файла — возвращает родительскую директорию.
 /// Совместимо с Electron: всегда возвращает строку, никогда не бросает ошибку.
 #[tauri::command]
+#[specta::specta]
 pub fn check_folder_path(path: String, name: Option<String>) -> Result<String, String> {
     let check_path = if let Some(n) = name {
         PathBuf::from(&path).join(n).to_string_lossy().to_string()
@@ -669,7 +607,7 @@ pub fn check_folder_path(path: String, name: Option<String>) -> Result<String, S
 /// Один элемент паттерна поиска. Формат совместим с Electron:
 /// `{ type: 'files'|'folders', ext: string[] }`.
 /// Пустой массив `ext` означает «все расширения».
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, specta::Type)]
 pub struct SearchEntry {
     #[serde(default, rename = "type")]
     pub kind: String,
@@ -706,6 +644,7 @@ fn ext_matches(path: &Path, exts: &[String]) -> bool {
 /// Совместимо с Electron Node-fallback'ом, который ожидают callers вроде
 /// findFilesForSingleFolder и collectFilesFromFolderFunc.
 #[tauri::command]
+#[specta::specta]
 pub fn get_some_from_folder(
     path: String,
     search: Option<SearchPattern>,
@@ -763,6 +702,7 @@ pub fn get_some_from_folder(
 /// Использование: главное окно сканирует все «main folders» в одном IPC и получает
 /// списки проектов внутри каждой.
 #[tauri::command]
+#[specta::specta]
 pub fn list_subfolders(paths: Vec<String>) -> Result<serde_json::Value, String> {
     let mut out = serde_json::Map::new();
     for p in &paths {
@@ -790,6 +730,7 @@ pub fn list_subfolders(paths: Vec<String>) -> Result<serde_json::Value, String> 
 /// Рекурсивный поиск. Возвращает `{[type]: string[]}` — относительные пути от `path`,
 /// разбитые по типу (как в Electron'е). Папки тоже могут включаться если в search есть type=folders.
 #[tauri::command]
+#[specta::specta]
 pub fn recursive_find_files(
     path: String,
     search: Option<SearchPattern>,
@@ -857,6 +798,7 @@ pub fn recursive_find_files(
 // ==================== USER DATA PATH ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_user_data_path(app: tauri::AppHandle) -> Result<String, String> {
     let path = app.path()
         .app_data_dir()
@@ -872,6 +814,7 @@ pub fn get_user_data_path(app: tauri::AppHandle) -> Result<String, String> {
 /// чтобы добраться до родительской папки с plugins-dev. Если ни тот, ни тот вариант
 /// не подходит — вернёт ошибку.
 #[tauri::command]
+#[specta::specta]
 pub fn get_plugins_dev_path() -> Result<String, String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
 
@@ -897,6 +840,7 @@ pub fn get_plugins_dev_path() -> Result<String, String> {
 /// получить нельзя — Safari/WebKit clamp'ит результат до 8 (anti-fingerprinting),
 /// что мешает корректно настроить thread-pool для нативных бинарников (whisper, ffmpeg).
 #[tauri::command]
+#[specta::specta]
 pub fn get_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -908,6 +852,7 @@ pub fn get_cpu_count() -> usize {
 /// Из WebView архитектуру macOS определить нельзя (Apple отдаёт "Intel" в navigator
 /// даже на Apple Silicon), поэтому источник правды — Rust runtime.
 #[tauri::command]
+#[specta::specta]
 pub fn get_platform_target() -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -925,6 +870,7 @@ pub fn get_platform_target() -> String {
 // ==================== FONTS ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn fonts_get_list() -> Result<Vec<FontInfo>, String> {
     let platform = std::env::consts::OS;
     let mut font_dirs: Vec<PathBuf> = Vec::new();
@@ -1016,6 +962,7 @@ fn walk_fonts(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn fonts_load_one(font_path: String) -> Result<Option<String>, String> {
     let path = Path::new(&font_path);
     
@@ -1079,6 +1026,7 @@ fn has_os2_table(buffer: &[u8]) -> bool {
 // ==================== SHELL:OPEN PATH ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn shell_open_path(folder_path: String) -> Result<(), String> {
     use std::process::Command;
     

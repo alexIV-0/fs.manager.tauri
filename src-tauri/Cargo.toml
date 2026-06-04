@@ -1,6 +1,6 @@
 [package]
 name = "fs-manager-tauri"
-version = "0.1.8"
+version = "0.2.0"
 description = "fsManager - File System Manager with Tauri"
 authors = ["alexIV"]
 edition = "2021"
@@ -36,6 +36,14 @@ sha2 = "0.10"
 sha1 = "0.10"
 md5 = { package = "md-5", version = "0.10" }
 filetime = "0.2"
+tauri-plugin-clipboard = "2.1.11"
+tauri-plugin-drag = "2.1.1"
+systemicons = "0.9.13"
+base64 = "0.22.1"
+# tauri-specta: типобезопасные TS-биндинги (export-only стадия, см. SPECTA_MIGRATION_PLAN.md)
+specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
+specta-typescript = "0.0.9"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [

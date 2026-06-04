@@ -1,7 +1,7 @@
 import { joinPath } from '@/Utils/joinPath';
-import { tauriAPI } from '@/Utils/tauri-api';
+import { commands, unwrap } from '@/Utils/specta';
 
 export async function getPresetsDir(_name: string): Promise<string> {
-	const userData = await tauriAPI.invoke<string>('getUserDataPath');
+	const userData = unwrap(await commands.getUserDataPath());
 	return joinPath(userData, _name);
 }

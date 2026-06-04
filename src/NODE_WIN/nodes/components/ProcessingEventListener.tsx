@@ -1,14 +1,14 @@
 import { useProcessingStatus_store } from '@/Store/Node/useProcessingStatus_store';
 import { useEffect, useRef } from 'react';
-import { useElectronEventListener } from '@/hooks/useElectronEventListener';
+import { useTauriEventListener } from '@/hooks/useTauriEventListener';
 
 export function ProcessingEventListener() {
 	const { setActiveNode, setNodeStatus, setStatusText, setIsRunning, resetAll } = useProcessingStatus_store();
 	const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	useElectronEventListener(
-		window.electronAPI.onProcessingEvent,
-		window.electronAPI.removeProcessingEvent,
+	useTauriEventListener(
+		window.tauriAPI.onProcessingEvent,
+		window.tauriAPI.removeProcessingEvent,
 		(event: { type: string; payload: any }) => {
 			const { type, payload } = event;
 

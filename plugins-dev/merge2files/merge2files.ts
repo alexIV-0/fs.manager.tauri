@@ -60,6 +60,11 @@ export async function merge2filesFunc(_item: any, _description: any): Promise<st
 					duration = Math.max(infoVA.durationInSeconds, infoA.durationInSeconds);
 			}
 
+			// Картинка не имеет собственной длительности — стоп-кадр тянем на всю длину аудио.
+			if (typeVA === 'image') {
+				duration = infoA.durationInSeconds;
+			}
+
 			const basePath = createPathForFileByPattern(curPath, _description, fileVA);
 			const fileTo = path.join(path.dirname(basePath), path.basename(basePath, path.extname(basePath)) + '.' + outputFormat);
 
@@ -72,8 +77,28 @@ export async function merge2filesFunc(_item: any, _description: any): Promise<st
 			}
 
 			let ffmpegArgs: string[] = [];
+			// Картинку нужно зациклить как видеовход, чтобы стоп-кадр держался всю длину аудио.
+			const inputVAArgs: string[] = typeVA === 'image' ? ['-loop', '1'] : [];
 
-			if (typeVA === 'video') {
+			if (typeVA === 'image') {
+				// Стоп-кадр + аудио → видео. Чётные размеры + yuv420p для совместимости проигрывателей.
+				ffmpegArgs = [
+					'-filter_complex',
+					'[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[v]',
+					'-map',
+					'[v]',
+					'-map',
+					'1:a',
+					'-c:v',
+					'libx264',
+					'-tune',
+					'stillimage',
+					'-c:a',
+					'aac',
+					'-t',
+					String(duration),
+				];
+			} else if (typeVA === 'video') {
 				if (mixAudio && infoVA.hasAudio) {
 					if (speedFilter) {
 						ffmpegArgs = [
@@ -136,7 +161,7 @@ export async function merge2filesFunc(_item: any, _description: any): Promise<st
 				text: `${_description.infoText}: [merge 2 files]\n${path.basename(fileVA)} + ${path.basename(fileA)}`,
 				duration,
 				nodeId: _item.id,
-				command: ['-y', '-i', fileVA, '-i', fileA, ...ffmpegArgs, fileTo],
+				command: ['-y', ...inputVAArgs, '-i', fileVA, '-i', fileA, ...ffmpegArgs, fileTo],
 			});
 
 			finalFile.push(fileTo);

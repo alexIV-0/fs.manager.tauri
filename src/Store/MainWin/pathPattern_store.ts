@@ -1,4 +1,5 @@
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
+import { commands, unwrap } from '@/Utils/specta';
 import { nanoid } from 'nanoid';
 import { create } from 'zustand';
 import { PatternDomain, patternDomainRegistry } from './pathPatternDomainRegistry';
@@ -367,7 +368,13 @@ type TauriPatternStore = PatternStore & {
 	loadFromTauri: () => Promise<void>;
 };
 
-const createTauriPatternStore = (localKey: string, getCmd: string, setCmd: string, defaultTypes: PatternElement[] = [], domain?: PatternDomain) => {
+const createTauriPatternStore = (
+	localKey: string,
+	loadFn: () => Promise<PatternElement[]>,
+	saveFn: (els: PatternElement[]) => Promise<unknown>,
+	defaultTypes: PatternElement[] = [],
+	domain?: PatternDomain,
+) => {
 	const defaultNamesSet = new Set(defaultTypes.map((d) => d.name));
 	const markDefaults = (items: PatternElement[]): PatternElement[] =>
 		items.map((it) => (defaultNamesSet.has(it.name) && !it.isDefault ? { ...it, isDefault: true } : it));
@@ -392,9 +399,7 @@ const createTauriPatternStore = (localKey: string, getCmd: string, setCmd: strin
 
 	const tauriSave = (elements: PatternElement[]) => {
 		saveToLocalStorage(localKey, elements);
-		if (typeof window !== 'undefined' && (window as any).electronAPI) {
-			(window as any).electronAPI.invoke(setCmd, elements).catch((e: unknown) => console.warn(`[TauriStore:${localKey}] save failed:`, e));
-		}
+		saveFn(elements).catch((e: unknown) => console.warn(`[TauriStore:${localKey}] save failed:`, e));
 	};
 
 	const store = create<TauriPatternStore>()((set, get) => ({
@@ -402,7 +407,7 @@ const createTauriPatternStore = (localKey: string, getCmd: string, setCmd: strin
 
 		loadFromTauri: async () => {
 			try {
-				const data = (await (window as any).electronAPI.invoke(getCmd)) as PatternElement[];
+				const data = await loadFn();
 				if (Array.isArray(data) && data.length > 0) {
 					const withInactive = data.map((item: PatternElement) => ({ ...item, inactivePath: item.inactivePath || [] }));
 					const tagged = markDefaults(withInactive);
@@ -533,8 +538,19 @@ export const typeOfdata_store = createPathPatternStore('typeOfData', defaultType
 export const typeOfNodes_store = createPathPatternStore('typeOfNodes', defaultNodeType, 'nodeType');
 
 // Tauri-backed сторы: данные живут в JSON-файлах в app_data_dir
-export const typeOfFile_store = createTauriPatternStore('typeOfFile', 'file-types:get', 'file-types:set', defaultFileTypes, 'fileType');
-export const programPathPattern_store = createTauriPatternStore('programPathPattern', 'program-paths:get', 'program-paths:set', programmsPathDefault);
+export const typeOfFile_store = createTauriPatternStore(
+	'typeOfFile',
+	async () => unwrap(await commands.fileTypesGet()) as PatternElement[],
+	(els) => commands.fileTypesSet(els as any),
+	defaultFileTypes,
+	'fileType',
+);
+export const programPathPattern_store = createTauriPatternStore(
+	'programPathPattern',
+	async () => unwrap(await commands.programPathsGet()) as PatternElement[],
+	(els) => commands.programPathsSet(els as any),
+	programmsPathDefault,
+);
 
 // Функции для прямого вызова из plugin_store
 export const movePluginToInactiveInAllStores = (pluginName: string) => {

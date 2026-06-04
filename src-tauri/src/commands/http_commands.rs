@@ -2,6 +2,7 @@
 // fetch, upload (multipart/form-data с локальными файлами), download → файл.
 
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 #[derive(Debug, Serialize)]
 pub struct HttpResponse {
@@ -139,38 +140,139 @@ pub async fn http_upload(args: HttpUploadArgs) -> Result<HttpResponse, String> {
 // ─── http_download ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HttpDownloadArgs {
     pub url: String,
     pub dest: String,
     #[serde(default)]
     pub headers: Option<Vec<[String; 2]>>,
+    /// ID ноды — если передан, прогресс скачивания шлётся как processing-event
+    /// с тем же payload-форматом, что у ffmpeg ({ type:"statusbar", payload:{text,progress} }).
+    #[serde(default)]
+    pub node_id: Option<String>,
+    /// Префикс текста в статусбаре (напр. "⬇️ Скачивание result.mp3"). Само наличие
+    /// nodeId ИЛИ statusText включает показ прогресса; без них — тихое скачивание как раньше.
+    #[serde(default)]
+    pub status_text: Option<String>,
 }
 
-/// Скачивает URL в локальный файл. Возвращает количество записанных байт.
+/// Скачивает URL в локальный файл потоково (чанками). Возвращает количество записанных байт.
+/// Если передан nodeId/statusText — эмитит прогресс в UI (статусбар/нода).
 #[tauri::command]
-pub async fn http_download(args: HttpDownloadArgs) -> Result<u64, String> {
+pub async fn http_download(args: HttpDownloadArgs, app: tauri::AppHandle) -> Result<u64, String> {
+    use std::io::Write;
+
     let client = reqwest::Client::new();
     let mut req = client.get(&args.url);
 
-    if let Some(headers) = args.headers {
+    if let Some(headers) = &args.headers {
         for pair in headers {
             req = req.header(&pair[0], &pair[1]);
         }
     }
 
-    let res = req.send().await.map_err(|e| format!("Download request failed: {}", e))?;
+    let mut res = req.send().await.map_err(|e| format!("Download request failed: {}", e))?;
 
     if !res.status().is_success() {
         return Err(format!("HTTP {} downloading {}", res.status(), args.url));
     }
 
-    let bytes = res.bytes().await.map_err(|e| format!("Failed to read download bytes: {}", e))?;
+    // Прогресс показываем только если вызывающий явно попросил — иначе служебные/мелкие
+    // загрузки (updater и т.п.) качаются молча, как и раньше.
+    let want_progress = args.node_id.is_some() || args.status_text.is_some();
+    let total = res.content_length(); // None, если сервер не прислал Content-Length
+    let label = args.status_text.clone().unwrap_or_else(|| "Download".to_string());
 
     let path = std::path::Path::new(&args.dest);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, &bytes).map_err(|e| e.to_string())?;
+    let mut file = std::fs::File::create(path).map_err(|e| e.to_string())?;
 
-    Ok(bytes.len() as u64)
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+    let mut emitted_once = false;
+
+    while let Some(chunk) = res
+        .chunk()
+        .await
+        .map_err(|e| format!("Download stream error: {}", e))?
+    {
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+
+        // throttle ~150мс (как exec/ffmpeg) — иначе тысячи emit'ов топят webview event-loop.
+        if want_progress && (!emitted_once || last_emit.elapsed().as_millis() >= 150) {
+            emitted_once = true;
+            last_emit = std::time::Instant::now();
+            emit_download_progress(&app, &label, downloaded, total, args.node_id.as_deref());
+        }
+    }
+
+    file.flush().map_err(|e| e.to_string())?;
+
+    // Финальный 100%-emit, чтобы UI не застрял на ~98%.
+    if want_progress {
+        emit_download_progress(
+            &app,
+            &label,
+            downloaded,
+            total.or(Some(downloaded)),
+            args.node_id.as_deref(),
+        );
+    }
+
+    Ok(downloaded)
+}
+
+/// Эмитит processing-event прогресса скачивания в том же формате, что ffmpeg_exec_with_progress.
+fn emit_download_progress(
+    app: &tauri::AppHandle,
+    label: &str,
+    downloaded: u64,
+    total: Option<u64>,
+    node_id: Option<&str>,
+) {
+    let (percent, text) = match total {
+        Some(t) if t > 0 => {
+            let p = (downloaded as f64 / t as f64 * 100.0).min(100.0);
+            (
+                p,
+                format!(
+                    "{}: {:.1}% ({} / {})",
+                    label,
+                    p,
+                    human_bytes(downloaded),
+                    human_bytes(t)
+                ),
+            )
+        }
+        // Нет Content-Length — показываем накопленный объём без процента.
+        _ => (0.0, format!("{}: {}", label, human_bytes(downloaded))),
+    };
+
+    let _ = app.emit(
+        "processing-event",
+        serde_json::json!({
+            "type": "statusbar",
+            "payload": { "text": text, "progress": percent },
+            "nodeId": node_id,
+        }),
+    );
+}
+
+fn human_bytes(b: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let f = b as f64;
+    if f >= GB {
+        format!("{:.2} GB", f / GB)
+    } else if f >= MB {
+        format!("{:.1} MB", f / MB)
+    } else if f >= KB {
+        format!("{:.0} KB", f / KB)
+    } else {
+        format!("{} B", b)
+    }
 }

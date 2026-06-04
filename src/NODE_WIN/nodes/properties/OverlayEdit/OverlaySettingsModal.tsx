@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/OverlayEdit/OverlaySettingsModal.tsx
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, Tabs, Tab, Typography } from '@mui/material';
 import { greyColor } from '@/Store/Color/grayColor';
 import { OverlaySettings, OverlayFormatSettings, VideoFormat, defaultOverlaySettings } from './types';
@@ -56,21 +57,20 @@ export default function OverlaySettingsModal({ value, onSave, onClose }: Overlay
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	useEffect(() => {
-		const api = (window as any).electronAPI;
 		const fgAbs = settings.fgFilePath ? toAbsolutePath(settings.fgFilePath, projectPath) : '';
 		const bgAbs = settings.bgFilePath ? toAbsolutePath(settings.bgFilePath, projectPath) : '';
 		if (fgAbs) {
-			api.invoke('checkFilePath', fgAbs).then((ok: any) => {
-				if (!ok) return;
+			commands.checkFilePath(fgAbs, null).then((r) => {
+				if (!unwrap(r)) return;
 				setEffectiveFgPath(fgAbs);
-				api.invoke('read-media-preview', fgAbs).then(setFgDataUrl).catch(() => {});
+				commands.readMediaPreview(fgAbs).then((rp) => setFgDataUrl(unwrap(rp))).catch(() => {});
 			}).catch(() => {});
 		}
 		if (bgAbs) {
-			api.invoke('checkFilePath', bgAbs).then((ok: any) => {
-				if (!ok) return;
+			commands.checkFilePath(bgAbs, null).then((r) => {
+				if (!unwrap(r)) return;
 				setEffectiveBgPath(bgAbs);
-				api.invoke('read-media-preview', bgAbs).then(setBgDataUrl).catch(() => {});
+				commands.readMediaPreview(bgAbs).then((rp) => setBgDataUrl(unwrap(rp))).catch(() => {});
 			}).catch(() => {});
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -93,7 +93,7 @@ export default function OverlaySettingsModal({ value, onSave, onClose }: Overlay
 	const handleFgFile = useCallback(async (p: string) => {
 		setEffectiveFgPath(p);
 		const stored = toStoredPath(p, projectPath);
-		const dataUrl: string = await (window as any).electronAPI.invoke('read-media-preview', p).catch(() => '');
+		const dataUrl: string = await commands.readMediaPreview(p).then(unwrap).catch(() => '');
 		if (!dataUrl) {
 			setSettings((prev) => ({ ...prev, fgFilePath: stored }));
 			return;
@@ -131,7 +131,7 @@ export default function OverlaySettingsModal({ value, onSave, onClose }: Overlay
 	const handleBgFile = useCallback((p: string) => {
 		setEffectiveBgPath(p);
 		setSettings((prev) => ({ ...prev, bgFilePath: toStoredPath(p, projectPath) }));
-		(window as any).electronAPI.invoke('read-media-preview', p).then(setBgDataUrl).catch(() => {});
+		commands.readMediaPreview(p).then((r) => setBgDataUrl(unwrap(r))).catch(() => {});
 	}, [projectPath]);
 
 	const defColor = greyColor(80);

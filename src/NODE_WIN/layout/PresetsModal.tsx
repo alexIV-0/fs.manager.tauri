@@ -21,6 +21,8 @@ import { nanoid } from 'nanoid';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
 import { joinPath } from '@/Utils/joinPath';
 import { tauriAPI } from '@/Utils/tauri-api';
+import { commands, unwrap } from '@/Utils/specta';
+import { basename, dirname } from '@/Utils/path';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,9 +39,9 @@ interface PresetItem {
 const api = tauriAPI;
 
 async function getPressetDir(): Promise<string> {
-	const userData = await api.invoke<string>('getUserDataPath');
+	const userData = unwrap(await commands.getUserDataPath());
 	const dir = joinPath(userData, 'pressets');
-	await api.invoke('testAndCreateFolder', dir);
+	unwrap(await commands.testAndCreateFolder(dir));
 	return dir;
 }
 
@@ -48,7 +50,7 @@ async function loadAllPresets(): Promise<PresetItem[]> {
 
 	let fileNames: string[] = [];
 	try {
-		const result = await api.invoke<Record<string, string[]>>('getSomeFromFolder', dir, [{ type: 'json', ext: ['json'] }]);
+		const result = unwrap(await commands.getSomeFromFolder(dir, [{ type: 'json', ext: ['json'] }])) as any;
 		fileNames = result.json ?? [];
 	} catch {
 		return [];
@@ -58,7 +60,7 @@ async function loadAllPresets(): Promise<PresetItem[]> {
 	for (const fileName of fileNames) {
 		try {
 			const filePath = joinPath(dir, fileName);
-			const raw = await api.invoke<string>('readFileSync', filePath);
+			const raw = unwrap(await commands.readFileSync(filePath));
 			const flow = JSON.parse(raw);
 			const name = fileName.replace(/\.json$/, '');
 			const descNode = flow.nodes?.find((n: any) => n.type === 'description');
@@ -84,7 +86,7 @@ async function getUniqueName(dir: string, baseName: string): Promise<string> {
 	const exists = async (name: string) => {
 		const p = joinPath(dir, `${name}.json`);
 		try {
-			return !!(await api.invoke<string>('checkFilePath', p));
+			return !!unwrap(await commands.checkFilePath(p, null));
 		} catch {
 			return false;
 		}
@@ -258,7 +260,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 			const dir = await getPressetDir();
 			const finalName = await getUniqueName(dir, name);
 			const filePath = joinPath(dir, `${finalName}.json`);
-			await api.invoke('writeFile', filePath, JSON.stringify(flow, null, 2));
+			unwrap(await commands.writeFile(filePath, JSON.stringify(flow, null, 2)));
 			setSaveModalOpen(false);
 			loadPresets();
 		},
@@ -269,7 +271,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 	const handleApplyPreset = useCallback(
 		async (preset: PresetItem) => {
 			try {
-				const raw = await api.invoke<string>('readFileSync', preset.filePath);
+				const raw = unwrap(await commands.readFileSync(preset.filePath));
 				const flow = JSON.parse(raw);
 				if (flow.nodes) reactFlow.setNodes(flow.nodes);
 				if (flow.edges) reactFlow.setEdges(flow.edges ?? []);
@@ -286,7 +288,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 	const handleAddPreset = useCallback(
 		async (preset: PresetItem) => {
 			try {
-				const raw = await api.invoke<string>('readFileSync', preset.filePath);
+				const raw = unwrap(await commands.readFileSync(preset.filePath));
 				const flow = JSON.parse(raw);
 				if (!Array.isArray(flow.nodes)) {
 					onClose();
@@ -334,7 +336,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 		async (preset: PresetItem) => {
 			try {
 				const flow = reactFlow.toObject();
-				await api.invoke('writeFile', preset.filePath, JSON.stringify(flow, null, 2));
+				unwrap(await commands.writeFile(preset.filePath, JSON.stringify(flow, null, 2)));
 				onClose();
 			} catch {
 				/* skip on write error */
@@ -345,22 +347,22 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 
 	// ── Import from files ─────────────────────────────────────────────────────
 	const handleImport = useCallback(async () => {
-		const files = await api.invoke<string[]>('selectFiles', {
+		const files = unwrap(await commands.selectFiles({
 			multiSelect: true,
 			filters: [{ name: 'JSON Flow Files', extensions: ['json'] }],
-		});
+		}));
 		if (!files?.length) return;
 		const dir = await getPressetDir();
 		let imported = 0;
 		for (const filePath of files) {
 			try {
-				const raw = await api.invoke<string>('readFileSync', filePath);
+				const raw = unwrap(await commands.readFileSync(filePath));
 				const flow = JSON.parse(raw);
 				if (!isValidPresetFlow(flow)) continue;
-				const baseName = await api.invoke<string>('pathBasename', filePath, '.json');
+				const baseName = basename(filePath, '.json');
 				const finalName = await getUniqueName(dir, baseName);
 				const destPath = joinPath(dir, `${finalName}.json`);
-				await api.invoke('writeFile', destPath, JSON.stringify(flow, null, 2));
+				unwrap(await commands.writeFile(destPath, JSON.stringify(flow, null, 2)));
 				imported++;
 			} catch {
 				/* skip invalid */
@@ -372,19 +374,19 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 	// ── Export selected to folder ─────────────────────────────────────────────
 	const handleExport = useCallback(async () => {
 		if (!selected.size) return;
-		const folders = await api.invoke<string[]>('selectFolders', { multiSelect: false });
+		const folders = unwrap(await commands.selectFolders({ multiSelect: false }));
 		if (!folders?.length) return;
 		const destDir = folders[0];
 		for (const preset of presets) {
 			if (!selected.has(preset.name)) continue;
 			const destPath = joinPath(destDir, `${preset.name}.json`);
-			await api.invoke('copyItem', preset.filePath, destPath, { overwrite: true });
+			unwrap(await commands.copyItem(preset.filePath, destPath, { overwrite: true }));
 		}
 	}, [selected, presets]);
 
 	// ── Delete ────────────────────────────────────────────────────────────────
 	const handleDelete = useCallback(async (preset: PresetItem) => {
-		await api.invoke('deleteItem', preset.filePath);
+		unwrap(await commands.deleteItem(preset.filePath));
 		setPresets((prev) => prev.filter((p) => p.filePath !== preset.filePath));
 		setSelected((prev) => {
 			const next = new Set(prev);
@@ -398,9 +400,9 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 		async (preset: PresetItem, newName: string) => {
 			const trimmed = newName.trim();
 			if (!trimmed || trimmed === preset.name) return;
-			const dir = await api.invoke<string>('pathDirname', preset.filePath);
+			const dir = dirname(preset.filePath);
 			const newPath = joinPath(dir, `${trimmed}.json`);
-			await api.invoke('renameFile', preset.filePath, newPath);
+			unwrap(await commands.renameFile(preset.filePath, newPath));
 			loadPresets();
 		},
 		[loadPresets],

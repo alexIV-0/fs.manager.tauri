@@ -15,12 +15,16 @@
 				"id": "inputVA",
 				"controlType": "link",
 				"controlProps": {
-					"label": "Imput Video/Audio File",
-					"tooltip": "Указываем видео или аудио файл",
+					"label": "Imput Video/Audio/Image File",
+					"tooltip": "Указываем видео, аудио файл или картинку. Если картинка — стоп-кадр растягивается на всю длину аудио (Duration Mode и Change Video Speed для картинки не учитываются).",
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["video", "audio"],
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -33,7 +37,9 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["audio"],
+				"acceptedTypes": [
+					"audio"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -43,14 +49,20 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
-					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"options": [
+						"#pathPattern",
+						"Custom Folder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": false
 			},
 			{
@@ -59,7 +71,12 @@
 				"controlProps": {
 					"label": "Duration Mode",
 					"tooltip": "Т.к. объединяемые файлы имеют разную длительность, нужно опредеиться с тем, откуда брать длительность, Можно с аудио файла или видео файла, а можно не смотреть на тип файла и определять максимальную или минимальную длительность.",
-					"options": ["video", "audio", "min", "max"],
+					"options": [
+						"video",
+						"audio",
+						"min",
+						"max"
+					],
 					"freeInput": false,
 					"value": "video"
 				},
@@ -92,7 +109,11 @@
 				"controlProps": {
 					"label": "output Format",
 					"tooltip": "Тип файла в который объединяем 2 файла",
-					"options": ["mp4", "mp3", "wav"],
+					"options": [
+						"mp4",
+						"mp3",
+						"wav"
+					],
 					"freeInput": true,
 					"value": "mp4"
 				},

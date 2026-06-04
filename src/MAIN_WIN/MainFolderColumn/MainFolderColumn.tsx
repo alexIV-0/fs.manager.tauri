@@ -1,4 +1,5 @@
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
+import { commands, unwrap } from '@/Utils/specta';
 import { options_store } from '@/Store/MainWin/options_store';
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { restrictToParentElement } from '@dnd-kit/modifiers';
@@ -134,15 +135,13 @@ export function MainFolderColumn() {
 
 	const addNewFolder = async () => {
 		try {
-			const folderPaths = await window.electronAPI.invoke('selectFolders', {
-				multiSelect: true,
-			});
+			const folderPaths = unwrap(await commands.selectFolders({ multiSelect: true }));
 			if (folderPaths && Array.isArray(folderPaths) && folderPaths.length > 0) {
 				for (const folderPath of folderPaths) {
 					addFolderToMainArr(folderPath);
 				}
 
-				const batch = (await window.electronAPI.invoke('listSubfolders', folderPaths)) as Record<string, string[]>;
+				const batch = unwrap(await commands.listSubfolders(folderPaths)) as unknown as Record<string, string[]>;
 
 				const { mainFolderArr, updateParameters } = mainFolders_stor.getState();
 				for (const folderPath of folderPaths) {

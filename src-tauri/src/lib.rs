@@ -10,8 +10,7 @@ use commands::{
     watch_commands::*,
     processing_commands::*,
     plugin_commands::*,
-    dialog_commands_camel::*,
-    camelcase_wrappers::*,
+    dialog_commands::*,
     window_state::*,
     exec_commands::*,
     ffmpeg_commands::*,
@@ -28,8 +27,153 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, Submenu, PredefinedMenuItem};
 
+/// Specta-builder для генерации типобезопасных TS-биндингов (стадия «export-only»).
+///
+/// Содержит ТОЛЬКО snake-реализации (НЕ camel-обёртки) — см. SPECTA_MIGRATION_PLAN.md §4.
+/// `generate_handler!` ниже пока остаётся ЕДИНСТВЕННЫМ источником истины для рантайма;
+/// этот билдер НЕ монтируется в `tauri::Builder` — используется исключительно для
+/// `export()` в debug-сборке. Поэтому коллизий имён в рантайме нет, поведение не меняется.
+///
+/// Пилот миграции: модуль `ae_commands` (2 команды). Остальные модули добавляются
+/// в `collect_commands!` по мере миграции.
+#[cfg(debug_assertions)]
+fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
+    tauri_specta::Builder::<tauri::Wry>::new()
+        .commands(tauri_specta::collect_commands![
+            run_script_in_ae,
+            launch_ae_with_script,
+            // fs watcher (мигрирован Stage 1 — call-sites на commands.*, camel-обёртки удалены)
+            fs_watch_start,
+            fs_watch_stop,
+            // preview (мигрирован — call-sites на commands.*, camel previewResize/previewOpen удалены)
+            preview_open,
+            preview_resize,
+            preview_detect_alpha,
+            preview_transcode_webm,
+            preview_delete_temp,
+            // dialog/shell/файловые (мигрированы — реальные реализации, snake-имена,
+            // dialog_commands_camel.rs удалён)
+            select_folders,
+            select_files,
+            copy_to_clipboard,
+            show_in_folder,
+            open_file_with_default_app,
+            create_folder,
+            rename_file,
+            get_node_obj_from_file,
+            save_flow_to_options_folder,
+            get_paths_from_files,
+            request_data_preview,
+            open_dev_tools,
+            // docs (чистый от плагинов) — мигрирован на commands.*
+            docs_list,
+            docs_read,
+            // window-state (чистый) — мигрирован на commands.*
+            save_window_state,
+            load_window_state,
+            // log_archive (чистый) — мигрирован на commands.*
+            log_archive_list_days,
+            log_archive_get_day,
+            log_archive_cleanup,
+            log_archive_clear,
+            // processing (app-only часть — мигрирована; sendLog/setStatusBar плагинные, оставлены)
+            abort_processing,
+            move_to_errors,
+            send_node_start,
+            send_node_done,
+            send_node_error,
+            send_process_complete,
+            // path_exists — plugin-shared, но app использует через commands.pathExists (типобезопасно),
+            // плагины — через raw invoke('path_exists', {path}); argMapper удаляем
+            path_exists,
+            // log_window UI (чистый) — мигрирован на commands.* (мёртвые toggle/status/quick/console — нет)
+            log_window_open,
+            log_window_clear,
+            log_window_get_history,
+            log_window_export,
+            log_window_emit_item_log,
+            log_window_emit_node_update,
+            log_window_emit_item_end,
+            log_window_emit_substep_batch,
+            log_window_emit_item_queued,
+            log_window_emit_abort_queued,
+            // settings (app_settings/color_types/file_types/program_paths + cleanup/db) —
+            // чистый от плагинов модуль, мигрирован на commands.*
+            app_settings_get,
+            app_settings_set,
+            app_settings_patch,
+            color_types_get,
+            color_types_set,
+            color_types_rescan,
+            color_types_add,
+            color_types_remove,
+            file_types_get,
+            file_types_set,
+            program_paths_get,
+            program_paths_set,
+            cleanup_auto_delete,
+            db_register_found,
+            // path-утилиты: НЕ через specta — приложение считает их в renderer (чистый TS,
+            // src/Utils/path.ts), а path_join оставлен только как обычная команда для плагинов.
+            // fs_commands (app type-safety; camel-обёртки остаются для плагинов до миграции плагинного слоя)
+            get_file_info,
+            get_file_type_by_extname,
+            test_and_create_folder,
+            test_and_create_folders,
+            create_text_file,
+            ensure_and_read_dir,
+            get_stat,
+            os_tmpdir,
+            hash_file,
+            rename_folder,
+            set_path_mtime,
+            copy_item,
+            move_item,
+            delete_item,
+            read_file_sync,
+            read_media_preview,
+            write_file,
+            write_binary_file,
+            check_file_path,
+            check_folder_path,
+            get_some_from_folder,
+            list_subfolders,
+            recursive_find_files,
+            get_user_data_path,
+            get_plugins_dev_path,
+            get_cpu_count,
+            get_platform_target,
+            fonts_get_list,
+            fonts_load_one,
+            shell_open_path,
+        ])
+}
+
+/// Экспортирует `src/bindings.ts` из specta-билдера.
+///
+/// `bigint(Number)` — обязателен: по умолчанию specta-typescript падает на `u64`/`i64`/
+/// `usize` (`BigIntForbidden`), т.к. JS-число теряет точность за пределами 2^53. В нашем
+/// коде эти поля (таймауты, размеры, mtime) и так ходят как обычные `number` в JS —
+/// `Number` сохраняет это поведение. Конфиг тут единый, чтобы dev-экспорт (`run()`) и
+/// headless-тест не разъехались.
+#[cfg(debug_assertions)]
+fn export_specta_bindings() {
+    specta_builder()
+        .export(
+            specta_typescript::Typescript::default()
+                .bigint(specta_typescript::BigIntExportBehavior::Number),
+            "../src/bindings.ts",
+        )
+        .expect("Failed to export specta TS bindings");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Export-only: в debug пересобираем src/bindings.ts из specta-билдера.
+    // generate_handler! НЕ трогаем — он остаётся invoke_handler'ом приложения.
+    #[cfg(debug_assertions)]
+    export_specta_bindings();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
@@ -38,6 +182,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard::init())
+        .plugin(tauri_plugin_drag::init())
         // Кастомный `plugin://` протокол для динамической загрузки плагинов через import().
         // Resolver: distr-plugins (dev, приоритет) → app_data/plugins → resource/plugins.
         // На лету переписывает Node-импорты в плагинах на наши @plugin-api/* полифилы.
@@ -95,19 +241,21 @@ pub fn run() {
             let exec_state = commands::exec_commands::ExecState::new(abort_flag);
             app.manage(exec_state);
             
-            // Восстановить состояние главного окна
-            if let Ok(Some(state)) = commands::window_state::load_window_state("main".to_string(), app_handle.clone()) {
-                println!("[WindowState] Restoring main window: {:?}", state);
-                if let Some(main_win) = app.get_webview_window("main") {
-                    // Сначала позицию, потом размер
-                    if let (Some(x), Some(y)) = (state.x, state.y) {
-                        let _ = main_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: x as i32, y: y as i32 }));
-                    }
-                    let _ = main_win.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                        width: state.width as u32,
-                        height: state.height as u32,
-                    }));
+            // Восстановить состояние главного окна ДО показа.
+            // Окно создаётся скрытым (tauri.conf.json → "visible": false), позиция/размер
+            // выставляются пока оно невидимо, и только потом show() — поэтому больше нет
+            // «прыжка» (раньше окно появлялось по центру с дефолтным размером, а затем
+            // переезжало в сохранённое место уже на глазах у пользователя).
+            if let Some(main_win) = app.get_webview_window("main") {
+                if let Ok(Some(state)) = commands::window_state::load_window_state("main".to_string(), app_handle.clone()) {
+                    println!("[WindowState] Restoring main window: {:?}", state);
+                    // apply_state_to_window выставляет размер+позицию с защитой от «потерянного»
+                    // окна (если сохранённый экран отключён — центрирует на первичном мониторе).
+                    commands::window_state::apply_state_to_window(&main_win, &state);
                 }
+                // Показываем уже спозиционированное окно — без прыжка.
+                let _ = main_win.show();
+                let _ = main_win.set_focus();
             }
             
             // Node Editor window
@@ -135,22 +283,9 @@ pub fn run() {
                 }
             }
 
-            // Preview window
-            let preview_win = WebviewWindowBuilder::new(
-                app,
-                "previewWin",
-                WebviewUrl::App("previewWin.html".into()),
-            )
-            .title("fsManager — Preview")
-            .inner_size(800.0, 600.0)
-            .visible(false)
-            .disable_drag_drop_handler()
-            .build()?;
-
-            // Preview-окно использует bounds-per-file-type (см. preview_bounds.rs).
-            // Размер и позиция восстанавливаются при первом preview_open в зависимости
-            // от типа открываемого файла. Generic window_state для него не используем.
-            let _ = preview_win;
+            // Preview-окна теперь создаются динамически в preview_open (мульти-инстанс,
+            // label "preview-{type}-{n}", каскад, bounds-per-type). Заранее единое
+            // previewWin больше не нужно — оно бы просто висело скрытым.
 
             // Log window
             let log_win = WebviewWindowBuilder::new(
@@ -202,8 +337,9 @@ pub fn run() {
                 let app_menu = make_edit_menu(&app_handle)?;
                 app.set_menu(app_menu)?;
 
-                // Явно на каждое окно (гарантия для вторичных окон)
-                for label in &["main", "nodeWin", "previewWin", "logWindow"] {
+                // Явно на каждое окно (гарантия для вторичных окон).
+                // previewWin'ов больше нет на старте — их меню ставит preview_open при создании.
+                for label in &["main", "nodeWin", "logWindow"] {
                     if let Some(win) = app.get_webview_window(label) {
                         let win_menu = make_edit_menu(&app_handle)?;
                         let _ = win.set_menu(win_menu);
@@ -227,6 +363,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Native file icon (drag-preview)
+            commands::icon_commands::get_file_icon,
             // File system commands
             get_file_info,
             get_file_type_by_extname,
@@ -253,80 +391,30 @@ pub fn run() {
             recursive_find_files,
             get_user_data_path,
             get_plugins_dev_path,
-            getPluginsDevPath,
             get_platform_target,
-            getPlatformTarget,
             get_cpu_count,
-            getCpuCount,
             fonts_get_list,
             fonts_load_one,
-            // CamelCase wrappers (frontend compatible)
-            pathJoin,
-            pathBasename,
-            pathDirname,
-            pathExtname,
-            pathParse,
-            pathRelative,
-            getFileInfo,
-            getFileTypeByExtname,
-            testAndCreateFolder,
-            testAndCreateFolders,
-            createTextFile,
-            renameFolder,
-            setPathMtime,
-            copyItem,
-            moveItem,
-            deleteItem,
-            readFileSync,
-            readMediaPreview,
-            writeFile,
-            getSomeFromFolder,
-            listSubfolders,
-            recursiveFindFiles,
-            getOptionsFolder,
-            checkFilePath,
-            checkFolderPath,
-            fontsGetList,
-            fontsLoadOne,
-            shellOpenPath,
-            fsWatchStart,
-            fsWatchStop,
-            previewResize,
-            previewOpen,
-            openNodeWindow,
-            abortProcessing,
-            processItem,
-            setStatusBar,
-            sendLog,
-            sendNodeStart,
-            sendNodeDone,
-            sendNodeError,
-            sendProcessComplete,
-            // Dialog commands (camelCase)
-            selectFolders,
-            selectFiles,
-            copyToClipboard,
-            showInFolder,
-            openFileWithDefaultApp,
-            createFolder,
-            renameFile,
-            getNodeObjFromFile,
-            saveFlowToOptionsFolder,
-            getPathsFromFiles,
-            requestDataPreview,
-            openDevTools,
-            // Window state
+            shell_open_path,
+            // Dialog commands (мигрированы на specta — snake-имена, реальные реализации)
+            select_folders,
+            select_files,
+            copy_to_clipboard,
+            show_in_folder,
+            open_file_with_default_app,
+            create_folder,
+            rename_file,
+            get_node_obj_from_file,
+            save_flow_to_options_folder,
+            get_paths_from_files,
+            request_data_preview,
+            open_dev_tools,
+            // Window state (мигрирован на specta — camel saveWindowState/loadWindowState удалены)
             save_window_state,
             load_window_state,
-            saveWindowState,
-            loadWindowState,
-            // Path utilities
+            // Path utilities: только path_join (его зовут плагины через IPC);
+            // basename/dirname/extname/parse/relative удалены — приложение считает в renderer.
             path_join,
-            path_basename,
-            path_dirname,
-            path_extname,
-            path_parse,
-            path_relative,
             // Window commands
             open_node_window,
             request_node_window_data,
@@ -446,4 +534,14 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod specta_export_tests {
+    /// Генерация `src/bindings.ts` без запуска GUI: `cargo test export_bindings`.
+    /// Зеркалит debug-экспорт из `run()`, но запускается headless (в CI/без дисплея).
+    #[test]
+    fn export_bindings() {
+        super::export_specta_bindings();
+    }
 }

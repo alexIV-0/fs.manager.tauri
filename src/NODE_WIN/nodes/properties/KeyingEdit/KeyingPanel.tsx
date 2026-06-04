@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/KeyingEdit/KeyingPanel.tsx
 
 import { memo, useRef, useCallback } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { Box, Divider, Tooltip, Typography } from '@mui/material';
 import { Pipette } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
@@ -38,12 +39,12 @@ function KeyingPanel({ settings, onChange, width, filePath, onSelectFile, onEyed
 	// can't: in WKWebView the File object has no `.path`, so the preview would get a
 	// bare filename and fail to load. Mirrors VideoAdjustPanel.
 	const selectPreviewFile = useCallback(() => {
-		(window as any).electronAPI
-			.invoke('selectFiles', {
+		commands
+			.selectFiles({
 				multiSelect: false,
 				filters: [{ name: 'Media', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mts', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff'] }],
 			})
-			.then((paths: string[]) => { if (paths?.length > 0) onSelectFile(paths[0]); })
+			.then((r) => { const paths = unwrap(r); if (paths?.length > 0) onSelectFile(paths[0]); })
 			.catch(() => {});
 	}, [onSelectFile]);
 

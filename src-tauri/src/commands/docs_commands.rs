@@ -5,14 +5,14 @@ use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 pub struct DocFile {
     pub name: String,
     #[serde(rename = "fileName")]
     pub file_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 pub struct DocSection {
     pub name: String,
     pub files: Vec<DocFile>,
@@ -48,6 +48,7 @@ fn docs_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn docs_list(app: tauri::AppHandle) -> Result<Vec<DocSection>, String> {
     let root = match docs_root(&app) {
         Some(p) => p,
@@ -106,6 +107,7 @@ pub fn docs_list(app: tauri::AppHandle) -> Result<Vec<DocSection>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn docs_read(
     app: tauri::AppHandle,
     section_name: String,

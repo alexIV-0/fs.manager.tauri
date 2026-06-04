@@ -1,7 +1,7 @@
 {
 	"$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
 	"productName": "fsManager",
-	"version": "0.1.8",
+	"version": "0.2.0",
 	"identifier": "com.fsmanager.tauri.alexiv",
 	"build": {
 		"beforeDevCommand": "yarn dev",
@@ -18,6 +18,7 @@
 				"width": 1200,
 				"height": 800,
 				"resizable": true,
+				"visible": false,
 				"url": "index.html"
 			}
 		],

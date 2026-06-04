@@ -6,6 +6,7 @@ import {
 	DEFAULT_APP_SETTINGS,
 	DEFAULT_COLOR_TYPES,
 } from '@/types/appSettings';
+import { commands, unwrap } from '@/Utils/specta';
 
 // Клиентский доступ к AppSettings и ColorTypes через IPC.
 // Кэшируем в Zustand, чтобы не дергать main на каждый чих.
@@ -32,10 +33,10 @@ export const appSettings_client = create<SettingsStore>((set, get) => ({
 	load: async () => {
 		try {
 			const [s, ct] = await Promise.all([
-				window.electronAPI.invoke<AppSettings>('app-settings:get'),
-				window.electronAPI.invoke<ColorTypesFile>('color-types:get'),
+				commands.appSettingsGet(),
+				commands.colorTypesGet(),
 			]);
-			set({ settings: s, colorTypes: ct, loaded: true });
+			set({ settings: unwrap(s) as unknown as AppSettings, colorTypes: unwrap(ct) as unknown as ColorTypesFile, loaded: true });
 		} catch (e) {
 			console.warn('[appSettings_client] load failed:', e);
 			set({ loaded: true });
@@ -43,36 +44,32 @@ export const appSettings_client = create<SettingsStore>((set, get) => ({
 	},
 
 	patch: async (p) => {
-		const next = await window.electronAPI.invoke<AppSettings>('app-settings:patch', p);
+		const next = unwrap(await commands.appSettingsPatch(p as any)) as unknown as AppSettings;
 		set({ settings: next });
 	},
 
 	setFull: async (s) => {
-		const next = await window.electronAPI.invoke<AppSettings>('app-settings:set', s);
+		const next = unwrap(await commands.appSettingsSet(s as any)) as unknown as AppSettings;
 		set({ settings: next });
 	},
 
 	rescanColorTypes: async () => {
-		const next = await window.electronAPI.invoke<ColorTypesFile>('color-types:rescan');
+		const next = unwrap(await commands.colorTypesRescan()) as unknown as ColorTypesFile;
 		set({ colorTypes: next });
 	},
 
 	addColorType: async (name, defaultLimit) => {
-		const next = await window.electronAPI.invoke<ColorTypesFile>(
-			'color-types:add',
-			name,
-			defaultLimit ?? 1,
-		);
+		const next = unwrap(await commands.colorTypesAdd(name, defaultLimit ?? 1)) as unknown as ColorTypesFile;
 		set({ colorTypes: next });
 	},
 
 	removeColorType: async (name) => {
-		const next = await window.electronAPI.invoke<ColorTypesFile>('color-types:remove', name);
+		const next = unwrap(await commands.colorTypesRemove(name)) as unknown as ColorTypesFile;
 		set({ colorTypes: next });
 	},
 
 	setColorTypes: async (t) => {
-		const next = await window.electronAPI.invoke<ColorTypesFile>('color-types:set', t);
+		const next = unwrap(await commands.colorTypesSet(t as any)) as unknown as ColorTypesFile;
 		set({ colorTypes: next });
 	},
 }));

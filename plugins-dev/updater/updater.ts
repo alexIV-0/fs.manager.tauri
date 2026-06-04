@@ -117,8 +117,8 @@ export async function downloadAndOpen(downloadUrl: string, filename: string): Pr
 	});
 
 	// Open with system default — on macOS mounts DMG, on Windows runs installer
-	const api = () => (window as any).electronAPI;
-	await api().invoke('shellOpenPath', dest);
+	const api = () => (window as any).tauriAPI;
+	await api().invoke('shell_open_path', { folderPath: dest });
 
 	return dest;
 }
