@@ -61,10 +61,10 @@ function PathNavigator({ property, onChange }: PathNavigatorProps) {
 			if (!projectPath) return;
 			const dirPath = segsUpTo.length > 0 ? joinPath(projectPath, ...segsUpTo) : projectPath;
 			try {
-				const result = (await window.electronAPI.invoke('getSomeFromFolder', dirPath, [
+				const result = unwrap(await commands.getSomeFromFolder(dirPath, [
 					{ type: 'folders', ext: [] },
 					{ type: 'files', ext: [] },
-				])) as { folders: string[]; files: string[] };
+				])) as unknown as { folders: string[]; files: string[] };
 				const folders: FsItem[] = (result?.folders ?? []).map((name) => ({ name, isDir: true }));
 				const files: FsItem[] = (result?.files ?? []).map((name) => ({ name, isDir: false }));
 				setItems([...folders, ...files]);

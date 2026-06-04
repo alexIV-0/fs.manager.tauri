@@ -1,6 +1,7 @@
 // src/NODE_WIN/nodes/properties/VideoAdjustEdit/VideoAdjustModal.tsx
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { commands, unwrap } from '@/Utils/specta';
 import { VideoAdjustSettings, defaultVideoAdjustSettings, oppositeFormat } from './types';
 import ModalShell from '../ModalShell';
 import VideoAdjustPanel from './VideoAdjustPanel';
@@ -43,11 +44,10 @@ export default function VideoAdjustModal({ value, onSave, onClose }: VideoAdjust
 	const fgVideoDimRef = useRef<{ w: number; h: number } | null>(null);
 
 	useEffect(() => {
-		const api = (window as any).electronAPI;
 		const fgAbs = settings.fgFilePath ? toAbsolutePath(settings.fgFilePath, projectPath) : '';
 		const bgAbs = settings.bgFilePath ? toAbsolutePath(settings.bgFilePath, projectPath) : '';
-		if (fgAbs) api.invoke('checkFilePath', fgAbs).then((ok: any) => { if (ok) setEffectiveFgPath(fgAbs); }).catch(() => {});
-		if (bgAbs) api.invoke('checkFilePath', bgAbs).then((ok: any) => { if (ok) setEffectiveBgPath(bgAbs); }).catch(() => {});
+		if (fgAbs) commands.checkFilePath(fgAbs, null).then((r) => { if (unwrap(r)) setEffectiveFgPath(fgAbs); }).catch(() => {});
+		if (bgAbs) commands.checkFilePath(bgAbs, null).then((r) => { if (unwrap(r)) setEffectiveBgPath(bgAbs); }).catch(() => {});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 

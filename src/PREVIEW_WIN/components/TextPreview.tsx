@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
-import { commands } from '@/Utils/specta';
+import { commands, unwrap } from '@/Utils/specta';
 
 const WINDOW_W = 900;
 const WINDOW_H = 620;
@@ -53,7 +53,7 @@ export function TextPreview({ filePath }: { filePath: string }) {
 		let disposed = false;
 
 		const init = async () => {
-			const content = ((await window.electronAPI.invoke('readFileSync', filePath)) as string) ?? '';
+			const content = unwrap(await commands.readFileSync(filePath)) ?? '';
 			if (disposed) return;
 
 			const monaco = await import('monaco-editor');
@@ -91,7 +91,7 @@ export function TextPreview({ filePath }: { filePath: string }) {
 
 				// F12 — открыть DevTools, когда фокус в Monaco (иначе stopPropagation глушит)
 				editorInstRef.current.addCommand(monaco.KeyCode.F12, () => {
-					window.electronAPI.openDevTools();
+					window.tauriAPI.openDevTools();
 				});
 
 				// Esc — закрыть окно превью, когда фокус в Monaco.
@@ -160,11 +160,10 @@ export function TextPreview({ filePath }: { filePath: string }) {
 	const handleSave = async () => {
 		if (!editorInstRef.current || !modified) return;
 		const content = editorInstRef.current.getValue();
-		const result = (await window.electronAPI.invoke('writeFile', filePath, content)) as
-			| { success?: boolean; error?: string }
-			| undefined;
-		if (result && 'error' in result && result.error) {
-			console.error('[TextPreview] writeFile failed:', result.error, '\n  path:', filePath);
+		try {
+			unwrap(await commands.writeFile(filePath, content));
+		} catch (e) {
+			console.error('[TextPreview] writeFile failed:', e, '\n  path:', filePath);
 			return;
 		}
 		setModified(false);

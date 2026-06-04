@@ -1,4 +1,5 @@
 import { joinPath } from '../../Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
 
 /* ===========================================================
  * 🧩 TYPES
@@ -78,11 +79,11 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
 	const t0 = performance.now();
 	try {
 		const raw = ensureDir
-			? await window.electronAPI.invoke('ensureAndReadDir', folderPath)
-			: await window.electronAPI.invoke('getSomeFromFolder', folderPath, [
+			? unwrap(await commands.ensureAndReadDir(folderPath))
+			: unwrap(await commands.getSomeFromFolder(folderPath, [
 					{ type: 'files', ext: [] },
 					{ type: 'folders', ext: [] },
-				]);
+				]));
 
 		let result: FileItem[];
 

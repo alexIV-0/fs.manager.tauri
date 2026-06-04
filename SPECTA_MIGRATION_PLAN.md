@@ -225,18 +225,41 @@ tauri-specta = { version = "=2.0.0-rc.x", features = ["derive", "typescript"] }
 > addProcessingError/processingDeleteItem/getItemInfo/processItem + abort/move/sendNode/complete) — НЕ зовутся,
 > оставлены на финальную dead-code зачистку tauri-api.ts. process_item — заглушка. cargo+tsc зелёные.
 
-> **🚧 fs_commands — Rust-ФУНДАМЕНТ готов (2026-06-03), call-sites батчами.** ~30 snake-команд размечены
+> **✅ fs_commands — APP call-sites ВЫПОЛНЕНО (2026-06-03).** ~30 snake-команд размечены
 > `#[specta::specta]` (sed) + `specta::Type` на FileInfo/CopyMoveOptions/FontInfo/StatInfo/SearchEntry +
-> в `collect_commands!`. path_join остался plain (плагины). Биндинги есть, cargo+tsc зелёные, app на шиме
-> (export-only). **Осталось: ~86 app-call-sites в ~34 файлах → commands.* (батчами + tsc).** Нюансы:
+> в `collect_commands!`. path_join остался plain (плагины). Все app-call-sites (батчи 1–4: processing-fs,
+> node-win, main-win, utils, preview) переведены на `commands.*` + `unwrap`. cargo+tsc зелёные. Нюансы:
 > `getFileTypeByExtname(ext)` берёт расширение (старый маппер извлекал из пути!); non-Result у
 > `osTmpdir`/`getCpuCount`/`getPlatformTarget`/`getFileTypeByExtname` (без unwrap); `copyItem`/`moveItem`
-> (options: CopyMoveOptions|null); `getSomeFromFolder(path, search: SearchEntry[]|null)`. **`PluginAPI/fs.ts`+`os.ts`
-> (11) — плагинный слой, отдельный шаг (→ snake invoke, НЕ commands).**
+> (options: CopyMoveOptions|null); `getSomeFromFolder(path, search: SearchEntry[]|null)` → `Result<JsonValue>`
+> (каст `: any`); `listSubfolders` → `Result<JsonValue>` (каст `as unknown as Record<string,string[]>`).
+> **`path_exists` тоже размечен specta** (был plugin-shared snake-only) — app зовёт `commands.pathExists`,
+> плагины оставят raw `invoke('path_exists', {path})`. Остаточные не-fs в app-слое (НЕ трогаем сейчас):
+> `setStatusBar`/`sendLog` (plugin-shared), `ffprobe_get_info` (ffmpeg), `plugins:*`/`open-node-window` (др. модули).
+> **`PluginAPI/fs.ts`+`os.ts` (11) — плагинный слой, следующий шаг (→ snake invoke, НЕ commands).**
+
+> **🚧 Плагинный слой — ПЕРЕПИСАН, ждёт теста (2026-06-03).** Два потребителя camel/positional-имён мигрированы:
+> (A) `src/PluginAPI/fs.ts`+`os.ts` (app-bundled vite-чанк, importmap) → `commands.*` + `unwrap`.
+> (B) `plugins-dev/_template/tauri.ts` (esbuild-bundle в КАЖДЫЙ плагин) → snake-имена + single named-payload
+> (`{filePath}`/`{sourcePath,destinationPath,options}`/`{path,search}` и т.д.; Tauri camelCase→snake).
+> getOptionsFolder→get_user_data_path, getPluginsDevPath→get_plugins_dev_path, getPlatformTarget/getCpuCount/
+> fontsGetList→snake. ffmpeg/http/exec/ae/log/setStatusBar/path_join — НЕ трогали. `npm run plug:build:all`
+> пересобрал все 35 (distr-plugins gitignore; snake-команды уже в generate_handler! → не ломаются).
+> **В tauri-api.ts удалены 4 КОНФЛИКТУЮЩИХ snake-argMapper: get_stat/path_exists/hash_file/write_binary_file**
+> (named-payload иначе «мялся»). camel-argMappers (readFileSync/writeFile/copyItem/…) и camel-ОБЁРТКИ в Rust
+> ОСТАВЛЕНЫ как страховка — удалить ТОЛЬКО после ручного теста плагинов (безопасный порядок). tsc+cargo зелёные.
+
+> **✅✅ ФИНАЛ ВЫПОЛНЕН (2026-06-04).** Юзер подтвердил работу плагинов → `camelcase_wrappers.rs` УДАЛЁН
+> целиком (28 обёрток), camel убраны из `generate_handler!` (snake-двойники open_node_window/set_status_bar/
+> send_log/shell_open_path остались). По пути найден баг: `shell_open_path` был только в collect_commands!,
+> не в generate_handler! → кнопка «открыть в проводнике» падала (добавлен). setStatusBar/sendLog мигрированы
+> на snake (шаблон + app), updater.ts (прямой shellOpenPath) → snake, плагины пересобраны. tauri-api.ts:
+> удалены мёртвые fs-camel argMappers/aliases + весь dead PROCESSING-блок typed-методов. cargo+tsc+export зелёные.
+> Остаток (опц.): события node-window; остаточные plugins:* kebab-алиасы (плагин-система).
 
 ~~settings~~ → ~~docs~~ → ~~window-state~~ → ~~log-window~~ → ~~processing (app-only)~~ →
-**fs call-sites (батчами)** → плагинный слой (PluginAPI/* + _template/tauri.ts → snake) →
-удалить camelcase_wrappers.rs + алиасы/argMappers → dead-code зачистка tauri-api.ts → события (опц.) →
+~~fs call-sites (батчами)~~ → ~~плагинный слой~~ → ~~удалить camelcase_wrappers.rs + fs-алиасы/argMappers~~ →
+~~dead-code зачистка tauri-api.ts~~ → события (опц., node-window data-flow) →
 **fs_commands и плагинный шаблон — В КОНЦЕ, plugin-aware проходом**. http/icon/ae/exec — плагинные. Для каждого модуля:
 - [ ] Найти call-sites: `grep -rn "electronAPI.invoke('<имена модуля>'" src/`.
 - [ ] Переписать на `commands.<camelName>(...)`.

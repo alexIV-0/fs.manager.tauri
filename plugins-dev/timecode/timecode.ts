@@ -5,6 +5,7 @@
 import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
+import { convertTimecodeToSeconds } from '../../src/Utils/convertTimecodeToSeconds';
 
 export { onLoad } from '../_template/tauri';
 
@@ -12,6 +13,18 @@ export async function getTimecodeFunc(_item: any, _description: any): Promise<(n
 	let timeCodes: (number | string)[] = [];
 
 	const op = (Array.isArray(_item.operation) ? _item.operation[0] : _item.operation) ?? 'set';
+
+	// --- Проверяем, есть ли реальные входные файлы ---
+	const inputFiles = (_item.import?.inputFile ?? _item.inputFile ?? []) as string[];
+	const hasValidFiles = inputFiles.length > 0 && inputFiles.some((f) => typeof f === 'string' && f.trim() !== '');
+
+	// Если входных файлов нет — берём значение из splitBy и сразу возвращаем
+	if (!hasValidFiles) {
+		const manualValue = _item.splitBy ?? _item.import?.splitBy ?? 0;
+		const seconds = convertTimecodeToSeconds(manualValue);
+		sendToMW('log', { level: 'info', text: `[timecode] no input files, using manual value: ${manualValue} → ${seconds}s` });
+		return [seconds];
+	}
 
 	if (String(op).toLowerCase() === 'scene timecode') {
 		for (const curItem of _item.import.inputFile as string[]) {

@@ -267,7 +267,7 @@ export function CustomSettinsElement({
 // 			const next = Array.isArray(val) ? val : [val];
 
 // 			if (next.includes(customFolder)) {
-// 				const singleFolderPath = await window.electronAPI.invoke('selectFolders', {
+// 				const singleFolderPath = await window.tauriAPI.invoke('selectFolders', {
 // 					multiSelect: false,
 // 				});
 // 				if (Array.isArray(singleFolderPath) && singleFolderPath.length > 0) {
@@ -278,7 +278,7 @@ export function CustomSettinsElement({
 // 			}
 
 // 			if (next.includes(customFile)) {
-// 				const singleFilePath = await window.electronAPI.invoke('selectFiles', {
+// 				const singleFilePath = await window.tauriAPI.invoke('selectFiles', {
 // 					multiSelect: false,
 // 				});
 // 				if (Array.isArray(singleFilePath) && singleFilePath.length > 0) {

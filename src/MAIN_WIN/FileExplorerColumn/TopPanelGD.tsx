@@ -1,4 +1,5 @@
 import { Box, IconButton, Typography } from '@mui/material';
+import { commands } from '@/Utils/specta';
 import { FolderSymlink } from 'lucide-react';
 import { bottomBoxStyle, topShadowStyle } from '../mainStyles';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
@@ -9,7 +10,7 @@ export function TopPanelGD() {
 	const handleOpenInFinder = () => {
 		const cols = instances.gd.columns;
 		const pathToOpen = cols[cols.length - 1]?.path;
-		if (pathToOpen) window.electronAPI.invoke('shell:openPath', pathToOpen);
+		if (pathToOpen) commands.shellOpenPath(pathToOpen);
 	};
 
 	return (

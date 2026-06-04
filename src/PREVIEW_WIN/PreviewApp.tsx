@@ -53,7 +53,7 @@ function PreviewApp() {
 	const [data, setData] = useState<PreviewData | null>(null);
 
 	useEffect(() => {
-		window.electronAPI.onUpdateData((_event: any, rawData: string) => {
+		window.tauriAPI.onUpdateData((_event: any, rawData: string) => {
 			try {
 				setData(JSON.parse(rawData));
 			} catch {
@@ -61,7 +61,7 @@ function PreviewApp() {
 			}
 		});
 
-		window.electronAPI.requestData();
+		window.tauriAPI.requestData();
 
 		// DEBUG: логируем размеры окна на старте и при каждом ресайзе
 		const logSize = (tag: string) => {
@@ -88,7 +88,7 @@ function PreviewApp() {
 	useKeyboardShortcut({
 		key: 'F12',
 		skipOnInput: false,
-		callback: () => window.electronAPI.openDevTools(),
+		callback: () => window.tauriAPI.openDevTools(),
 	});
 
 	// Drag-зона по верху окна (32px) — за неё можно перетаскивать окно.

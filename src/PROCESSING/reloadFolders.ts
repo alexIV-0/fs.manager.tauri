@@ -1,6 +1,8 @@
+import { commands, unwrap } from '@/Utils/specta';
+
 export async function reloadFolders(_obj: any) {
 	const foldersArr: string[] = (
-		await (window as any).electronAPI.invoke('getSomeFromFolder', _obj.path, [{ type: 'folders', ext: [] }])
+		unwrap(await commands.getSomeFromFolder(_obj.path, [{ type: 'folders', ext: [] }])) as any
 	).folders;
 	const oldProjects = _obj.projectFolders || [];
 	// 4. Оставляем только те, что есть в новом массиве

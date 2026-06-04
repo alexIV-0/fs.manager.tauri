@@ -1,7 +1,7 @@
 // Полифил node:child_process для renderer'а.
 // exec/spawn возвращают Promise — плагины должны использовать `await`.
 
-const api = () => (window as any).electronAPI;
+const api = () => (window as any).tauriAPI;
 
 export interface ExecResult {
 	stdout: string;

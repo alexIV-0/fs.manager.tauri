@@ -1,4 +1,5 @@
 import { Box, IconButton, Typography } from '@mui/material';
+import { commands } from '@/Utils/specta';
 import { FolderSymlink, BookmarkX } from 'lucide-react';
 import { bottomBoxStyle, topShadowStyle } from '../mainStyles';
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
@@ -11,7 +12,7 @@ export function TopPanelLocal() {
 	const handleOpenInFinder = () => {
 		const cols = instances.local.columns;
 		const pathToOpen = cols[cols.length - 1]?.path;
-		if (pathToOpen) window.electronAPI.invoke('shell:openPath', pathToOpen);
+		if (pathToOpen) commands.shellOpenPath(pathToOpen);
 	};
 
 	return (

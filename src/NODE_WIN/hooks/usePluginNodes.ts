@@ -1,6 +1,6 @@
 // hooks/usePluginNodes.ts
 import { plugin_Store } from '@/Store/MainWin/plugin_store';
-import { PluginUINode } from '@/types/electron';
+import { PluginUINode } from '@/types/global';
 import { useStore } from 'zustand';
 import { useEffect, useState } from 'react';
 import { description } from '../definitions/description';

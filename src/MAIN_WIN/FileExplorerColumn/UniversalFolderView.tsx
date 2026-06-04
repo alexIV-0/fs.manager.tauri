@@ -193,7 +193,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 			e.preventDefault();
 
-			const fileType = (await window.electronAPI.invoke('getFileTypeByExtname', item.path)) as string;
+			const fileType = await commands.getFileTypeByExtname(item.path.split('.').pop() || '');
 			unwrap(await commands.previewOpen(JSON.stringify({ filePath: item.path, fileType })));
 		},
 	});
@@ -212,7 +212,7 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		// одно перемещение/копирование папки эмитит десятки fs-событий —
 		// собираем их все и в конце обновляем все затронутые колонки
 		// (и источник, и приёмник), а не только последний путь.
-		const unsubscribe = window.electronAPI.onFsChanged((changedPath: string) => {
+		const unsubscribe = window.tauriAPI.onFsChanged((changedPath: string) => {
 			if (!changedPath) return;
 			pendingChangedPaths.current.add(changedPath);
 

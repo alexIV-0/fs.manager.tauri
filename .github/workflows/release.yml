@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  # Ручной запуск релиза из вкладки Actions (без push в main).
+  workflow_dispatch:
 
 concurrency:
   group: release
@@ -85,12 +87,15 @@ jobs:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
             artifact-suffix: aarch64
+            rust-target: aarch64-apple-darwin
           - platform: macos-latest
             args: --target x86_64-apple-darwin
             artifact-suffix: x86_64
+            rust-target: x86_64-apple-darwin
           - platform: windows-latest
             args: --bundles nsis
             artifact-suffix: windows
+            rust-target: ''
 
     runs-on: ${{ matrix.platform }}
 
@@ -103,16 +108,26 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          # Кэш yarn-зависимостей (ключ по yarn.lock) — install не качает пакеты заново.
+          cache: yarn
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: |
-            aarch64-apple-darwin
-            x86_64-apple-darwin
+          # Только нужный для этой строки матрицы таргет (на Windows — пусто, host msvc).
+          targets: ${{ matrix.rust-target }}
+
+      # Кэш Rust: ~/.cargo + src-tauri/target. Холодная Tauri-сборка компилит сотни
+      # крейтов (5–15 мин); кэш экономит большую часть на повторных релизах.
+      # key по платформе+таргету, чтобы aarch64/x86_64/windows не клобберили друг друга.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.artifact-suffix }}
 
       - name: Install frontend dependencies
-        run: yarn install
+        run: yarn install --frozen-lockfile
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

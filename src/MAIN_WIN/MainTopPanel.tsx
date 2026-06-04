@@ -40,7 +40,7 @@ export function MainTopPanel() {
 		setDocOpen(true);
 	};
 
-	const openDevTools = () => window.electronAPI.openDevTools();
+	const openDevTools = () => window.tauriAPI.openDevTools();
 	const openLogWindow = () => commands.logWindowOpen();
 
 	const hasMissingPlugins = getFilteredGroups().some((group) => group.plugins.some((p) => !p.exists));

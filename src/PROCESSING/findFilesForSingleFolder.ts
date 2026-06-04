@@ -11,7 +11,7 @@ import { getSignal } from './utils/processingAbort';
 import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemToRegistrationProcessDatabase';
 import { joinPath } from '@/Utils/joinPath';
 import { basename } from '@/Utils/path';
-import { commands } from '@/Utils/specta';
+import { commands, unwrap } from '@/Utils/specta';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
@@ -45,10 +45,10 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	const inPath = joinPath(projectPathOnGD, 'IN');
 	let inItems: { files: string[]; folders: string[] } | null = null;
 	try {
-		inItems = (await window.electronAPI.invoke('getSomeFromFolder', inPath, [
+		inItems = unwrap(await commands.getSomeFromFolder(inPath, [
 			{ type: 'files', ext: [] },
 			{ type: 'folders', ext: [] },
-		])) as { files: string[]; folders: string[] };
+		])) as unknown as { files: string[]; folders: string[] };
 	} catch {
 		// IN не существует — нечего обрабатывать
 		return;
@@ -62,11 +62,11 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 
 	// ====== проверяем options.json =======
 	const optionsFile = joinPath(projectPathOnGD, 'options', 'options.json');
-	if ((await window.electronAPI.invoke('checkFilePath', optionsFile)) == '') {
+	if (unwrap(await commands.checkFilePath(optionsFile, null)) == '') {
 		console.log('--- no "options.json" file:\n', optionsFile);
 		return;
 	}
-	const nodesProps = JSON.parse(await window.electronAPI.invoke('readFileSync', optionsFile));
+	const nodesProps = JSON.parse(unwrap(await commands.readFileSync(optionsFile)));
 	if (!nodesProps) {
 		console.log('--- no "options.json" file:\n', optionsFile);
 		return;
@@ -135,7 +135,7 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 		const curSearchProp = structuredClone(currentAutomationProps);
 		curSearchProp.output = [item];
 
-		const fileInfo: any = await window.electronAPI.invoke('getFileInfo', item);
+		const fileInfo: any = unwrap(await commands.getFileInfo(item));
 		const curItemName = basename(item);
 
 		// Rust FileInfo сериализуется как snake_case (is_dir/is_file). Раньше тут читали

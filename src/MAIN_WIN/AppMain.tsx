@@ -36,7 +36,7 @@ export default function AppMain() {
 	useColumnTabNavigation();
 
 	// F12 toggles this window's DevTools (dev/devtools builds). Mirrors PreviewApp.
-	useKeyboardShortcut({ key: 'F12', skipOnInput: false, callback: () => window.electronAPI.openDevTools() });
+	useKeyboardShortcut({ key: 'F12', skipOnInput: false, callback: () => window.tauriAPI.openDevTools() });
 
 	const { setMainFolderId } = setActiveFolders_store();
 	const { mainFolderArr } = mainFolders_stor();

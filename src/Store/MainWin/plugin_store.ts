@@ -1,7 +1,7 @@
 // plugin_store.ts
 import { create } from 'zustand';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
-import { PluginInfo, PluginUINode } from '@/types/electron';
+import { PluginInfo, PluginUINode } from '@/types/global';
 
 import {
 	restorePluginFromInactiveInAllStores,
@@ -571,7 +571,7 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 
 		try {
 			// console.log('[PluginStore] Loading UI nodes...');
-			const uiNodes = await window.electronAPI.invoke<PluginUINode[]>('plugins:get-all-ui-nodes');
+			const uiNodes = await window.tauriAPI.invoke<PluginUINode[]>('plugins:get-all-ui-nodes');
 			// console.log(`[PluginStore] Loaded ${uiNodes.length} UI nodes`, uiNodes);
 			setUINodes(uiNodes);
 			return uiNodes;
@@ -609,7 +609,7 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 	},
 
 	setPluginCost: async (id, version, cost, costUnit) => {
-		await window.electronAPI.invoke('plugins:set-cost', id, version, cost, costUnit);
+		await window.tauriAPI.invoke('plugins:set-cost', id, version, cost, costUnit);
 		set((state) => ({
 			plugins: state.plugins.map((p) =>
 				p.id === id && p.version === version ? { ...p, cost, costUnit } : p,
@@ -666,7 +666,7 @@ export const initializePlugins = async () => {
 	setError(null);
 
 	try {
-		const allPlugins = await window.electronAPI.invoke<PluginInfo[]>('plugins:get-all-plugins');
+		const allPlugins = await window.tauriAPI.invoke<PluginInfo[]>('plugins:get-all-plugins');
 		updatePlugins(allPlugins);
 
 		await loadUINodes();

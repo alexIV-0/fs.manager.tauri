@@ -8,7 +8,6 @@ pub mod processing_commands;
 pub mod plugin_commands;
 pub mod preview_bounds;
 pub mod dialog_commands;
-pub mod camelcase_wrappers;
 pub mod window_state;
 pub mod exec_commands;
 pub mod ffmpeg_commands;

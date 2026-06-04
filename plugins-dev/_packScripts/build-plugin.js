@@ -91,7 +91,9 @@ await esbuild.build({
 	platform: 'browser',
 	target: 'es2022',
 	format: 'esm',
-	sourcemap: true,
+	// 'inline' (а не true): карта вшивается в .js как data-URI, отдельный .js.map не создаётся.
+	// Иначе бандл ссылается на //# sourceMappingURL=*.js.map, а plugin://-протокол .map не отдаёт → 404.
+	sourcemap: 'inline',
 
 	treeShaking: true,
 	minify: false,

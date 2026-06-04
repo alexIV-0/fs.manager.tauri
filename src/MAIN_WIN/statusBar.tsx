@@ -1,5 +1,5 @@
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
-import { useElectronEventListener } from '@/hooks/useElectronEventListener';
+import { useTauriEventListener } from '@/hooks/useTauriEventListener';
 import { Typography } from '@mui/material';
 
 function StatusBar() {
@@ -7,9 +7,9 @@ function StatusBar() {
 	// нужно его настроить что бы он мог растягиваться когда текст будет длинным в 2 строки. вряд ли будет больше
 	const { statusBar, setStatusBarState } = useStatusBar_Store();
 
-	useElectronEventListener(
-		window.electronAPI.onProcessingEvent,
-		window.electronAPI.removeProcessingEvent,
+	useTauriEventListener(
+		window.tauriAPI.onProcessingEvent,
+		window.tauriAPI.removeProcessingEvent,
 		(event: { type: string; payload: any }) => {
 			if (event.type === 'statusbar') {
 				setStatusBarState(event.payload.text);

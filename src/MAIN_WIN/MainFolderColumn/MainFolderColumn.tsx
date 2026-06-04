@@ -141,7 +141,7 @@ export function MainFolderColumn() {
 					addFolderToMainArr(folderPath);
 				}
 
-				const batch = (await window.electronAPI.invoke('listSubfolders', folderPaths)) as Record<string, string[]>;
+				const batch = unwrap(await commands.listSubfolders(folderPaths)) as unknown as Record<string, string[]>;
 
 				const { mainFolderArr, updateParameters } = mainFolders_stor.getState();
 				for (const folderPath of folderPaths) {

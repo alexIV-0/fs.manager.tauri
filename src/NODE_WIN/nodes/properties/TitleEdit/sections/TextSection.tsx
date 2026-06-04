@@ -19,7 +19,7 @@ async function loadFont(font: FontListItem): Promise<boolean> {
 	if (!font.loadable) return false;
 	if (loadedFontNames.has(font.name)) return true;
 	try {
-		const dataUrl = await window.electronAPI.invoke<string>('fonts:load-one', font.path);
+		const dataUrl = await window.tauriAPI.invoke<string>('fonts:load-one', font.path);
 		if (!dataUrl) return false;
 		const face = new FontFace(font.name, `url("${dataUrl}")`);
 		await face.load();
@@ -97,7 +97,7 @@ export const TextSection = memo(function TextSection({ settings, expanded, onTog
 	// ── Загрузка списка ───────────────────────────────────────────────────────
 
 	useEffect(() => {
-		window.electronAPI
+		window.tauriAPI
 			.invoke<FontListItem[]>('fonts:get-list')
 			.then(async (list) => {
 				setFonts(list);

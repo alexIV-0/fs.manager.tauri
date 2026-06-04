@@ -14,6 +14,7 @@ import { CurrentFileItem } from '../FileExplorerColumn/CurentFileItem';
 import { CurentFolderItem } from '../FileExplorerColumn/CurentFolderItem';
 import { UniversalFolderView } from '../FileExplorerColumn/UniversalFolderView';
 import { joinPath } from '@/Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
 import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 
 export function CurentProjectFolder() {
@@ -183,9 +184,9 @@ export function CurentProjectFolder() {
 			const pathTo = joinPath(dropData.targetPath, dragData.name);
 
 			if (isCopy) {
-				await window.electronAPI.invoke('copyItem', dragData.path, pathTo, { overwrite: true });
+				unwrap(await commands.copyItem(dragData.path, pathTo, { overwrite: true }));
 			} else {
-				await window.electronAPI.invoke('moveItem', dragData.path, pathTo, { overwrite: true });
+				unwrap(await commands.moveItem(dragData.path, pathTo, { overwrite: true }));
 			}
 
 			// Сбрасываем кэш для папок, которых коснулась операция —

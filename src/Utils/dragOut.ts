@@ -13,6 +13,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { startDrag } from '@crabnebula/tauri-plugin-drag';
 import { getInstanceType } from '@/PROCESSING/utils/fileSystemActions';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { commands, unwrap } from '@/Utils/specta';
 
 export type DragMode = 'move' | 'copy';
 
@@ -135,10 +136,10 @@ export function isDraggingOut(): boolean {
 // Применяет дроп в эксплорере: move (перемещение + удаление из исходной колонки) либо copy.
 export async function applyExplorerDrop(srcPath: string, destPath: string, mode: DragMode): Promise<void> {
 	if (mode === 'move') {
-		await window.electronAPI.invoke('moveItem', srcPath, destPath, { overwrite: false });
+		unwrap(await commands.moveItem(srcPath, destPath, { overwrite: false }));
 		await useColumnView_Store.getState().removeItemAndTrimColumns(getInstanceType(srcPath), srcPath);
 	} else {
-		await window.electronAPI.invoke('copyItem', srcPath, destPath, { overwrite: false });
+		unwrap(await commands.copyItem(srcPath, destPath, { overwrite: false }));
 	}
 }
 

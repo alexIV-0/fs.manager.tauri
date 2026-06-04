@@ -278,6 +278,7 @@ pub fn processing_delete_item(item_path: String) -> Result<bool, String> {
 
 /// Проверить существует ли путь
 #[tauri::command]
+#[specta::specta]
 pub fn path_exists(path: String) -> Result<bool, String> {
     use std::path::Path;
     Ok(Path::new(&path).exists())

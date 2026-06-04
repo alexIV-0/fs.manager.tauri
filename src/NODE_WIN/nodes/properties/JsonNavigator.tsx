@@ -1,4 +1,5 @@
 import { JsonNavigatorProperty, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { commands, unwrap } from '@/Utils/specta';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { greyColor } from '@/Store/Color/grayColor';
@@ -248,7 +249,7 @@ function JsonNavigator({ property, onChange }: JsonNavigatorProps) {
 					setJsonData(null);
 					return;
 				}
-				const content = (await window.electronAPI.invoke('readFileSync', fullPath)) as string;
+				const content = unwrap(await commands.readFileSync(fullPath));
 				if (!content) {
 					setJsonLoadError('File is empty or not found');
 					setJsonData(null);

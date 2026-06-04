@@ -15,6 +15,7 @@ import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
 import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
@@ -84,7 +85,7 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			for (const projectName of finalArr) {
 				if (offSet.has(projectName)) continue;
 				const outPath = joinPath(curMainFolder.path, projectName, 'OUT');
-				const info: any = await window.electronAPI.invoke('getFileInfo', outPath);
+				const info: any = unwrap(await commands.getFileInfo(outPath));
 				// getFileInfo (Rust FileInfo) сериализуется в snake_case: is_dir / modified (ms).
 				const isDir = info?.is_dir ?? info?.isDirectory ?? false;
 				const modifiedMs: number | undefined = info?.modified ?? info?.modifiedMs;

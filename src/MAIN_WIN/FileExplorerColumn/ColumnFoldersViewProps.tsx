@@ -16,6 +16,7 @@ import { isDraggingOut, getActiveDragMode, applyExplorerDrop } from '@/Utils/dra
 import { createFolder, createTextFile, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { basename, join } from '@/Utils/path';
+import { commands, unwrap } from '@/Utils/specta';
 
 interface ColumnFolderViewProps {
 	columns: any[];
@@ -209,7 +210,7 @@ export function ColumnFolderView({
 				for (const filePath of paths) {
 					try {
 						const name = basename(filePath);
-						const info: any = await window.electronAPI.invoke('getFileInfo', filePath).catch(() => null);
+						const info: any = await commands.getFileInfo(filePath).then(unwrap).catch(() => null);
 						const destPath = join(col.path, name);
 
 						addItemToColumn(sourceType, idx, {
@@ -532,7 +533,7 @@ export function ColumnFolderView({
 
 								for (const file of files) {
 									try {
-										const filePath = window.electronAPI.getPathForFile(file);
+										const filePath = window.tauriAPI.getPathForFile(file);
 										if (!filePath) continue;
 										const destPath = join(col.path, file.name);
 

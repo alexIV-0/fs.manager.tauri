@@ -1,4 +1,5 @@
 import { folderPath_store, pathPattern_store, typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
+import { commands, unwrap } from '@/Utils/specta';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { userInputHistory_store } from '@/Store/Node/userInputHistory_store';
 import { PatternKeys } from '@/types/searchType';
@@ -96,7 +97,7 @@ export function useResolveOptions(propertyId?: string) {
 							// Ловим, чтобы одна неудачная директория не уронила весь список опций.
 							let folders: string[] = [];
 							try {
-								const result = (await window.electronAPI.invoke('getSomeFromFolder', resolvedDir, [
+								const result = unwrap(await commands.getSomeFromFolder(resolvedDir, [
 									{ type: 'folders', ext: [] },
 								])) as any;
 								folders = Array.isArray(result) ? result : (result?.folders ?? []);
@@ -128,10 +129,10 @@ export function useResolveOptions(propertyId?: string) {
 							}
 
 							// Читаем содержимое текущей директории
-							const result = (await window.electronAPI.invoke('getSomeFromFolder', currentDir, [
+							const result = unwrap(await commands.getSomeFromFolder(currentDir, [
 								{ type: 'folders', ext: [] },
 								{ type: 'files', ext: [] },
-							])) as { folders: string[]; files: string[] };
+							])) as unknown as { folders: string[]; files: string[] };
 
 							const folders = result?.folders ?? [];
 							const files = result?.files ?? [];
@@ -146,9 +147,9 @@ export function useResolveOptions(propertyId?: string) {
 							for (const folderEntry of folderPaths) {
 								for (const folderPath of folderEntry.path) {
 									try {
-										const filesArr = (await window.electronAPI.invoke('getSomeFromFolder', folderPath, [
+										const filesArr = unwrap(await commands.getSomeFromFolder(folderPath, [
 											{ type: 'files', ext: ['bin'] },
-										])) as string[] | { files: string[] };
+										])) as unknown as string[] | { files: string[] };
 										const files = Array.isArray(filesArr) ? filesArr : (filesArr?.files ?? []);
 										allFiles.push(...files);
 									} catch {

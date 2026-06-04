@@ -2,9 +2,7 @@ import { nanoid } from 'nanoid';
 import { PresetIndexItem } from './types';
 import { getPresetsDir } from '@/NODE_WIN/utils/getPresetDir';
 import { joinPath } from '@/Utils/joinPath';
-import { tauriAPI } from '@/Utils/tauri-api';
-
-const api = tauriAPI;
+import { commands, unwrap } from '@/Utils/specta';
 
 async function getIndexPath(): Promise<string> {
 	const dir = await getPresetsDir('textPresets');
@@ -13,10 +11,10 @@ async function getIndexPath(): Promise<string> {
 
 export async function loadIndex(): Promise<PresetIndexItem[]> {
 	const indexPath = await getIndexPath();
-	const exists = await api.invoke<string>('checkFilePath', indexPath);
+	const exists = unwrap(await commands.checkFilePath(indexPath, null));
 	if (!exists) return [];
 	try {
-		const raw = await api.invoke<string>('readFileSync', indexPath);
+		const raw = unwrap(await commands.readFileSync(indexPath));
 		return JSON.parse(raw) as PresetIndexItem[];
 	} catch {
 		return [];
@@ -25,27 +23,27 @@ export async function loadIndex(): Promise<PresetIndexItem[]> {
 
 export async function saveIndex(items: PresetIndexItem[]): Promise<void> {
 	const indexPath = await getIndexPath();
-	await api.invoke('writeFile', indexPath, JSON.stringify(items, null, 2));
+	unwrap(await commands.writeFile(indexPath, JSON.stringify(items, null, 2)));
 }
 
 export async function loadPresetText(id: string): Promise<string> {
 	const dir = await getPresetsDir('textPresets');
 	const filePath = joinPath(dir, `${id}.txt`);
-	const exists = await api.invoke<string>('checkFilePath', filePath);
+	const exists = unwrap(await commands.checkFilePath(filePath, null));
 	if (!exists) return '';
-	return api.invoke<string>('readFileSync', filePath);
+	return unwrap(await commands.readFileSync(filePath));
 }
 
 export async function savePresetText(id: string, text: string): Promise<void> {
 	const dir = await getPresetsDir('textPresets');
 	const filePath = joinPath(dir, `${id}.txt`);
-	await api.invoke('writeFile', filePath, text);
+	unwrap(await commands.writeFile(filePath, text));
 }
 
 export async function deletePresetFiles(id: string): Promise<void> {
 	const dir = await getPresetsDir('textPresets');
 	const filePath = joinPath(dir, `${id}.txt`);
-	await api.invoke('deleteItem', filePath);
+	unwrap(await commands.deleteItem(filePath));
 }
 
 export function generateId(): string {

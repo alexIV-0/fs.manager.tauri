@@ -1,13 +1,13 @@
 // Полифил node:os для renderer'а. Минимальный набор того что используется в плагинах.
 
-const api = () => (window as any).electronAPI;
+import { commands } from '@/Utils/specta';
 
 let _tmpdirCache: string | null = null;
 
 export async function tmpdir(): Promise<string> {
 	// Sync-вызов в Node; в renderer всегда async. Плагин должен делать `await tmpdir()`.
 	if (_tmpdirCache !== null) return _tmpdirCache;
-	const dir = (await api().invoke('os_tmpdir')) as string;
+	const dir = await commands.osTmpdir();
 	_tmpdirCache = dir;
 	return dir;
 }

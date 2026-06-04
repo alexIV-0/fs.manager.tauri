@@ -1,6 +1,8 @@
 /**
- * Tauri API adapter - заменяет window.electronAPI
+ * Tauri API adapter — реализация глобала window.tauriAPI (бывш. window.electronAPI, Electron-эра).
  * Все вызовы к IPC идут через @tauri-apps/api invoke/listen
+ * Это тонкий шим для ПЛАГИНОВ (snake-команды + named-payload) и событий; приложение
+ * напрямую использует типобезопасные commands.* из @/Utils/specta (tauri-specta).
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -17,7 +19,7 @@ import { commands, unwrap } from '@/Utils/specta';
 const currentWebviewWindow = getCurrentWebviewWindow();
 
 // Совместимость типов
-interface IpcRendererEvent {
+interface TauriEventArg {
 	type: string;
 	payload: any;
 }
@@ -44,53 +46,20 @@ async function waitForPendingListens(): Promise<void> {
  * Маппинг аргументов (позиционные → именованные для Tauri)
  */
 const argMappers: Record<string, (...args: any[]) => any> = {
-	// Path: pathJoin/Basename/Dirname/Extname/Parse/Relative мигрированы на tauri-specta
-	// (commands.path* + unwrap из @/Utils/specta) — мапперы не нужны.
-	// Files
-	getFileInfo: (path) => ({ path }),
-	getFileTypeByExtname: (path) => {
-		// Извлекаем расширение из пути
-		const ext = path.split('.').pop() || '';
-		return { ext };
-	},
-	testAndCreateFolder: (path) => ({ path }),
-	testAndCreateFolders: (paths) => ({ paths }),
-	renameFolder: (oldPath, newPath) => ({ oldPath, newPath }),
-	setPathMtime: (path, mtimeMs) => ({ path, mtimeMs }),
-	copyItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
-	moveItem: (sourcePath, destinationPath, options?) => ({ sourcePath, destinationPath, ...(options ? { options } : {}) }),
-	deleteItem: (itemPath) => ({ itemPath }),
-	// moveToErrors мигрирован на commands.moveToErrors — маппер не нужен.
-	// IO
-	readFileSync: (filePath) => ({ filePath }),
+	// Path / Files / IO / Check / Fonts / Shell — camel-обёртки УДАЛЕНЫ (camelcase_wrappers.rs снесён):
+	// приложение ходит через commands.* (tauri-specta), плагины — через snake-имена + named-payload.
+	// Соответствующие camel-argMappers больше не нужны.
 	readMediaPreview: (filePath) => ({ filePath }),
 	read_media_preview: (filePath) => ({ filePath }),
-	writeFile: (filePath, content) => ({ filePath, content }),
-	write_binary_file: (filePath: string, dataB64: string) => ({ filePath, dataB64 }),
-	getSomeFromFolder: (path, search?) => ({ path, ...(search ? { search } : {}) }),
-	listSubfolders: (paths) => ({ paths }),
-	recursiveFindFiles: (path, search?) => ({ path, ...(search ? { search } : {}) }),
-	// Check
-	checkFilePath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
-	checkFolderPath: (path, name?) => ({ path, ...(name ? { name } : {}) }),
-	// Plugins dev path (for PluginBuilderWin)
-	getPluginsDevPath: () => ({}),
-	// Fonts
-	fontsGetList: () => ({}),
-	fontsLoadOne: (fontPath) => ({ fontPath }),
-	// Shell
-	shellOpenPath: (folderPath) => ({ folderPath }),
-	// Watch: fsWatchStart/fsWatchStop мигрированы на tauri-specta (commands.*) — маппер не нужен.
-	// Preview
-	// preview:* мигрированы на tauri-specta (commands.preview* + unwrap) — мапперы не нужны.
+	// write_binary_file/get_stat/path_exists/hash_file argMappers удалены: плагинный _template/tauri.ts
+	// теперь шлёт named-payload на snake-команды напрямую (Tauri сам camelCase→snake).
 	// Window
-	openNodeWindow: (data) => ({ data }),
+	open_node_window: (data) => ({ data }),
 	// Processing
 	killAllExecProcesses: () => ({}),
-	setStatusBar: (text) => ({ text }),
-	sendLog: (level, text) => ({ level, text }),
+	// setStatusBar/sendLog camel-обёртки удалены — плагины и app теперь зовут snake
+	// set_status_bar/send_log с named-payload напрямую (argMapper не нужен).
 	// abortProcessing/processItem/sendNode*/sendProcessComplete мигрированы на commands.* — мапперы не нужны.
-	// (setStatusBar/sendLog оставлены — плагинные.)
 	// Dialog: selectFolders/selectFiles/copyToClipboard/showInFolder/openFileWithDefaultApp/
 	// createFolder/renameFile/getNodeObjFromFile/saveFlowToOptionsFolder/getPathsFromFiles
 	// мигрированы на tauri-specta (commands.* + unwrap) — мапперы не нужны.
@@ -137,10 +106,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	diag_log_clear: () => ({}),
 	createTextFile: (path: string) => ({ path }),
 	ensure_and_read_dir: (path: string) => ({ path }),
-	get_stat: (path: string) => ({ path }),
-	path_exists: (path: string) => ({ path }),
 	os_tmpdir: () => ({}),
-	hash_file: (path: string, algo?: string) => ({ path, algo }),
 	// cleanup_auto_delete/db_register_found мигрированы на commands.* — мапперы не нужны.
 	// HTTP via Rust (no CORS)
 	// Tauri сопоставляет аргументы по имени параметра Rust-функции.
@@ -167,22 +133,20 @@ const commandAliases: Record<string, string> = {
 	'plugins:list': 'plugin_manager_list',
 	'plugins:install': 'plugin_manager_install',
 	'plugins:delete': 'plugin_manager_delete',
-	getUserDataPath: 'getOptionsFolder',
-	'shell:openPath': 'shellOpenPath',
+	// getUserDataPath/'shell:openPath' удалены: вели на снесённые camel-обёртки getOptionsFolder/shellOpenPath.
+	// App зовёт commands.getUserDataPath/shellOpenPath (snake), плагины — snake-имена напрямую.
 	'request-data': 'request_data',
 	requestData: 'request_data',
 	openDevTools: 'open_devtools',
 	open_dev_tools: 'openDevTools',
-	'open-node-window': 'openNodeWindow',
+	'open-node-window': 'open_node_window',
 	// 'abort-processing'/'process-item' мигрированы на commands.* (abortProcessing).
 	'exec-command': 'exec_command',
 	'kill-all-exec-processes': 'killAllExecProcesses',
 	// 'fs-watch:start'/'fs-watch:stop' мигрированы на tauri-specta (commands.fsWatchStart/Stop).
 	// preview:* мигрированы на tauri-specta (commands.preview*).
 	'read-media-preview': 'read_media_preview',
-	// Fonts
-	'fonts:get-list': 'fontsGetList',
-	'fonts:load-one': 'fontsLoadOne',
+	// Fonts: 'fonts:get-list'/'fonts:load-one' удалены — вели на снесённые camel fontsGetList/fontsLoadOne.
 	// App settings / Color types / File types / Program paths — мигрированы на tauri-specta (commands.*).
 	// Docs
 	// 'docs:list'/'docs:read' мигрированы на tauri-specta (commands.docsList/docsRead).
@@ -350,11 +314,11 @@ const tauriPlugins = {
  */
 export const tauriAPI = {
 	// Обработчики событий
-	onUpdateData: (callback: (event: IpcRendererEvent, data: any) => void) => {
+	onUpdateData: (callback: (event: TauriEventArg, data: any) => void) => {
 		tauriOn('update-data', callback);
 	},
 	requestData: () => tauriSend('request-data'),
-	removeUpdateData: (callback: (event: IpcRendererEvent, data: any) => void) => {
+	removeUpdateData: (callback: (event: TauriEventArg, data: any) => void) => {
 		tauriOff('update-data', callback);
 	},
 	requestNodeWindowData: () => tauriInvoke('requestNodeWindowData'),
@@ -435,28 +399,15 @@ export const tauriAPI = {
 	}) => tauriInvoke<{ success: boolean; data?: any; error?: string }>('run_script_in_ae', args),
 	launchAEWithScript: (aePath: string, scriptPath: string) => tauriInvoke<void>('launch_ae_with_script', aePath, scriptPath),
 
-	// Процессинг
-	abortProcessing: () => tauriInvoke<void>('abortProcessing'),
+	// Процессинг: остаются exec_command (зовут плагины) + kill-all-exec-processes.
+	// Мёртвые camel-методы удалены — их команды мигрированы на commands.* или снесены вместе
+	// с camelcase_wrappers.rs, а сами методы нигде не вызывались:
+	// abortProcessing/moveToErrors/sendNodeStart/Done/Error/sendProcessComplete/setStatusBar/sendLog/
+	// isProcessingAborted/resetProcessingSignal/set+getProcessingProgress/addProcessingError/
+	// processingDeleteItem/pathExists/getItemInfo/processItem.
 	killAllExecProcesses: () => tauriInvoke<void>('kill-all-exec-processes'),
 	execCommand: (args: { cmd: string; args: string[]; cwd?: string; nodeId?: string; env?: [string, string][] }) =>
 		tauriInvoke<any>('exec-command', args),
-	isProcessingAborted: () => tauriInvoke<boolean>('isProcessingAborted'),
-	resetProcessingSignal: () => tauriInvoke<void>('resetProcessingSignal'),
-	setProcessingProgress: (currentStep: string, total: number, completed: number) =>
-		tauriInvoke<void>('setProcessingProgress', currentStep, total, completed),
-	getProcessingProgress: () => tauriInvoke<any>('getProcessingProgress'),
-	addProcessingError: (error: string) => tauriInvoke<void>('addProcessingError', error),
-	moveToErrors: (itemPath: string, projectPath: string) => tauriInvoke<any>('moveToErrors', itemPath, projectPath),
-	processingDeleteItem: (itemPath: string) => tauriInvoke<boolean>('processingDeleteItem', itemPath),
-	pathExists: (path: string) => tauriInvoke<boolean>('pathExists', path),
-	getItemInfo: (path: string) => tauriInvoke<any>('getItemInfo', path),
-	processItem: (item: any) => tauriInvoke<any>('processItem', item),
-	setStatusBar: (text: string) => tauriInvoke<void>('setStatusBar', text),
-	sendLog: (level: string, text: string) => tauriInvoke<void>('sendLog', level, text),
-	sendNodeStart: (nodeId: string) => tauriInvoke<void>('sendNodeStart', nodeId),
-	sendNodeDone: (nodeId: string, output: any) => tauriInvoke<void>('sendNodeDone', nodeId, output),
-	sendNodeError: (nodeId: string, message: string) => tauriInvoke<void>('sendNodeError', nodeId, message),
-	sendProcessComplete: () => tauriInvoke<void>('sendProcessComplete'),
 
 	// Window state: мигрирован на tauri-specta (commands.saveWindowState/loadWindowState).
 	// Сохранение зовётся напрямую из windowAutoSave.ts; загрузка — в Rust на старте.
@@ -510,7 +461,7 @@ export async function initTauriAPI() {
 		// ДО загрузки любого плагина через plugin:// протокол.
 		installGlobalPolyfills();
 
-		(window as any).electronAPI = tauriAPI;
+		(window as any).tauriAPI = tauriAPI;
 		(window as any).log = tauriAPI.logger;
 		(window as any).invoke = tauriAPI.invoke;
 		(window as any).plugins = tauriPlugins;

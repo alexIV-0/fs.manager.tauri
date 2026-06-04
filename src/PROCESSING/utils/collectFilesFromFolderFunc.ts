@@ -1,5 +1,6 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
+import { commands, unwrap } from '@/Utils/specta';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { joinPath } from '@/Utils/joinPath';
 
@@ -24,7 +25,7 @@ export async function collectFilesFromFolderFunc(_node: any, prefetched?: Prefet
 	if (_node.recursiveSearch) {
 		// Рекурсия — отдельный IPC, prefetched (top-level) недостаточен
 		const searchObj = [{ type: searchTypeName, ext: fileTypes.path }];
-		const itemArrName: any = await window.electronAPI.invoke('recursiveFindFiles', curFolderPath, searchObj);
+		const itemArrName: any = unwrap(await commands.recursiveFindFiles(curFolderPath, searchObj as any));
 		items = itemArrName[searchTypeName] ?? [];
 	} else if (prefetched) {
 		// Используем уже отсканированный top-level список — фильтруем в памяти
@@ -41,7 +42,7 @@ export async function collectFilesFromFolderFunc(_node: any, prefetched?: Prefet
 	} else {
 		// Fallback: prefetched нет (например, вызов из NODE_WIN single-folder run)
 		const searchObj = [{ type: searchTypeName, ext: fileTypes.path }];
-		const itemArrName: any = await window.electronAPI.invoke('getSomeFromFolder', curFolderPath, searchObj);
+		const itemArrName: any = unwrap(await commands.getSomeFromFolder(curFolderPath, searchObj as any));
 		items = itemArrName[searchTypeName] ?? [];
 	}
 

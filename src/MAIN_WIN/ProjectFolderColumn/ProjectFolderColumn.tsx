@@ -30,6 +30,7 @@ import { ProjectFolderItem } from './ProjectFolderItem';
 import { getUniqueFolderName } from '@/Utils/getUniqueFolderName';
 import { saveToLocalStorage } from '@/Utils/loadSaveToLS';
 import { joinPath } from '@/Utils/joinPath';
+import { commands, unwrap } from '@/Utils/specta';
 
 export function ProjectFolderColumn() {
 	const { optionsObj, updateOptions } = options_store();
@@ -161,14 +162,12 @@ export function ProjectFolderColumn() {
 		// тут будем просто добавлять новую папку в текущую main, т.е. создавать новую со всей структурой что для настройки
 		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
 		if (!activeMain) return;
-		const allFoldersArr: any = await window.electronAPI.invoke('getSomeFromFolder', activeMain.path, [
-			{ type: 'folders', ext: [] },
-		]);
+		const allFoldersArr: any = unwrap(await commands.getSomeFromFolder(activeMain.path, [{ type: 'folders', ext: [] }]));
 
 		const newFolderName = getUniqueFolderName('newFolder', allFoldersArr.folders);
 		if (!activeMain) return;
 		const newPath = joinPath(activeMain.path, newFolderName);
-		await window.electronAPI.invoke('testAndCreateFolder', newPath);
+		unwrap(await commands.testAndCreateFolder(newPath));
 		updateParameters({
 			id: activeMain.id,
 			projectFolders: [...activeMain.projectFolders, newFolderName],

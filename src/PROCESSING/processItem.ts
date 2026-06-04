@@ -12,7 +12,7 @@ import { acquirePool, releasePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
 
-const api = () => (window as any).electronAPI;
+const api = () => (window as any).tauriAPI;
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ async function pathExists(p: string): Promise<boolean> {
 	// `checkFilePath` отбрасывает папки (внутри стоит `!p.is_file() → return ""`), поэтому
 	// для проверки «вообще существует ли путь» (файл или папка) используем `path_exists`.
 	// Без этого фикса для папок postProcess получал pathForDeleteExists=false → SKIPPED.
-	return Boolean(await api().invoke('path_exists', p));
+	return Boolean(unwrap(await commands.pathExists(p)));
 }
 
 /**
@@ -75,7 +75,7 @@ async function markFolderAsError(
 		const newPath = join(dirname(folderPath), newName);
 
 		send('log', { level: 'warn', text: `[markFolderAsError] invoke renameFolder: ${folderPath} -> ${newPath}`, itemId });
-		const renameResult = await api().invoke('renameFolder', folderPath, newPath);
+		const renameResult = unwrap(await commands.renameFolder(folderPath, newPath));
 		send('log', { level: 'warn', text: `[markFolderAsError] renameFolder result: ${JSON.stringify(renameResult)}`, itemId });
 
 		send('log', {
@@ -252,7 +252,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 				})
 				.catch(() => {});
 		} else if (type === 'statusbar') {
-			api().invoke('setStatusBar', payload.text ?? '').catch(() => {});
+			api().invoke('set_status_bar', { text: payload.text ?? '' }).catch(() => {});
 		}
 	};
 
@@ -318,7 +318,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 		if (allStepsSucceeded && !ctx.signal.aborted && deleteAfter) {
 			send('log', { level: 'warn', text: `[processItem.postProcess] → DELETE branch`, itemId });
 			try {
-				await api().invoke('deleteItem', pathForDelete);
+				unwrap(await commands.deleteItem(pathForDelete));
 				send('log', { level: 'info', text: `[processItem] Deleted original: ${basename(pathForDelete)}`, itemId });
 			} catch {
 				send('log', { level: 'warn', text: `[processItem] Failed to delete original: ${basename(pathForDelete)}`, itemId });

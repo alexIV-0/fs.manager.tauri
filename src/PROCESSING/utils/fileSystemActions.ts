@@ -34,7 +34,7 @@ export function getInstanceType(path: string): 'gd' | 'local' {
 // ── Удаление с обрезкой дочерних колонок ───────────────────────────────────
 export async function deleteItem(path: string): Promise<void> {
 	try {
-		await window.electronAPI.invoke('deleteItem', path);
+		unwrap(await commands.deleteItem(path));
 	} catch (err) {
 		console.error('deleteItem failed:', err);
 		return;
@@ -78,7 +78,7 @@ export async function renameFolder(
 	onSuccess?: (oldName: string, newName: string) => void,
 ): Promise<void> {
 	try {
-		await window.electronAPI.invoke('renameFolder', oldPath, newPath);
+		unwrap(await commands.renameFolder(oldPath, newPath));
 
 		const parentPath = dirname(oldPath);
 		const oldName = basename(oldPath);
@@ -133,7 +133,7 @@ export async function createFolder(parentPath: string, folderName = 'Новая 
 export async function createTextFile(parentPath: string, fileName = 'Новый файл.txt'): Promise<void> {
 	try {
 		const newFilePath = joinPath(parentPath, fileName);
-		await window.electronAPI.invoke('createTextFile', newFilePath);
+		unwrap(await commands.createTextFile(newFilePath));
 
 		const instanceType = getInstanceType(parentPath);
 		useColumnView_Store.getState().refreshAffectedColumns(instanceType, [parentPath]);
@@ -231,9 +231,9 @@ export async function pasteFromClipboardFs(destFolderPath: string): Promise<void
 
 		try {
 			if (type === 'copy') {
-				await window.electronAPI.invoke('copyItem', srcPath, destPath, { overwrite: false });
+				unwrap(await commands.copyItem(srcPath, destPath, { overwrite: false }));
 			} else {
-				await window.electronAPI.invoke('moveItem', srcPath, destPath, { overwrite: false });
+				unwrap(await commands.moveItem(srcPath, destPath, { overwrite: false }));
 				// После перемещения убираем из исходной колонки
 				const srcInstanceType = getInstanceType(srcPath);
 				await useColumnView_Store.getState().removeItemAndTrimColumns(srcInstanceType, srcPath);

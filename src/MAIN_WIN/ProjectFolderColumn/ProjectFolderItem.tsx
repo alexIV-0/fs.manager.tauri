@@ -9,6 +9,7 @@ import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
 import { joinPath } from '@/Utils/joinPath';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
+import { commands, unwrap } from '@/Utils/specta';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
 	name,
@@ -40,7 +41,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			updateParameters({ id: activeMain.id, projectFolders: updated });
 			const oldPath = joinPath(activeMain.path, name);
 			const newPath = joinPath(activeMain.path, newName);
-			await window.electronAPI.invoke('renameFolder', oldPath, newPath);
+			unwrap(await commands.renameFolder(oldPath, newPath));
 		},
 	});
 
@@ -66,7 +67,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 
 		const outPath = joinPath(activeMain.path, name, 'OUT');
 		try {
-			const info: any = await window.electronAPI.invoke('getFileInfo', outPath);
+			const info: any = unwrap(await commands.getFileInfo(outPath));
 			const isDir = info?.is_dir ?? info?.isDirectory ?? false;
 			const modifiedMs: number | undefined = info?.modified ?? info?.modifiedMs;
 			if (!isDir || typeof modifiedMs !== 'number') return;
@@ -77,7 +78,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			if (ageMs <= autoDisableDays * dayMs) return;
 
 			const newMtimeMs = Date.now() - (autoDisableDays - 1) * dayMs;
-			await window.electronAPI.invoke('setPathMtime', outPath, newMtimeMs);
+			unwrap(await commands.setPathMtime(outPath, newMtimeMs));
 		} catch {
 			// OUT может не существовать — это нормально, autoDisable пропустит её.
 		}
@@ -105,7 +106,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 		// UI-ноды плагинов окно нод теперь подтягивает само через Rust plugin manager
 		// (см. NODE_WIN/index.tsx → loadAllUINodes). Снапшот в localStorage больше не нужен.
 		const optionsPath = joinPath(activeMain.path, name);
-		window.electronAPI.invoke('open-node-window', optionsPath);
+		window.tauriAPI.invoke('open-node-window', optionsPath);
 	};
 
 	useEffect(() => {

@@ -16,7 +16,7 @@ const theme = createTheme(themeOptions);
 // `diag:log` алиасом и diag_log.rs модулем.
 function diag(msg: string) {
 	try {
-		(window as any).electronAPI?.invoke?.('diag:log', `[LogApp] ${msg}`);
+		(window as any).tauriAPI?.invoke?.('diag:log', `[LogApp] ${msg}`);
 	} catch {
 		/* noop */
 	}
@@ -131,7 +131,7 @@ export default function LogApp() {
 	// ── IPC ──────────────────────────────────────────────────────────────────
 
 	useEffect(() => {
-		const api = (window as any).electronAPI;
+		const api = (window as any).tauriAPI;
 
 		const tHistory0 = performance.now();
 		diag('get-history start');
