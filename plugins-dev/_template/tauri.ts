@@ -554,6 +554,8 @@ export interface AEResult {
 	success: boolean;
 	data?: any;
 	error?: string;
+	/** Путь к сохранённому временному скрипту (с подставленными параметрами). */
+	temp_script_path?: string;
 }
 
 export interface RunScriptInAEArgs {

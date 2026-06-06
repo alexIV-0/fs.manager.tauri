@@ -886,7 +886,12 @@ async shellOpenPath(folderPath: string) : Promise<Result<null, string>> {
 
 /** user-defined types **/
 
-export type AEResult = { success: boolean; data: JsonValue | null; error: string | null }
+export type AEResult = { success: boolean; data: JsonValue | null; error: string | null; 
+/**
+ * Путь к сохранённому временному скрипту. Заполняется Rust (в AE-результате
+ * его нет), поэтому при десериализации result.json по умолчанию None.
+ */
+temp_script_path?: string | null }
 export type ArchiveDay = { date: string; items: number; bytes: number }
 export type CopyMoveOptions = { use_hash_check?: boolean; overwrite?: boolean }
 export type DialogFilter = { name: string; extensions: string[] }

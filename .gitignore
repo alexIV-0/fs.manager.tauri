@@ -15,6 +15,9 @@ dist-electron
 distr-plugins
 release
 
+# JSX playground (локальная отладка в AE: конфиг с локальными путями + генерируемый __run.jsx)
+jsx/_playground/
+
 # Tauri
 src-tauri/target
 src-tauri/Cargo.lock

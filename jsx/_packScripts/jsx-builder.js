@@ -173,7 +173,18 @@ export async function buildEntry(entryFile) {
 	});
 
 	const finalCode = finalizeForAE(result.outputFiles[0].text, baseName);
-	await fs.writeFile(outFile, finalCode, 'utf8');
+
+	// ExtendScript (ES3-движок AE) НЕ имеет нативного JSON, а обвязка lock/result
+	// (ae_commands.rs) пишет результат через JSON.stringify. Поэтому в КАЖДЫЙ собранный
+	// скрипт встраиваем полифил json2 (самозащитный: определяет JSON только если его нет).
+	let json2 = '';
+	try {
+		json2 = (await fs.readFile(path.join(root, 'jsx', 'utils', 'json2.js'), 'utf8')).trim();
+	} catch {
+		console.warn('   ⚠️  jsx/utils/json2.js не найден — JSON.stringify в AE может не работать');
+	}
+
+	await fs.writeFile(outFile, json2 ? `${json2}\n\n${finalCode}` : finalCode, 'utf8');
 
 	console.log(`   ✅ ${entryFile} → distr/${baseName}.jsx`);
 }

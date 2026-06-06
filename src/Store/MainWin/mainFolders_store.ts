@@ -25,7 +25,8 @@ type UpdateProjectFoldersPayload = {
 
 export type MainFoldersStore = {
 	mainFolderArr: FolderInMainStore[];
-	addFolderToMainArr: (path: string) => Promise<void>;
+	/** Добавляет главную папку. Возвращает `false`, если путь уже есть в списке (дубликат не создаётся). */
+	addFolderToMainArr: (path: string) => Promise<boolean>;
 	removeFolderFromMainArr: (id: string) => void;
 	moveFolderInMainArr: (dragIndex: number, hoverIndex: number) => void;
 	updateParameters: (payload: UpdateParametersPayload) => void;
@@ -37,6 +38,10 @@ export const mainFolders_stor = create<MainFoldersStore>()((set, get) => ({
 	mainFolderArr: loadFromLocalStorage(STORAGE_KEY) || [],
 
 	addFolderToMainArr: async (path: string) => {
+		// Одну и ту же папку нельзя держать в списке дважды. Сравниваем без хвостового слэша.
+		const norm = (p: string) => p.replace(/\/+$/, '');
+		if (get().mainFolderArr.some((f) => norm(f.path) === norm(path))) return false;
+
 		const nameF = basename(path);
 		const newFolder = [
 			...get().mainFolderArr,
@@ -49,6 +54,7 @@ export const mainFolders_stor = create<MainFoldersStore>()((set, get) => ({
 		];
 		set({ mainFolderArr: newFolder });
 		saveToLocalStorage(STORAGE_KEY, newFolder);
+		return true;
 	},
 
 	removeFolderFromMainArr: (id: string) => {
