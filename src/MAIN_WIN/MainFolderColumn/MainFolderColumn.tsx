@@ -137,14 +137,24 @@ export function MainFolderColumn() {
 		try {
 			const folderPaths = unwrap(await commands.selectFolders({ multiSelect: true }));
 			if (folderPaths && Array.isArray(folderPaths) && folderPaths.length > 0) {
-				for (const folderPath of folderPaths) {
+				// Отсекаем уже добавленные пути — одну и ту же папку нельзя держать в списке дважды.
+				const norm = (p: string) => p.replace(/\/+$/, '');
+				const existing = new Set(mainFolders_stor.getState().mainFolderArr.map((f) => norm(f.path)));
+				const newPaths = folderPaths.filter((p) => !existing.has(norm(p)));
+				const skipped = folderPaths.length - newPaths.length;
+				if (skipped > 0) {
+					console.warn(`Пропущено уже добавленных папок: ${skipped} из ${folderPaths.length}`);
+				}
+				if (newPaths.length === 0) return;
+
+				for (const folderPath of newPaths) {
 					addFolderToMainArr(folderPath);
 				}
 
-				const batch = unwrap(await commands.listSubfolders(folderPaths)) as unknown as Record<string, string[]>;
+				const batch = unwrap(await commands.listSubfolders(newPaths)) as unknown as Record<string, string[]>;
 
 				const { mainFolderArr, updateParameters } = mainFolders_stor.getState();
-				for (const folderPath of folderPaths) {
+				for (const folderPath of newPaths) {
 					const foldersArr = (batch?.[folderPath] ?? []).slice();
 					foldersArr.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 					const newMain = mainFolderArr.find((f) => f.path === folderPath);

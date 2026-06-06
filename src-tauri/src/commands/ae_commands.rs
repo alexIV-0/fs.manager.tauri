@@ -21,6 +21,10 @@ pub struct AEResult {
     pub success: bool,
     pub data: Option<serde_json::Value>,
     pub error: Option<String>,
+    /// Путь к сохранённому временному скрипту. Заполняется Rust (в AE-результате
+    /// его нет), поэтому при десериализации result.json по умолчанию None.
+    #[serde(default)]
+    pub temp_script_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -43,7 +47,17 @@ pub struct RunScriptInAEArgs {
 
 #[tauri::command]
 #[specta::specta]
-pub fn run_script_in_ae(args: RunScriptInAEArgs) -> Result<AEResult, String> {
+pub async fn run_script_in_ae(args: RunScriptInAEArgs) -> Result<AEResult, String> {
+    // Sync-команды Tauri выполняются на главном потоке и блокируют WebView event-loop.
+    // Ожидание результата AE — это polling-цикл со sleep (до timeout, т.е. часы),
+    // поэтому всю блокирующую работу уносим в tokio::task::spawn_blocking — иначе
+    // весь интерфейс замерзает на время рендера.
+    tokio::task::spawn_blocking(move || run_script_in_ae_blocking(args))
+        .await
+        .map_err(|e| format!("AE task panicked: {}", e))?
+}
+
+fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String> {
     let temp_dir = args
         .temp_dir
         .as_deref()
@@ -71,18 +85,27 @@ pub fn run_script_in_ae(args: RunScriptInAEArgs) -> Result<AEResult, String> {
 
     fs::write(&temp_script_path, &script_content)
         .map_err(|e| format!("Cannot write temp script: {}", e))?;
+    println!("[aeProcess] временный скрипт сохранён: {}", temp_script_path.display());
 
     // Запускаем AE
+    println!("[aeProcess] запуск AE: {} (скрипт: {})", args.ae_path, temp_script_path.display());
     launch_in_ae(&args.ae_path, &temp_script_path)?;
 
     // Ждём результата
     let timeout = Duration::from_secs(args.timeout_sec.unwrap_or(120));
-    let result = wait_for_result(&result_path, &lock_path, timeout)?;
+    println!("[aeProcess] ожидание результата (до {}s): {}", timeout.as_secs(), result_path.display());
+    let mut result = wait_for_result(&result_path, &lock_path, timeout)?;
+    // Возвращаем путь сохранённого скрипта в плагин (для лога в окне приложения)
+    result.temp_script_path = Some(temp_script_path.to_string_lossy().replace('\\', "/"));
 
     // Убираем временные файлы
-    if !args.keep_temp_files.unwrap_or(false) {
+    let keep = args.keep_temp_files.unwrap_or(false);
+    if !keep {
         let _ = fs::remove_file(&temp_script_path);
         let _ = fs::remove_file(&lock_path);
+        println!("[aeProcess] временные файлы удалены (keep_temp_files=false)");
+    } else {
+        println!("[aeProcess] временные файлы оставлены: {}", temp_script_path.display());
     }
 
     Ok(result)
@@ -249,6 +272,11 @@ fn wait_for_result(
 
     loop {
         if start.elapsed() > timeout {
+            eprintln!(
+                "[aeProcess] TIMEOUT после {}s — result-файл не появился: {}",
+                timeout.as_secs(),
+                result_path.display()
+            );
             return Err(format!(
                 "Timeout waiting for AE result after {}s",
                 timeout.as_secs()
@@ -266,6 +294,7 @@ fn wait_for_result(
             match fs::read_to_string(result_path) {
                 Ok(content) => {
                     let _ = fs::remove_file(result_path);
+                    println!("[aeProcess] результат получен: {}", result_path.display());
                     match serde_json::from_str::<AEResult>(&content) {
                         Ok(result) => return Ok(result),
                         Err(e) => {
@@ -273,6 +302,7 @@ fn wait_for_result(
                                 success: false,
                                 data: None,
                                 error: Some(format!("Failed to parse AE result JSON: {}", e)),
+                                temp_script_path: None,
                             })
                         }
                     }

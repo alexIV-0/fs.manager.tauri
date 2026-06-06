@@ -60,12 +60,22 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 	};
 
 	const handleReloadFolders = async (e: React.MouseEvent) => {
-		const { updateParameters } = mainFolders_stor.getState();
-		const finalArr = await reloadFolders(obj);
-		updateParameters({
-			id: obj.id,
-			projectFolders: finalArr,
-		});
+		e.stopPropagation();
+		// Делаем папку активной, чтобы пересобранный список проектов сразу был виден в колонке.
+		setActiveFolders_store.getState().setMainFolderId(obj.id);
+		try {
+			const finalArr = await reloadFolders(obj);
+			console.log('[refresh]', basename(obj.path), '→ прочитано с диска:', finalArr.length, finalArr);
+			mainFolders_stor.getState().updateParameters({
+				id: obj.id,
+				projectFolders: finalArr,
+			});
+		} catch (err) {
+			// getSomeFromFolder бросает «Invalid directory», если папку не прочитать
+			// (Google Drive ещё не примонтировал Shared drive, путь переименован и т.п.).
+			// Раньше это уходило в молчаливый unhandled-rejection — кнопка «не работала».
+			console.error('Не удалось обновить список папок — папка недоступна:', obj.path, err);
+		}
 	};
 
 	const handleMainClick = () => {

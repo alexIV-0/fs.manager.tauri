@@ -17,6 +17,7 @@ import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
 import { basename } from '@/Utils/path';
+import { reloadFolders } from '@/PROCESSING/reloadFolders';
 
 interface UniversalFolderViewProps {
 	type: 'gd' | 'local';
@@ -31,6 +32,9 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 	const refreshTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const pendingChangedPaths = useRef<Set<string>>(new Set());
+	// Путь, для которого уже пробовали авто-пересборку — чтобы не дёргать её повторно,
+	// если папку так и не удалось прочитать (например, корень недоступен).
+	const lastHealedPath = useRef<string | null>(null);
 
 	// Получаем данные для конкретного типа
 	const instance = instances[type];
@@ -43,28 +47,49 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		const fetchData = async () => {
 			if (!activeMainFolder || !activeProjectFolder) return;
 
-			const t0 = performance.now();
+			const { mainFolderArr } = mainFolders_stor.getState();
+			const mainFolder = mainFolderArr.find((f) => f.id === activeMainFolder);
+			if (!mainFolder) return;
+
+			// Защита от рассинхрона стора: при смене главной папки activeMainFolder обновляется
+			// раньше, чем ProjectFolderColumn переставит activeProjectFolder на проект новой папки.
+			// В этот момент activeProjectFolder ещё держит имя из ПРЕДЫДУЩЕЙ папки — если построить
+			// путь из такой «чужой пары», выйдет несуществующий «новый_путь/чужой_проект» → Invalid
+			// directory (а в local-ветке ensureDir ещё и создаст мусорную папку). Не открываем чужую
+			// пару: дождёмся, пока выбор переставится на проект текущей папки (эффект перевыполнится).
+			if (!mainFolder.projectFolders.includes(activeProjectFolder)) return;
 
 			if (type === 'gd') {
-				const { mainFolderArr } = mainFolders_stor.getState();
-				const mainFolder = mainFolderArr.find((f) => f.id === activeMainFolder);
-				if (mainFolder) {
-					const folderPath = joinPath(mainFolder.path, activeProjectFolder);
-					await openRoot('gd', folderPath);
+				const folderPath = joinPath(mainFolder.path, activeProjectFolder);
+				await openRoot('gd', folderPath);
+
+				// Авто-пересборка: проект есть в списке, но на диске его уже нет (переименовали/удалили) —
+				// openRoot вернул «Invalid directory». Прогоняем reloadFolders (она убирает мёртвое имя
+				// из стора+LS mainFolders и из off-списка LS) и переключаемся на живую папку,
+				// чтобы оно исчезло из интерфейса и перестало сыпать ошибкой.
+				const err = useColumnView_Store.getState().instances.gd.error;
+				if (err && /Invalid directory/i.test(err) && lastHealedPath.current !== folderPath) {
+					lastHealedPath.current = folderPath;
+					try {
+						const finalArr = await reloadFolders(mainFolder);
+						mainFolders_stor.getState().updateParameters({ id: mainFolder.id, projectFolders: finalArr });
+						if (!finalArr.includes(activeProjectFolder)) {
+							setActiveFolders_store.getState().setActiveProjectFolder(finalArr[0] ?? null);
+						}
+					} catch (e) {
+						// Сам корень недоступен (нет прав / Google Drive не примонтирован) — лечить нечего.
+						console.error('Авто-пересборка списка папок не удалась:', mainFolder.path, e);
+					}
+				} else if (!err) {
+					lastHealedPath.current = null;
 				}
 			} else if (type === 'local') {
-				const { mainFolderArr } = mainFolders_stor.getState();
-				const mainFolder = mainFolderArr.find((f) => f.id === activeMainFolder);
-
-				if (localFolder && mainFolder) {
+				if (localFolder) {
 					const mainFolderName = basename(mainFolder.path);
 					const localRootFolderPath = joinPath(localFolder, mainFolderName, activeProjectFolder);
-
 					await openRoot('local', localRootFolderPath, { ensureDir: true });
 				}
 			}
-
-			// console.log(`[perf] openRoot(${type}): ${(performance.now() - t0).toFixed(1)}ms`);
 		};
 		fetchData();
 	}, [type, localFolder, activeMainFolder, activeProjectFolder]); // openRoot — стабильная функция стора, не нужна в deps

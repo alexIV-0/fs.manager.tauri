@@ -16,7 +16,8 @@
 		"plug:pack": "node plugins-dev/_packScripts/pack-plugin.js",
 		"plug:pack:all": "node plugins-dev/_packScripts/pack-plugins-all.js",
 		"jsx:build": "node jsx/_packScripts/build-jsx.js",
-		"jsx:watch": "node jsx/_packScripts/build-jsx-watch.js"
+		"jsx:watch": "node jsx/_packScripts/build-jsx-watch.js",
+		"jsx:play": "node jsx/_packScripts/build-playground.js"
 	},
 	"dependencies": {
 		"@crabnebula/tauri-plugin-drag": "^2.1.0",
@@ -53,6 +54,7 @@
 		"adm-zip": "^0.5.17",
 		"chokidar": "^5.0.0",
 		"esbuild": "^0.28.0",
+		"types-for-adobe": "^7.2.5",
 		"typescript": "^5.9.3",
 		"vite": "^6.3.5"
 	}

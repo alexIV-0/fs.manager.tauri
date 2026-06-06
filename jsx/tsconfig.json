@@ -1,0 +1,30 @@
+{
+	// IDE-проект для ExtendScript-кода (jsx/dev + jsx/utils).
+	// Цели:
+	//   1) auto-import между dev/ и utils/ (общая TS-программа);
+	//   2) типы After Effects / ExtendScript из `types-for-adobe`
+	//      (см. jsx/types/aftereffects.d.ts) — без них пришлось бы ставить //@ts-ignore
+	//      на app, File, ImportOptions, FolderItem и пр.
+	// Реальную сборку делает esbuild (jsx/_packScripts/jsx-builder.js); этот файл
+	// влияет только на IntelliSense. Node-скрипты сборки вынесены в
+	// jsx/_packScripts/tsconfig.json (им нужны обычные lib + @types/node).
+	"compilerOptions": {
+		"target": "ES2015",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		// noLib: грузим ТОЛЬКО типы ExtendScript (из types-for-adobe), без стандартных
+		// lib.dom/lib.es*, иначе конфликт глобалов (например, File есть в обоих).
+		"noLib": true,
+		// types: [] — не подмешивать автоматически @types/* (например, @types/node)
+		// в глобальную область ExtendScript-программы.
+		"types": [],
+		"allowJs": true,
+		"checkJs": false,
+		"strict": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"noEmit": true
+	},
+	"include": ["dev/**/*", "utils/**/*", "types/**/*"],
+	"exclude": ["distr", "node_modules", "_packScripts"]
+}
