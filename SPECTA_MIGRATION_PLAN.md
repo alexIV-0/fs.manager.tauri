@@ -1,9 +1,11 @@
 # План миграции IPC на tauri-specta (типобезопасные биндинги)
 
 > Это «пункт 5» из анализа awesome-tauri. Документ — рабочий плейбук, можно начинать прямо с него.
-> Статус: **Stage 0 спайк + Stage 1 пилот выполнены.** Stage 0 — каркас specta готов (export-only).
-> Stage 1 — модуль `fs_watch` полностью мигрирован на `commands.*` (эталон паттерна, сборка/tsc зелёные).
-> Массовая разметка остальных модулей и помодульная миграция call-sites — впереди. Обновлять чек-боксы.
+> Статус: **Миграция по сути завершена (v0.2.0).** camel-обёртки (`camelcase_wrappers.rs`,
+> `dialog_commands_camel.rs`) удалены целиком, весь app-IPC на `commands.*` (specta), глобал
+> `window.electronAPI`→`window.tauriAPI`. Полный помодульный лог — ниже по документу.
+> **Остаток (опционально):** Stage Events (типизация событий) + переключение рантайма
+> `generate_handler!`→`invoke_handler!`; шим оставлен только для плагинов (§6). Перепроверено 2026-06-08.
 
 > ## Результаты спайка (Stage 0, выполнен на `ae_commands`)
 >
@@ -286,11 +288,20 @@ tauri-specta = { version = "=2.0.0-rc.x", features = ["derive", "typescript"] }
 - Низкий приоритет; команды важнее.
 
 ### Finale — Зачистка
-- [ ] Переключить `tauri::Builder` на `builder.invoke_handler()` (snake-команды), убрать `generate_handler!`.
-- [ ] Удалить `camelcase_wrappers.rs`, `dialog_commands_camel.rs`, их `pub mod` в `commands/mod.rs`.
-- [ ] Удалить `commandAliases` + маппер аргументов + invoke-шим в `tauri-api.ts`
-      (оставить только то, что нужно ПЛАГИНАМ — см. §6).
-- [ ] `cargo check` + `tsc` + полный прогон.
+- [x] Удалить `camelcase_wrappers.rs`, `dialog_commands_camel.rs`, их `pub mod` в `commands/mod.rs`.
+      **ВЫПОЛНЕНО** (см. «ФИНАЛ ВЫПОЛНЕН 2026-06-04»): оба файла удалены, в `commands/mod.rs` упоминаний нет.
+- [x] `cargo check` + `tsc` зелёные (перепроверено 2026-06-08).
+- [~] Удалить `commandAliases` + маппер аргументов + invoke-шим в `tauri-api.ts`.
+      Большинство удалено; **намеренно оставлены нужные ПЛАГИНАМ** (§6): `plugins:*`, `diag:*`,
+      `exec-command`, `request-data`, `read-media-preview`, `open-node-window`, `get_stat`/`os_tmpdir`/`hash_file`.
+- [ ] Переключить `tauri::Builder` на `builder.invoke_handler()` (snake), убрать `generate_handler!`.
+      **Намеренно НЕ сделано** — `generate_handler!` оставлен единственным источником истины рантайма
+      на время перехода (см. комментарии в `lib.rs`). `collect_commands!` — подмножество для биндингов.
+
+> **🧹 Чистка мёртвого handshake (2026-06-08).** Удалён орфан `request_node_window_data` (Rust +
+> `generate_handler!`) и битый фронт-метод `requestNodeWindowData` (`tauri-api.ts` + `global.d.ts`):
+> ни одного call-site, а camel-имя после сноса обёрток всё равно бы падало. Живой handshake окна Node —
+> `request_data` (по метке webview, обслуживает и `nodeWin`, и `preview-*`). cargo+tsc зелёные.
 
 ## 6. Плагины (не мигрируем сейчас)
 

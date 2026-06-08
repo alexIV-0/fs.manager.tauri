@@ -116,7 +116,6 @@ export interface ITauriAPI {
 	onUpdateData: (callback: (event: TauriEvent, data: any) => void) => void;
 	requestData: () => void;
 	removeUpdateData: (callback: (event: TauriEvent, data: any) => void) => void;
-	requestNodeWindowData: () => Promise<void>;
 	openNodeWindow(arg0: string): void;
 
 	// Универсальные IPC методы

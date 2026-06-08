@@ -195,6 +195,24 @@ export const useCascadeValidation = () => {
 					return clearInheritedValue(property);
 				}
 
+				// ── SPY source — passthrough: значение/тип лежат в computedOutput.out.
+				// У spy нет properties, поэтому стандартный поиск sourceProperty ниже
+				// его бы не нашёл и затёр inheritedValue (валидация downstream падала).
+				// Приоритет sourceUpdates над store (защита от stale-read в рекурсии).
+				const spySource = reactFlow.getNode(incomingEdge.source) as CustomNode | undefined;
+				if (spySource?.type === 'spy') {
+					const spyUpd = sourceUpdates?.get(incomingEdge.source);
+					const spyValid = spyUpd ? spyUpd.isValid : !!spySource.data?.isValid;
+					const spyCO = (spyUpd ? spyUpd.computedOutput : spySource.data?.computedOutput) as
+						| Record<string, { value: any; type: string }>
+						| null;
+					const spyOut = spyCO?.['out'];
+					if (!spyValid || !spyOut?.type) {
+						return clearInheritedValue(property);
+					}
+					return setInheritedValue(property, spyOut.value);
+				}
+
 				// ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Сначала проверяем переданные обновления
 				let sourceProperty: Property | undefined;
 

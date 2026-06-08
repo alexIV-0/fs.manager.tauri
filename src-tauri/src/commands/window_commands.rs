@@ -370,24 +370,6 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
     Ok(true)
 }
 
-// Команда для запроса данных от фронтенда (handshake)
-#[tauri::command]
-pub async fn request_node_window_data(state: tauri::State<'_, Mutex<NodeWindowState>>, app: tauri::AppHandle) -> Result<(), String> {
-    println!("[NodeWindow] 🤝 Frontend requested data");
-    
-    let node_state = state.lock().map_err(|e| e.to_string())?;
-    if let Some(data) = &node_state.last_data {
-        println!("[NodeWindow] 📤 Sending saved data to requesting window");
-        app.emit("update-data", data)
-            .map_err(|e| e.to_string())?;
-        println!("[NodeWindow] ✅ Data sent successfully via handshake");
-    } else {
-        println!("[NodeWindow] ⚠️ No saved data available");
-    }
-    
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn request_data_from_main_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(main_win) = app.get_webview_window("main") {

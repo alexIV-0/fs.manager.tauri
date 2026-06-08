@@ -1,4 +1,5 @@
 import { useColorFromTargetNode } from '@/NODE_WIN/hooks';
+import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { isEdgeActive } from '@/NODE_WIN/utils/edgeActive';
 import { Button, Stack, Zoom } from '@mui/material';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useReactFlow, type EdgeProps, type Edge, type Node } from '@xyflow/react';
@@ -23,6 +24,7 @@ function CustomEdge(props: EdgeProps) {
 		targetPosition,
 	});
 	const { setEdges, setNodes, screenToFlowPosition } = useReactFlow();
+	const { cascadeValidation } = useCascadeValidation();
 	const color = useColorFromTargetNode(props);
 	const active = isEdgeActive({ data: (props as any).data } as Edge);
 
@@ -83,6 +85,12 @@ function CustomEdge(props: EdgeProps) {
 			};
 			return [...remaining, e1, e2];
 		});
+
+		// Прогоняем каскад от только что вставленной spy: иначе её computedOutput.out
+		// останется null (edge без типа/цвета), а downstream-нода не переинициализирует
+		// inheritedValue под новый источник. setTimeout(0) — ждём коммита setNodes/setEdges
+		// в стор (тот же приём, что в useConnection.onConnect).
+		setTimeout(() => cascadeValidation(newId), 0);
 	};
 
 	// Middle-click (wheel) по edge — вставка spy в точке клика.

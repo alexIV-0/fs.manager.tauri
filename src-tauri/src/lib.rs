@@ -417,7 +417,6 @@ pub fn run() {
             path_join,
             // Window commands
             open_node_window,
-            request_node_window_data,
             request_data_from_main_window,
             send_data_to_node_window,
             preview_open,

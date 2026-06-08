@@ -321,7 +321,6 @@ export const tauriAPI = {
 	removeUpdateData: (callback: (event: TauriEventArg, data: any) => void) => {
 		tauriOff('update-data', callback);
 	},
-	requestNodeWindowData: () => tauriInvoke('requestNodeWindowData'),
 	openNodeWindow: (arg: string) => tauriInvoke('open-node-window', arg),
 
 	// Универсальные IPC методы
