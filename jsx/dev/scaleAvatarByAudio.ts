@@ -73,7 +73,8 @@ export function scaleAvatarByAudio() {
 	videoLay.remove();
 
 	// 3. По каждому сегменту добавляем подрезанный слой video и вешаем выражение на Scale.
-	var scaleExpr = 'v=0.5;\n' + 's=ease(time, inPoint, inPoint+v, 0,100) + ease(time, outPoint-v, outPoint, 100,0) - 100;\n' + '[s,s]';
+	var scaleExpr =
+		'v=0.5;\n' + 's=ease(time, inPoint, inPoint+v, 0,100) + ease(time, outPoint-v, outPoint, 100,0) - 100;\n' + '[s,s]';
 
 	for (var s = 0; s < segments.length; s++) {
 		var inPoint = Math.max(0, segments[s].start - addCut);
@@ -93,7 +94,7 @@ export function scaleAvatarByAudio() {
 	fileToRender.outputModule(1).file = File(
 		dirname(inObj.targetPath) + _S + basename(inObj.targetPath, extname(inObj.targetPath)) + '.[fileExtension]',
 	);
-	fileToRender.outputModule(1).applyTemplate('-=QT+alfa=-');
+	fileToRender.outputModule(1).applyTemplate('-=QT_alfa (hapQ)=-');
 
 	finalFile.push(fileToRender.outputModule(1).file.fsName);
 

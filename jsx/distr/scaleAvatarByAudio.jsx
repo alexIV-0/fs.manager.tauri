@@ -559,7 +559,7 @@ function scaleAvatarByAudio() {
   fileToRender.outputModule(1).file = File(
     dirname(inObj.targetPath) + _S + basename(inObj.targetPath, extname(inObj.targetPath)) + ".[fileExtension]"
   );
-  fileToRender.outputModule(1).applyTemplate("-=QT+alfa=-");
+  fileToRender.outputModule(1).applyTemplate("-=QT_alfa (hapQ)=-");
   finalFile.push(fileToRender.outputModule(1).file.fsName);
   saveProject(inObj, "(scale)");
   RQ.render();
