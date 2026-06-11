@@ -71,8 +71,9 @@ export const useDragAndDrop = () => {
 				...nodeReference,
 				position,
 				id: newId,
-				// Если нода внутри группы — добавляем parentId и extent
-				...(parentId ? { parentId, extent: 'parent' } : {}),
+				// Если нода внутри группы — добавляем parentId.
+				// extent НЕ задаём: иначе ноду нельзя будет вытащить из Loop (onNodeDragStop отвяжет её сам).
+				...(parentId ? { parentId } : {}),
 				data: {
 					...nodeReference.data,
 					id: newId,

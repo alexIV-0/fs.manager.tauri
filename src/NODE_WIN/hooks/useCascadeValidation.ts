@@ -174,6 +174,55 @@ export const useCascadeValidation = () => {
 				return { isValid, updatedProperties: [], computedOutput };
 			}
 
+			// ── LOOP нода — синхронное вычисление computedOutput + isValid ───────
+			// Раньше тип `inputInLoop`/`loopInput` писался асинхронно из useEffect в
+			// LoopGroupProperty, что гонялось с каскадом и приводило к мерцающей
+			// невалидности дочерних нод. Теперь Loop считается прямо здесь, в той же
+			// синхронной рекурсии, что и остальные ноды.
+			if ((node.data as any)?.executionType === 'loop') {
+				const incoming = getIncomingEdges(nodeId);
+
+				// Читаем источник, предпочитая свежие sourceUpdates перед (возможно stale) store.
+				const readSource = (srcId: string): { isValid: boolean; computedOutput: any } => {
+					const upd = sourceUpdates?.get(srcId);
+					if (upd) return { isValid: upd.isValid, computedOutput: upd.computedOutput };
+					const n = reactFlow.getNode(srcId) as CustomNode | undefined;
+					return { isValid: !!n?.data?.isValid, computedOutput: (n?.data?.computedOutput as any) ?? null };
+				};
+
+				const typeFromEdge = (edge: Edge | undefined): string => {
+					if (!edge) return '';
+					const src = readSource(edge.source);
+					if (!src.isValid) return '';
+					const t = src.computedOutput?.[edge.sourceHandle ?? '']?.type;
+					if (!t) return '';
+					return Array.isArray(t) ? (t[0] ?? '') : t;
+				};
+
+				// loopInput (внешний массив) → тип, который раздаётся в тело через inputInLoop.
+				const loopInputEdge = incoming.find((e) => e.targetHandle === 'loopInput');
+				// outputInLoop (результат последней ноды тела) → тип выхода Loop наружу.
+				const outputInLoopEdge = incoming.find((e) => e.targetHandle === 'outputInLoop');
+
+				const inputInLoopType = typeFromEdge(loopInputEdge);
+				const outputType = typeFromEdge(outputInLoopEdge);
+
+				// Валидность Loop = обе внутренние связи на месте (как было в LoopGroupProperty).
+				const isValid = !!loopInputEdge && !!outputInLoopEdge;
+
+				const computedOutput = {
+					inputInLoop: { value: null, type: inputInLoopType },
+					loopInput: { value: null, type: outputType },
+				};
+
+				reactFlow.updateNode(nodeId, (n) => ({
+					...n,
+					data: { ...n.data, isValid, computedOutput },
+				}));
+
+				return { isValid, updatedProperties: (node.data.properties as Property[]) ?? [], computedOutput };
+			}
+
 			const nodeData = node.data as CustomNodeData;
 			const incomingEdges = getIncomingEdges(nodeId);
 
@@ -195,43 +244,58 @@ export const useCascadeValidation = () => {
 					return clearInheritedValue(property);
 				}
 
+				// ── SPY source — passthrough: значение/тип лежат в computedOutput.out.
+				// У spy нет properties, поэтому стандартный поиск sourceProperty ниже
+				// его бы не нашёл и затёр inheritedValue (валидация downstream падала).
+				// Приоритет sourceUpdates над store (защита от stale-read в рекурсии).
+				const spySource = reactFlow.getNode(incomingEdge.source) as CustomNode | undefined;
+				if (spySource?.type === 'spy') {
+					const spyUpd = sourceUpdates?.get(incomingEdge.source);
+					const spyValid = spyUpd ? spyUpd.isValid : !!spySource.data?.isValid;
+					const spyCO = (spyUpd ? spyUpd.computedOutput : spySource.data?.computedOutput) as
+						| Record<string, { value: any; type: string }>
+						| null;
+					const spyOut = spyCO?.['out'];
+					if (!spyValid || !spyOut?.type) {
+						return clearInheritedValue(property);
+					}
+					return setInheritedValue(property, spyOut.value);
+				}
+
 				// ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Сначала проверяем переданные обновления
 				let sourceProperty: Property | undefined;
 
-				if (sourceUpdates?.has(incomingEdge.source)) {
-					const sourceProperties = sourceUpdates.get(incomingEdge.source)!.properties;
-					sourceProperty = sourceProperties.find((p: Property) => p.id === incomingEdge.sourceHandle);
+				const srcUpd = sourceUpdates?.get(incomingEdge.source);
+				if (srcUpd) {
+					sourceProperty = srcUpd.properties.find((p: Property) => p.id === incomingEdge.sourceHandle);
 				} else {
 					const sourceNode = reactFlow.getNode(incomingEdge.source) as CustomNode;
 					if (!sourceNode) return clearInheritedValue(property);
 					sourceProperty = sourceNode.data.properties.find((p: Property) => p.id === incomingEdge.sourceHandle);
+				}
 
-					// ── LOOP HANDLE SUPPORT ──────────────────────────────────────
-					// Если source — Loop нода и handle — inputInLoop,
-					// sourceProperty не найдётся в properties (его там нет).
-					// Читаем тип из computedOutput['inputInLoop'] и создаём виртуальный property.
-					if (!sourceProperty && incomingEdge.sourceHandle === 'inputInLoop') {
-						// console.log('[cascade] 🔵 Loop source detected, reading computedOutput.inputInLoop');
-						const loopComputedOutput = sourceNode.data.computedOutput as
-							| Record<string, { value: any; type: string }>
-							| null
-							| undefined;
-						const loopOutput = loopComputedOutput?.['inputInLoop'];
-						// console.log('[cascade] loopOutput:', loopOutput);
-
-						if (loopOutput?.type) {
-							// Создаём виртуальный property с нужным типом
-							sourceProperty = {
-								id: 'inputInLoop',
-								controlType: 'text',
-								controlProps: { value: '' },
-								outputType: 'accepted',
-								acceptedTypes: [loopOutput.type],
-							} as any;
-							// console.log('[cascade] ✅ Virtual sourceProperty created with type:', loopOutput.type);
-						}
+				// ── LOOP HANDLE SUPPORT ──────────────────────────────────────────
+				// Source — Loop-нода, handle — inputInLoop: такого property у Loop нет,
+				// тип лежит в computedOutput['inputInLoop']. Создаём виртуальный property.
+				// ВАЖНО: работает в ОБОИХ случаях — и когда Loop уже в sourceUpdates
+				// (каскад прошёл A → Loop → B), и когда читаем из store (старт прямо на B).
+				// Раньше эта ветка жила только в else и B обнулялась при любом апстрим-апдейте.
+				if (!sourceProperty && incomingEdge.sourceHandle === 'inputInLoop') {
+					const loopComputedOutput = (srcUpd?.computedOutput ??
+						(reactFlow.getNode(incomingEdge.source) as CustomNode | undefined)?.data?.computedOutput) as
+						| Record<string, { value: any; type: string }>
+						| null
+						| undefined;
+					const loopOutput = loopComputedOutput?.['inputInLoop'];
+					if (loopOutput?.type) {
+						sourceProperty = {
+							id: 'inputInLoop',
+							controlType: 'text',
+							controlProps: { value: '' },
+							outputType: 'accepted',
+							acceptedTypes: [loopOutput.type],
+						} as any;
 					}
-					// ────────────────────────────────────────────────────────────
 				}
 
 				// console.log('[cascade] sourceProperty:', sourceProperty, '| handle:', incomingEdge.sourceHandle);
@@ -403,9 +467,8 @@ export const useCascadeValidation = () => {
 				// console.log('📤 Final computedOutput:', computedOutput);
 			}
 
-			// ✅ Обновляем ноду в reactFlow
-			const isLoopNode = (nodeData as any).executionType === 'loop';
-
+			// ✅ Обновляем ноду в reactFlow.
+			// Loop-ноды сюда не доходят — они обрабатываются в раннем loop-бранче выше.
 			reactFlow.updateNode(nodeId, (n) => ({
 				...n,
 				data: {
@@ -413,14 +476,8 @@ export const useCascadeValidation = () => {
 					// зафиксированные в store после старта validateAndUpdateNode.
 					...n.data,
 					properties: updatedProperties,
-					// Для Loop ноды сохраняем текущий isValid, не перезаписываем
-					isValid: isLoopNode ? (n.data.isValid as boolean) : isValid,
-					computedOutput: isLoopNode
-						? {
-								...((n.data.computedOutput as object) ?? {}),
-								// Сохраняем inputInLoop который Loop нода сама записала
-							}
-						: computedOutput,
+					isValid,
+					computedOutput,
 				},
 			}));
 

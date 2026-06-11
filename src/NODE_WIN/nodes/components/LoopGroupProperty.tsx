@@ -1,147 +1,39 @@
-import { Property, CustomNode } from '@/NODE_WIN/definitions/types';
+import { Property } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
-import { Handle, Position, useEdges, useReactFlow } from '@xyflow/react';
-import { memo, useEffect, useRef, useState } from 'react';
+import { Handle, Position, useEdges, useNodesData } from '@xyflow/react';
+import { memo } from 'react';
 import InputHandle from '../components/InputHandle';
-import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 
 interface LoopGroupPropertyProps {
 	property: Property;
 }
 
-const BORDER_W = 28; // ширина полоски границы
-const BORDER_H = 60; // высота полоски — охватывает оба хэндлера
 const INNER_H = 24; // высота внутреннего квадратного хэндлера
-const OUTER_D = 16; // диаметр внешнего круглого хэндлера (из InputHandle)
-
-// Внешний хэндлер — в центре полоски по вертикали
-// Внутренний — на 24px ниже внешнего
-const OUTER_TOP = BORDER_H / 2 - INNER_H;
-const INNER_TOP = BORDER_H / 2 + 8;
 
 function LoopGroupProperty({ property }: LoopGroupPropertyProps) {
 	const nodeId = useNodeContext();
 	const edges = useEdges();
-	const reactFlow = useReactFlow();
 	const colorTypes = colorTypes_store((s) => s.colorTypes);
 	const defColor = colorTypes.default as string;
+	const errColor = colorTypes.error as string;
 
-	// ── Цвет левой полоски = тип loopInput ──────────────────────────
-	const [leftColor, setLeftColor] = useState<string>(defColor);
+	// computedOutput.inputInLoop / loopInput теперь синхронно считает каскад
+	// (useCascadeValidation). Здесь только читаем готовый результат для покраски.
+	const node = useNodesData(nodeId);
+	const computedOutput = (node?.data?.computedOutput as Record<string, { value: any; type: string }> | null) ?? null;
 
-	useEffect(() => {
-		const edge = edges.find((e) => e.target === nodeId && e.targetHandle === property.id);
+	const hasInputEdge = edges.some((e) => e.target === nodeId && e.targetHandle === property.id);
+	const hasOutputEdge = edges.some((e) => e.target === nodeId && e.targetHandle === 'outputInLoop');
 
-		if (!edge) {
-			setLeftColor(defColor);
-			reactFlow.updateNode(nodeId, (n) => ({
-				...n,
-				data: {
-					...n.data,
-					computedOutput: {
-						...((n.data.computedOutput as object) ?? {}),
-						inputInLoop: { value: null, type: '' },
-					},
-				},
-			}));
-			return;
-		}
+	// Левая полоска (inputInLoop): тип из каскада; если связь есть, но тип ещё не
+	// определился — error, без связи — default.
+	const inType = computedOutput?.inputInLoop?.type;
+	const leftColor = inType && colorTypes[inType] ? (colorTypes[inType] as string) : hasInputEdge ? errColor : defColor;
 
-		const sourceNode = reactFlow.getNode(edge.source) as CustomNode;
-		if (!sourceNode?.data?.isValid) {
-			setLeftColor(colorTypes.error as string);
-			return;
-		}
-
-		const computedOutput = sourceNode.data.computedOutput as Record<string, { value: any; type: string }> | null;
-		const sourceOutput = computedOutput?.[edge.sourceHandle as string];
-
-		if (sourceOutput?.type) {
-			const color = (colorTypes[sourceOutput.type] as string) ?? defColor;
-			setLeftColor(color);
-			// Пробрасываем тип — edges от inputInLoop окрашиваются
-			reactFlow.updateNode(nodeId, (n) => ({
-				...n,
-				data: {
-					...n.data,
-					computedOutput: {
-						...((n.data.computedOutput as object) ?? {}),
-						inputInLoop: { value: null, type: sourceOutput.type },
-					},
-				},
-			}));
-		} else {
-			setLeftColor(defColor);
-		}
-	}, [edges, nodeId, property.id, reactFlow, colorTypes, defColor]);
-
-	// ── Цвет правой полоски = тип outputInLoop ──────────────────────
-	const [rightColor, setRightColor] = useState<string>(defColor);
-
-	// В LoopGroupProperty замени useEffect правой полоски на:
-
-	useEffect(() => {
-		const outEdge = edges.find((e) => e.target === nodeId && e.targetHandle === 'outputInLoop');
-		if (!outEdge) {
-			setRightColor(defColor);
-			// Сбрасываем computedOutput для выходного хэндлера Loop ноды
-			reactFlow.updateNode(nodeId, (n) => ({
-				...n,
-				data: {
-					...n.data,
-					computedOutput: {
-						...((n.data.computedOutput as object) ?? {}),
-						loopInput: { value: null, type: '' },
-					},
-				},
-			}));
-			return;
-		}
-		const src = reactFlow.getNode(outEdge.source) as CustomNode;
-		const co = src?.data?.computedOutput as Record<string, { value: any; type: string }> | null;
-		const t = co?.[outEdge.sourceHandle ?? '']?.type;
-		const color = t && colorTypes[t] ? (colorTypes[t] as string) : defColor;
-		setRightColor(color);
-
-		// Записываем тип в computedOutput['loopInput'] — это sourceProperty Loop ноды
-		// OutputHandle Loop ноды читает именно этот ключ
-		if (t) {
-			reactFlow.updateNode(nodeId, (n) => ({
-				...n,
-				data: {
-					...n.data,
-					computedOutput: {
-						...((n.data.computedOutput as object) ?? {}),
-						loopInput: { value: null, type: t },
-					},
-				},
-			}));
-		}
-	}, [edges, nodeId, reactFlow, colorTypes, defColor]);
-
-	const { cascadeValidation } = useCascadeValidation();
-	const prevIsValid = useRef<boolean | null>(null);
-
-	useEffect(() => {
-		const hasInput = !!edges.find((e) => e.target === nodeId && e.targetHandle === property.id);
-		const hasOutput = !!edges.find((e) => e.target === nodeId && e.targetHandle === 'outputInLoop');
-		const isValid = hasInput && hasOutput;
-
-		// Обновляем ноду только если isValid изменился
-		if (prevIsValid.current === isValid) return;
-		prevIsValid.current = isValid;
-
-		reactFlow.updateNode(nodeId, (n) => ({
-			...n,
-			data: { ...n.data, isValid },
-		}));
-
-		// Каскадная валидация внешних нод — после применения updateNode
-		setTimeout(() => {
-			cascadeValidation(nodeId);
-		}, 0);
-	}, [edges, nodeId, property.id, reactFlow, cascadeValidation]);
+	// Правая полоска (outputInLoop → выход Loop): тип из каскада.
+	const outType = computedOutput?.loopInput?.type;
+	const rightColor = outType && colorTypes[outType] ? (colorTypes[outType] as string) : hasOutputEdge ? errColor : defColor;
 
 	return (
 		<div

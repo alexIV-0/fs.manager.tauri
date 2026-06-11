@@ -40,19 +40,14 @@ export const useConnection = () => {
 			if (targetIsLoop || sourceIsLoop) {
 				reactFlow.setEdges((edges) => addEdge(withActive(connection), edges));
 
-				if (sourceIsLoop && connection.target) {
-					// Проверяем что computedOutput уже записан в Loop ноду
-					// const loopNode = reactFlow.getNode(connection.source);
-					// console.log('[onConnect] sourceIsLoop, loop node computedOutput:', loopNode?.data?.computedOutput);
-					// console.log('[onConnect] sourceHandle:', connection.sourceHandle);
-					// console.log('[onConnect] target:', connection.target);
-
+				// Каскад с connection.target покрывает оба случая:
+				//  • targetIsLoop (loopInput/outputInLoop) → target = Loop-нода: пересчитываем
+				//    её computedOutput/isValid и пробрасываем тип в тело и наружу.
+				//  • sourceIsLoop (inputInLoop → первая нода тела) → target = дочерняя нода.
+				if (connection.target) {
 					setTimeout(() => {
-						// Проверяем ещё раз после таймаута
-						const loopNodeAfter = reactFlow.getNode(connection.source);
-						console.log('[onConnect setTimeout] loop node computedOutput:', loopNodeAfter?.data?.computedOutput);
-						handleEdgeAdd(connection.target);
-					}, 50); // увеличим до 50ms
+						handleEdgeAdd(connection.target!);
+					}, 0);
 				}
 				return;
 			}

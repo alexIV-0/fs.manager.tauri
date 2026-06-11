@@ -15,6 +15,7 @@ import { LoadPresetModal } from './TextEdit/LoadPresetModal';
 import { PRESETS, MIN_WIDTH, MIN_HEIGHT } from './TextEdit/constants';
 import { ResizeDirection } from './TextEdit/types';
 import InputHandle from '../components/InputHandle';
+import { registerMonacoClipboard } from '@/Utils/monacoClipboard';
 
 function TextEditPropertyComponent({ property }: { property: TextEditProperty }) {
 	const nodeId = useNodeContext();
@@ -138,6 +139,9 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 		editorInst.current.onDidChangeModelContent(() => {
 			setValue(editorInst.current.getValue());
 		});
+
+		// WKWebView не отдаёт Monaco системный буфер — регистрируем copy/cut/paste вручную.
+		registerMonacoClipboard(editorInst.current, monaco);
 	}, [value, language]);
 
 	const handleOpen = useCallback(async () => {

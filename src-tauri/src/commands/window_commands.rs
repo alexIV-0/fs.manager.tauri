@@ -370,24 +370,6 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
     Ok(true)
 }
 
-// Команда для запроса данных от фронтенда (handshake)
-#[tauri::command]
-pub async fn request_node_window_data(state: tauri::State<'_, Mutex<NodeWindowState>>, app: tauri::AppHandle) -> Result<(), String> {
-    println!("[NodeWindow] 🤝 Frontend requested data");
-    
-    let node_state = state.lock().map_err(|e| e.to_string())?;
-    if let Some(data) = &node_state.last_data {
-        println!("[NodeWindow] 📤 Sending saved data to requesting window");
-        app.emit("update-data", data)
-            .map_err(|e| e.to_string())?;
-        println!("[NodeWindow] ✅ Data sent successfully via handshake");
-    } else {
-        println!("[NodeWindow] ⚠️ No saved data available");
-    }
-    
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn request_data_from_main_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(main_win) = app.get_webview_window("main") {
@@ -807,9 +789,16 @@ pub async fn preview_resize(
             if ratio > 0.0 {
                 if let Ok(ns_window) = preview_win.ns_window() {
                     let ns = ns_window as *mut _;
+                    // setContentAspectRatio лочит соотношение CONTENT area (NSWindow),
+                    // а не JS-viewport. Content area выше viewport'а на WEBVIEW_TOP_INSET
+                    // (см. nswindow_h выше). Если отдать сюда сырой аспект картинки
+                    // (opts.width:opts.height), то при драге content держит этот ratio,
+                    // а viewport (content_h - inset) становится «шире» картинки → она
+                    // упирается по высоте и появляются поля слева/справа. Поэтому лочим
+                    // аспект именно content area — с инсетом в высоте.
                     let ratio_size = ns_window_aspect::CGSize {
                         width: opts.width,
-                        height: opts.height,
+                        height: opts.height + WEBVIEW_TOP_INSET,
                     };
                     unsafe {
                         ns_window_aspect::set_content_aspect_ratio(ns, ratio_size);

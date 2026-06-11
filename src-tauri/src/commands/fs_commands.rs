@@ -424,10 +424,15 @@ pub fn read_file_sync(file_path: String) -> Result<String, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn read_media_preview(file_path: String) -> Result<String, String> {
+pub fn read_media_preview(
+    file_path: String,
+    state: tauri::State<std::sync::Mutex<crate::commands::settings_commands::AppSettingsState>>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let path = Path::new(&file_path);
-    
+
     if !path.exists() {
+        crate::commands::diag_log::write(&app, &format!("[media_preview] NOT FOUND '{}'", file_path));
         return Ok("".to_string());
     }
 
@@ -456,10 +461,25 @@ pub fn read_media_preview(file_path: String) -> Result<String, String> {
         return Ok(format!("data:{};base64,{}", mime, base64_str));
     }
 
-    // Для видео возвращаем пустую строку (ffmpeg preview не поддерживается в Tauri напрямую)
+    // Видео: снимаем первый кадр через ffmpeg (декодирует prores/HDR/любой кодек,
+    // который понимает ffmpeg, и отдаёт RGBA-PNG — alpha сохраняется для FG-слоёв).
+    // Если ffmpeg не найден или кадр снять не удалось — отдаём пустую строку, как и
+    // для неизвестных типов: UI просто покажет файл без превью, не падая.
     if video_exts.contains(&ext.as_str()) {
-        // TODO: Implement ffmpeg snapshot if needed
-        return Ok("".to_string());
+        let ffmpeg = crate::commands::ffmpeg_commands::resolve_program_path("ffmpeg", &state);
+        match crate::commands::ffmpeg_commands::ffmpeg_get_video_thumbnail_with_path(
+            file_path.clone(),
+            Some(0.0),
+            &ffmpeg,
+        ) {
+            Ok(url) => return Ok(url),
+            Err(e) => {
+                // Кадр снять не удалось — UI покажет файл без превью, не падая.
+                // Причину пишем в diag.log, чтобы не молчать (см. историю с trc:reserved).
+                crate::commands::diag_log::write(&app, &format!("[media_preview] FFMPEG ERR: {}", e));
+                return Ok(String::new());
+            }
+        }
     }
 
     Ok("".to_string())

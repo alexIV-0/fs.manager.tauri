@@ -129,6 +129,7 @@ pub async fn select_files(
 
 #[tauri::command]
 #[specta::specta]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn copy_to_clipboard(_app: tauri::AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

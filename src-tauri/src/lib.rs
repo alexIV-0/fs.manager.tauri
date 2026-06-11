@@ -417,7 +417,6 @@ pub fn run() {
             path_join,
             // Window commands
             open_node_window,
-            request_node_window_data,
             request_data_from_main_window,
             send_data_to_node_window,
             preview_open,
@@ -522,6 +521,7 @@ pub fn run() {
             plugin_manager_get_all_plugins,
             plugin_manager_get_plugins_by_type,
             plugin_manager_get_plugin,
+            plugin_manager_set_cost,
             plugin_manager_get_plugin_ui,
             plugin_manager_get_all_ui_nodes,
             plugin_manager_get_ui_nodes,

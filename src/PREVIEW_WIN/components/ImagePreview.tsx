@@ -1,3 +1,4 @@
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { toFileUrl } from '@/Utils/mediaUtils';
 import { CheckerboardBg } from '@/Utils/CheckerboardBg';
 import { commands } from '@/Utils/specta';
@@ -31,18 +32,33 @@ export function ImagePreview({ filePath }: { filePath: string }) {
 			style={{
 				height: '100vh',
 				width: '100vw',
-				display: 'flex',
-				alignItems: 'center',
-				justifyContent: 'center',
 				overflow: 'hidden',
 			}}
 		>
-			<img
-				src={toFileUrl(filePath)}
-				onLoad={handleLoad}
-				style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-				alt={filePath}
-			/>
+			{/* scale=1 — картинка вписана в окно (objectFit:contain), полей нет (окно
+			    ресайзится под аспект). Зум — колесо/double-click, пан — drag. minScale=1:
+			    мельче fit'а не уезжаем; limitToBounds держит картинку в кадре. */}
+			<TransformWrapper
+				initialScale={1}
+				minScale={1}
+				maxScale={8}
+				centerOnInit
+				limitToBounds
+				doubleClick={{ mode: 'toggle', step: 2 }}
+				wheel={{ step: 0.15 }}
+			>
+				<TransformComponent
+					wrapperStyle={{ width: '100%', height: '100%' }}
+					contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+				>
+					<img
+						src={toFileUrl(filePath)}
+						onLoad={handleLoad}
+						style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
+						alt={filePath}
+					/>
+				</TransformComponent>
+			</TransformWrapper>
 		</CheckerboardBg>
 	);
 }

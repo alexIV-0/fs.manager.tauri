@@ -14,7 +14,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
-use super::process_utils::HiddenConsole;
+use std::process::Stdio;
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct AEResult {
@@ -89,7 +89,12 @@ fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String
 
     // Запускаем AE
     println!("[aeProcess] запуск AE: {} (скрипт: {})", args.ae_path, temp_script_path.display());
-    launch_in_ae(&args.ae_path, &temp_script_path)?;
+    // _ae_child — handle к запущенному AE-процессу. На Windows мы ДЕРЖИМ его живым
+    // на всё время поллинга (точно как mohoProject держит Child Moho через
+    // exec_command). После выхода из функции handle дропается, но сам процесс AE
+    // продолжает жить независимо (GUI-приложение). На macOS — None (там запуск
+    // через osascript, который сам быстро выходит, а AE остаётся в памяти системы).
+    let _ae_child = launch_in_ae(&args.ae_path, &temp_script_path)?;
 
     // Ждём результата
     let timeout = Duration::from_secs(args.timeout_sec.unwrap_or(120));
@@ -115,7 +120,7 @@ fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String
 #[tauri::command]
 #[specta::specta]
 pub fn launch_ae_with_script(ae_path: String, script_path: String) -> Result<(), String> {
-    launch_in_ae(&ae_path, Path::new(&script_path))
+    launch_in_ae(&ae_path, Path::new(&script_path)).map(|_| ())
 }
 
 // ==================== HELPERS ====================
@@ -216,7 +221,13 @@ fn find_entry_call(script: &str) -> Option<(String, std::ops::Range<usize>)> {
 }
 
 /// Запускает After Effects с переданным jsx-скриптом.
-fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<(), String> {
+///
+/// На Windows возвращает `Some(Child)` — handle нужно держать живым на всё время
+/// поллинга результата (как делает exec_command для Moho в mohoProject). После того
+/// как caller дропнет handle, сам процесс AE продолжит работать независимо.
+/// На macOS возвращает `None` — там запуск идёт через osascript, который сам сразу
+/// выходит, и AE живёт в памяти как обычное GUI-приложение.
+fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<Option<std::process::Child>, String> {
     let script_str = script_path.to_string_lossy();
 
     #[cfg(target_os = "macos")]
@@ -242,23 +253,42 @@ fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<(), String> {
                 .spawn()
                 .map_err(|e| format!("Failed to launch AE via osascript: {}", e))?;
         }
+        Ok(None)
     }
 
     #[cfg(target_os = "windows")]
     {
-        Command::new(ae_path)
-            .args(["-r", &script_str])
-            .hide_console()
+        use std::os::windows::process::CommandExt;
+        // У AfterFX.exe кастомный парсер аргументов: всё, что идёт после `-r`, он
+        // трактует как путь к скрипту целиком (включая пробелы). При этом —
+        // парадокс — если передать путь в кавычках "...", AE 2026 (и некоторые
+        // более ранние версии) сразу закрывается, не выполнив скрипт. Это
+        // задокументированный workaround от Adobe:
+        //   https://helpx.adobe.com/after-effects/using/scripts.html
+        //   «If the program closes immediately ... remove the quotes from the
+        //    script path: afterfx.exe -r c:\...\Script Name with Spaces.jsx»
+        // По умолчанию `Command::args(...)` сам закавычивает аргументы с пробелами,
+        // поэтому используем `raw_arg` — он добавляет литеральный текст в командную
+        // строку БЕЗ кавычек. AE сам разберётся.
+        // Caller (run_script_in_ae_blocking) держит Child handle живым на время
+        // поллинга — копирует pattern из exec_command (mohoProject).
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let child = Command::new(ae_path)
+            .arg("-r")
+            .raw_arg(script_str.as_ref())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to launch AE: {}", e))?;
+        Ok(Some(child))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        return Err("After Effects integration is only supported on macOS and Windows".to_string());
+        Err("After Effects integration is only supported on macOS and Windows".to_string())
     }
-
-    Ok(())
 }
 
 /// Ждёт появления result-файла (polling каждые 200ms), читает и парсит его.

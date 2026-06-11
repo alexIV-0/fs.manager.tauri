@@ -5,6 +5,14 @@ use std::path::{Path, PathBuf};
 
 // ==================== TYPES ====================
 
+fn default_cost() -> String {
+    "0".to_string()
+}
+
+fn default_cost_unit() -> String {
+    "run".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PluginManifest {
     pub id: String,
@@ -18,6 +26,13 @@ pub struct PluginManifest {
     pub main: String,
     pub ui: Option<serde_json::Value>,
     pub external: Vec<String>,
+    // Централизованная цена ноды. Хранится в plugin.json, редактируется в Settings → Plugins,
+    // подтягивается во все флоу через syncCostsFromManifest. Старые plugin.json без этих полей
+    // получают дефолты (serde(default)).
+    #[serde(default = "default_cost")]
+    pub cost: String,
+    #[serde(rename = "costUnit", default = "default_cost_unit")]
+    pub cost_unit: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -34,6 +49,11 @@ pub struct PluginInfo {
     pub manifest: PluginManifest,
     #[serde(rename = "uiType")]
     pub ui_type: Option<String>,
+    // Дублируем cost/costUnit на верхний уровень, чтобы фронтенд читал их напрямую
+    // (plugin_store строит PluginItem из этих полей), а не лез в manifest.
+    pub cost: String,
+    #[serde(rename = "costUnit")]
+    pub cost_unit: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -305,6 +325,8 @@ pub fn plugin_manager_get_all_plugins(
         path: plugin.path.clone(),
         manifest: plugin.manifest.clone(),
         ui_type: None,
+        cost: plugin.manifest.cost.clone(),
+        cost_unit: plugin.manifest.cost_unit.clone(),
     }).collect();
 
     Ok(info)
@@ -365,7 +387,50 @@ pub fn plugin_manager_get_plugin(
         path: p.path.clone(),
         manifest: p.manifest.clone(),
         ui_type: None,
+        cost: p.manifest.cost.clone(),
+        cost_unit: p.manifest.cost_unit.clone(),
     }))
+}
+
+// ==================== SET PLUGIN COST ====================
+
+/// Записывает централизованную цену (cost/costUnit) в plugin.json плагина и обновляет
+/// in-memory manifest. Вызывается из Settings → Plugins. Пишем именно в загруженный
+/// plugin.json (plugin.path) — то, что читает менеджер; читаем JSON как Value и правим
+/// только два поля, чтобы не потерять остальные/порядок ключей.
+#[tauri::command]
+pub fn plugin_manager_set_cost(
+    plugin_id: String,
+    version: String,
+    cost: String,
+    cost_unit: String,
+    state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
+) -> Result<bool, String> {
+    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let key = format!("{}@{}", plugin_id, version);
+    let plugin = state.plugins.get_mut(&key)
+        .ok_or_else(|| format!("Plugin not found: {}", key))?;
+
+    let manifest_path = Path::new(&plugin.path).join("plugin.json");
+    let raw = fs::read_to_string(&manifest_path).map_err(|e| e.to_string())?;
+    let mut json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("cost".to_string(), serde_json::Value::String(cost.clone()));
+        obj.insert("costUnit".to_string(), serde_json::Value::String(cost_unit.clone()));
+    } else {
+        return Err(format!("plugin.json is not an object: {:?}", manifest_path));
+    }
+
+    let pretty = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    fs::write(&manifest_path, pretty).map_err(|e| e.to_string())?;
+
+    // Обновляем in-memory manifest, чтобы get_all_plugins/get_all_ui_nodes сразу
+    // отдавали свежее значение без перезагрузки плагинов.
+    plugin.manifest.cost = cost;
+    plugin.manifest.cost_unit = cost_unit;
+
+    Ok(true)
 }
 
 // ==================== GET PLUGIN UI DATA ====================
@@ -457,6 +522,15 @@ pub fn plugin_manager_get_all_ui_nodes(
                             .and_then(|c| c.as_str())
                             .map(|s| s.to_string());
 
+                        // Цена живёт в plugin.json, а не в ui.json. Прокидываем её в data,
+                        // чтобы node-definitions несли cost/costUnit и syncCostsFromManifest
+                        // мог перезаписать значения в нодах флоу актуальной ценой.
+                        let mut node_data = ui_data.get("data").cloned().unwrap_or(serde_json::json!({}));
+                        if let Some(obj) = node_data.as_object_mut() {
+                            obj.insert("cost".to_string(), serde_json::json!(plugin.manifest.cost));
+                            obj.insert("costUnit".to_string(), serde_json::json!(plugin.manifest.cost_unit));
+                        }
+
                         ui_nodes.push(PluginUINode {
                             id: ui_data.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                             node_type: ui_data.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -468,7 +542,7 @@ pub fn plugin_manager_get_all_ui_nodes(
                             plugin_path: Some(plugin.path.clone()),
                             plugin_name: Some(plugin.manifest.name.clone()),
                             ui_type,
-                            data: ui_data.get("data").cloned().unwrap_or(serde_json::json!({})),
+                            data: node_data,
                         });
                     }
                     Err(e) => eprintln!("[PluginManager] Failed to parse UI data for {}: {}", plugin.key, e),

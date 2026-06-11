@@ -189,6 +189,8 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 					lastSeen: new Date().toISOString(),
 					uiData: existingPlugin?.uiData,
 					uiType: pluginInfo.uiType,
+					cost: pluginInfo.cost ?? '0',
+					costUnit: pluginInfo.costUnit ?? 'run',
 				};
 
 				newPlugins.push(pluginItem);
@@ -378,6 +380,8 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 				lastSeen: new Date().toISOString(),
 				uiData: existingIndex >= 0 ? state.plugins[existingIndex].uiData : undefined,
 				uiType: pluginInfo.uiType,
+				cost: pluginInfo.cost ?? '0',
+				costUnit: pluginInfo.costUnit ?? 'run',
 			};
 
 			let newPlugins;
@@ -609,12 +613,33 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 	},
 
 	setPluginCost: async (id, version, cost, costUnit) => {
-		await window.tauriAPI.invoke('plugins:set-cost', id, version, cost, costUnit);
+		// Оптимистично обновляем стор СРАЗУ — `<select>` в настройках controlled и берёт
+		// значение из plugin.costUnit, поэтому без мгновенного апдейта он бы не сдвинулся
+		// до ответа бэкенда. При ошибке записи откатываем.
+		let prev: { cost?: string; costUnit?: string } | undefined;
 		set((state) => ({
-			plugins: state.plugins.map((p) =>
-				p.id === id && p.version === version ? { ...p, cost, costUnit } : p,
-			),
+			plugins: state.plugins.map((p) => {
+				if (p.id === id && p.version === version) {
+					prev = { cost: p.cost, costUnit: p.costUnit };
+					return { ...p, cost, costUnit };
+				}
+				return p;
+			}),
 		}));
+
+		try {
+			await window.tauriAPI.invoke('plugins:set-cost', id, version, cost, costUnit);
+		} catch (err) {
+			// Откат к предыдущему значению, если бэкенд отказал.
+			if (prev) {
+				set((state) => ({
+					plugins: state.plugins.map((p) =>
+						p.id === id && p.version === version ? { ...p, cost: prev!.cost, costUnit: prev!.costUnit } : p,
+					),
+				}));
+			}
+			throw err;
+		}
 	},
 }));
 
