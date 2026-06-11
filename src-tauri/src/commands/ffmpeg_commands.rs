@@ -49,7 +49,7 @@ fn find_binary(name: &str) -> String {
 }
 
 /// Возвращает путь к программе: сначала из настроек пользователя, затем системный поиск.
-fn resolve_program_path(name: &str, state: &tauri::State<Mutex<AppSettingsState>>) -> String {
+pub(crate) fn resolve_program_path(name: &str, state: &tauri::State<Mutex<AppSettingsState>>) -> String {
     if let Ok(guard) = state.lock() {
         if let Some(arr) = guard.program_paths.as_array() {
             for entry in arr {
@@ -124,26 +124,53 @@ pub async fn ffprobe_get_info(
 
 // ==================== VIDEO THUMBNAIL (ffmpeg) ====================
 
-fn ffmpeg_get_video_thumbnail_with_path(file_path: String, timestamp_sec: Option<f64>, ffmpeg: &str) -> Result<String, String> {
+pub(crate) fn ffmpeg_get_video_thumbnail_with_path(file_path: String, timestamp_sec: Option<f64>, ffmpeg: &str) -> Result<String, String> {
+    // Хэш пути в имени temp-файла: fg и bg превью открываются одновременно — без него
+    // два процесса ffmpeg могли бы писать в один файл в пределах одной миллисекунды и
+    // перетереть кадр друг друга.
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    file_path.hash(&mut hasher);
     let tmp_path = std::env::temp_dir().join(format!(
-        "fs_manager_thumb_{}.png",
+        "fs_manager_thumb_{:x}_{}.png",
+        hasher.finish(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis()
     ));
 
-    let ts = timestamp_sec.unwrap_or(0.0).to_string();
+    let ts = timestamp_sec.unwrap_or(0.0);
+    let ts_str = ts.to_string();
+    let tmp = tmp_path.to_str().unwrap_or("");
 
-    let output = Command::new(ffmpeg)
-        .args([
-            "-y",
-            "-ss", &ts,
-            "-i", &file_path,
-            "-vframes", "1",
-            "-pix_fmt", "rgba",
-            tmp_path.to_str().unwrap_or(""),
-        ])
+    // Фильтрграф:
+    //  • thumbnail (только постер-кадр, ts<=0) — анализирует пачку кадров и выбирает
+    //    репрезентативный, пропуская пустые/прозрачные/чёрные интро-кадры (важно для
+    //    ProRes-4444 с альфой, который часто начинается с прозрачного кадра).
+    //  • setparams=color_trc=bt709 — лечит падение swscale "Unsupported input
+    //    (Operation not supported): ... trc:reserved -> rgba" на ProRes-4444 12-бит с
+    //    GBR-матрицей и зарезервированным transfer'ом: без перетегирования trc
+    //    автоскейлер отказывается конвертировать в RGBA. Для обычного видео безобидно
+    //    (трансфер и так близок к bt709), colorspace/матрицу не трогаем — нет сдвига
+    //    цвета на bt601/GBR-источниках.
+    //  • format=rgba — сама конвертация (alpha сохраняется для FG-слоёв).
+    // ts > 0 → точный кадр по таймлайну (скраб), без thumbnail.
+    let vf = if ts > 0.0 {
+        "setparams=color_trc=bt709,format=rgba"
+    } else {
+        "thumbnail,setparams=color_trc=bt709,format=rgba"
+    };
+    let mut cmd = Command::new(ffmpeg);
+    cmd.arg("-y");
+    if ts > 0.0 {
+        cmd.args(["-ss", &ts_str, "-i", &file_path]);
+    } else {
+        cmd.args(["-i", &file_path]);
+    }
+    cmd.args(["-vf", vf, "-frames:v", "1", "-pix_fmt", "rgba", tmp]);
+
+    let output = cmd
         .hide_console()
         .output()
         .map_err(|e| format!("ffmpeg not found or failed to start: {}", e))?;

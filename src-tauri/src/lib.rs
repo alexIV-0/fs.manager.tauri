@@ -521,6 +521,7 @@ pub fn run() {
             plugin_manager_get_all_plugins,
             plugin_manager_get_plugins_by_type,
             plugin_manager_get_plugin,
+            plugin_manager_set_cost,
             plugin_manager_get_plugin_ui,
             plugin_manager_get_all_ui_nodes,
             plugin_manager_get_ui_nodes,

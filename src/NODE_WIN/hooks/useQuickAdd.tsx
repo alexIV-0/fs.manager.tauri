@@ -116,7 +116,8 @@ export function useQuickAdd() {
 				...nodeReference,
 				position,
 				id: newId,
-				...(parentId ? { parentId, extent: 'parent' } : {}),
+				// extent НЕ задаём: иначе ноду нельзя будет вытащить из Loop (onNodeDragStop отвяжет её сам).
+				...(parentId ? { parentId } : {}),
 				data: {
 					...nodeReference.data,
 					id: newId,

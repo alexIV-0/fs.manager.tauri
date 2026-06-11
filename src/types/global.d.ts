@@ -31,6 +31,8 @@ export interface PluginInfo {
 	path: string;
 	manifest: PluginManifest;
 	uiType?: string | null;
+	cost?: string;
+	costUnit?: string;
 }
 export interface ExtendedPluginUINode extends PluginUINode {
 	pluginId?: string;

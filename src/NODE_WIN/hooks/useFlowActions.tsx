@@ -5,6 +5,7 @@ import {
 	type EdgeChange,
 	type Node,
 	type NodeChange,
+	type XYPosition,
 	useEdgesState,
 	useNodesState,
 	useReactFlow,
@@ -13,6 +14,7 @@ import { useCallback } from 'react';
 import { getNodeDefinitions } from '../definitions';
 import { isValueValid } from '../utils/validation';
 import { syncCostsFromManifest } from '../utils/syncCostsFromManifest';
+import { findLoopAtPoint, getAbsolutePosition, getNodeSize, sortLoopsFirst } from '../utils/loopGrouping';
 import { useCascadeValidation } from './useCascadeValidation';
 
 export const useFlowActions = () => {
@@ -22,7 +24,7 @@ export const useFlowActions = () => {
 	const [nodes, setNodes, rfOnNodesChange] = useNodesState<Node>([]);
 	const [edges, setEdges, rfOnEdgesChange] = useEdgesState<Edge>([]);
 
-	const { handleEdgeRemoval } = useCascadeValidation();
+	const { handleEdgeRemoval, cascadeValidation } = useCascadeValidation();
 
 	// 👉 оборачиваем стандартный onNodesChange
 	const onNodesChange = useCallback(
@@ -55,6 +57,63 @@ export const useFlowActions = () => {
 			}
 		},
 		[rfOnEdgesChange, handleEdgeRemoval, reactFlow],
+	);
+
+	// 👉 Привязка/отвязка нод к Loop по завершении перетаскивания.
+	//  • нода попала в границы Loop → становится его ребёнком (parentId + относительная позиция);
+	//  • нода вытащена наружу → отвязывается (parentId снимается, позиция → абсолютная).
+	// Loop-ноды сами не переусыновляются (их таскают целиком вместе с детьми).
+	const onNodeDragStop = useCallback(
+		(_evt: unknown, primary: Node, draggedNodes: Node[]) => {
+			const dragged = (draggedNodes && draggedNodes.length ? draggedNodes : [primary]).filter(Boolean);
+			const movable = dragged.filter((n) => (n.data as any)?.executionType !== 'loop');
+			if (movable.length === 0) return;
+
+			const draggedIds = new Set(dragged.map((n) => n.id));
+			const changes = new Map<string, { parentId?: string; position: XYPosition }>();
+
+			for (const n of movable) {
+				const abs = getAbsolutePosition(reactFlow, n.id);
+				if (!abs) continue;
+				const { w, h } = getNodeSize(n);
+				const center = { x: abs.x + w / 2, y: abs.y + h / 2 };
+
+				// Целью не может быть сама нода или другая нода из текущего перетаскивания.
+				const targetLoop = findLoopAtPoint(reactFlow, center, draggedIds);
+				const newParent = targetLoop?.id;
+				const currentParent = (n as any).parentId as string | undefined;
+				if (newParent === currentParent) continue;
+
+				if (newParent) {
+					const loopAbs = getAbsolutePosition(reactFlow, newParent);
+					if (!loopAbs) continue;
+					changes.set(n.id, { parentId: newParent, position: { x: abs.x - loopAbs.x, y: abs.y - loopAbs.y } });
+				} else {
+					changes.set(n.id, { parentId: undefined, position: abs });
+				}
+			}
+
+			if (changes.size === 0) return;
+
+			reactFlow.setNodes((nodes) => {
+				const updated = nodes.map((n) => {
+					const c = changes.get(n.id);
+					if (!c) return n;
+					if (c.parentId) {
+						// extent не задаём — иначе ноду нельзя будет вытащить обратно наружу.
+						return { ...n, parentId: c.parentId, extent: undefined, position: c.position };
+					}
+					const { parentId, extent, ...rest } = n as any;
+					return { ...rest, position: c.position } as Node;
+				});
+				return sortLoopsFirst(updated);
+			});
+
+			setTimeout(() => {
+				changes.forEach((_c, id) => cascadeValidation(id));
+			}, 0);
+		},
+		[reactFlow, cascadeValidation],
 	);
 
 	const onBeforeDelete = useCallback(
@@ -137,6 +196,7 @@ export const useFlowActions = () => {
 		edges,
 		onNodesChange,
 		onEdgesChange,
+		onNodeDragStop,
 		onBeforeDelete,
 		onInit,
 	};
