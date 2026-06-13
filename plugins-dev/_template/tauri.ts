@@ -610,9 +610,20 @@ export const paths = {
 		return api().invoke('os_tmpdir');
 	},
 
-	/** Корневая папка plugins-dev (где лежат собранные/dev-плагины с их ресурсами). */
+	/** Корневая папка plugins-dev (ИСХОДНИКИ плагинов, только dev!). В проде её НЕТ —
+	 *  для доступа к ресурсам самого плагина используй pluginInstallPath(). */
 	pluginsDev(): Promise<string> {
 		return api().invoke('get_plugins_dev_path');
+	},
+
+	/** Установочная папка конкретного плагина (где лежат его ассеты: бинарники, модели).
+	 *  Работает и в dev (distr-plugins/<id>@<ver>), и в prod (app_data/plugins/<id>@<ver>) —
+	 *  в отличие от pluginsDev(). id/version бери из 3-го аргумента плагина (pluginCtx). */
+	async pluginInstallPath(pluginId: string, version?: string): Promise<string | null> {
+		// ВАЖНО: позиционные аргументы — у plugin_manager_get_plugin есть argMapper
+		// (pluginId, version?), который ждёт их по порядку, а не единым объектом.
+		const info: any = await api().invoke('plugin_manager_get_plugin', pluginId, version);
+		return info?.path ?? null;
 	},
 
 	/** Сегмент платформы для путей к нативным бинарникам:

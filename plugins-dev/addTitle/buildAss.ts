@@ -36,7 +36,9 @@ function escapeAss(text: string): string {
 
 /** Escapes each line individually, then joins with ASS \N hard line break */
 function assLines(lines: string[]): string {
-	return lines.map(escapeAss).join('\N');
+	// '\\N' = два символа (backslash + N) — это hard line break в ASS.
+	// '\N' в JS не валидный escape и схлопывается в одиночную букву 'N'.
+	return lines.map(escapeAss).join('\\N');
 }
 
 /** \pos(x,y) tag — anchor point based on alignment */

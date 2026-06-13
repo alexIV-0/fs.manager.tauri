@@ -9,34 +9,49 @@ export function ProcessingStatusBar() {
 	const [visible, setVisible] = useState(false);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// показываем как только начался процесс или появился текст
+	// Единый эффект показа/автоскрытия. Раньше показ и скрытие жили в двух
+	// эффектах и дрались за один timerRef: эффект показа делал clearTimeout на
+	// каждое изменение statusText, а автоскрытие перезаводилось только по смене
+	// isRunning. Поздний statusbar-ивент в конце обработки (напр. 'waiting
+	// starting' из startProcessing) убивал таймер скрытия и не перезаводил его —
+	// бар оставался висеть пустым. Здесь логика собрана в одном месте.
 	useEffect(() => {
-		if (isRunning || statusText) {
-			setVisible(true);
+		const clearTimer = () => {
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 				timerRef.current = null;
 			}
-		}
-	}, [isRunning, statusText]);
+		};
 
-	// автоскрытие через 3 сек после завершения
-	useEffect(() => {
-		if (!isRunning && visible) {
+		// Идёт обработка → показываем бар, отменяем любое автоскрытие.
+		if (isRunning) {
+			setVisible(true);
+			clearTimer();
+			return;
+		}
+
+		// Обработка завершена. Есть финальный текст — показываем его напоследок.
+		if (statusText) setVisible(true);
+
+		// Заводим автоскрытие через 3 сек. Таймер перезаводится на каждое позднее
+		// статус-событие, поэтому бар прячется через 3 сек после ПОСЛЕДНЕЙ
+		// активности, а не зависает пустым.
+		if (visible || statusText) {
+			clearTimer();
 			timerRef.current = setTimeout(() => {
 				setVisible(false);
 				resetAll();
 				timerRef.current = null;
 			}, 3000);
 		}
+	}, [isRunning, statusText, visible]);
 
+	// чистим таймер при размонтировании
+	useEffect(() => {
 		return () => {
-			if (timerRef.current) {
-				clearTimeout(timerRef.current);
-				timerRef.current = null;
-			}
+			if (timerRef.current) clearTimeout(timerRef.current);
 		};
-	}, [isRunning]);
+	}, []);
 
 	if (!visible) return null;
 
