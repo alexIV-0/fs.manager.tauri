@@ -94,6 +94,7 @@ export const COLOR_TYPE_DEFAULT_LIMITS: Record<string, number> = {
 	ffmpeg: 2,
 	ffprobe: 4,
 	ai: 1,
+	aiLocal: 1,
 	helpers: 10,
 	main: 5,
 };
@@ -108,7 +109,7 @@ export const COLOR_TYPE_REQUIRES_EXECUTABLE: Record<string, string> = {
 };
 
 // Системные типы — всегда присутствуют после rescan, ffplay исключён.
-export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'helpers', 'main'];
+export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'aiLocal', 'helpers', 'main'];
 export const COLOR_TYPE_EXCLUDED: string[] = ['ffplay'];
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {

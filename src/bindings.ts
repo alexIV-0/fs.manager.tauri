@@ -873,6 +873,65 @@ async shellOpenPath(folderPath: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async depsFfmpegStatus() : Promise<Result<FfmpegStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_ffmpeg_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async depsDownloadFfmpeg() : Promise<Result<FfmpegInstallResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_download_ffmpeg") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async depsWhisperModelsDir() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_whisper_models_dir") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async depsListWhisperModels() : Promise<Result<WhisperModel[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_list_whisper_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async depsDownloadWhisperModel(filename: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_download_whisper_model", { filename }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewRenderFrame(spec: PreviewRenderSpec) : Promise<Result<PreviewFrameResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_render_frame", { spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Чистка кэша превью. namespace=None → весь preview-cache; Some(ns) → только раздел.
+ */
+async previewClearCache(namespace: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_clear_cache", { namespace }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -897,11 +956,74 @@ export type CopyMoveOptions = { use_hash_check?: boolean; overwrite?: boolean }
 export type DialogFilter = { name: string; extensions: string[] }
 export type DocFile = { name: string; fileName: string }
 export type DocSection = { name: string; files: DocFile[] }
+export type FfmpegInstallResult = { 
+/**
+ * true только если ffmpeg+ffprobe скачаны И gate по required пройден.
+ */
+ok: boolean; version: string | null; source: string | null; ffmpegPath: string | null; ffprobePath: string | null; 
+/**
+ * Отсутствующие ОБЯЗАТЕЛЬНЫЕ возможности (если непусто → ok=false, пути не подключать).
+ */
+missingRequired: string[]; 
+/**
+ * Отсутствующие необязательные (предупреждение в UI, не блок).
+ */
+missingOptional: string[] }
+export type FfmpegStatus = { installed: boolean; version: string | null; ffmpegPath: string | null; ffprobePath: string | null }
 export type FileInfo = { path: string; name: string; size: number; is_dir: boolean; is_file: boolean; modified: number | null; created: number | null; extension: string }
 export type FontInfo = { name: string; path: string; loadable: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type LogHistory = { items: JsonValue[] }
 export type MoveToErrorsResult = { success: boolean; moved_to: string | null; error: string | null }
+export type PreviewFrameResult = { 
+/**
+ * Абсолютный путь к PNG в кэше (фронт превращает в asset-URL через toFileUrl).
+ */
+path: string; 
+/**
+ * true → кадр был уже в кэше, ffmpeg не запускался.
+ */
+cached: boolean }
+export type PreviewInput = { 
+/**
+ * Абсолютный путь к исходнику (видео/картинка).
+ */
+path: string; 
+/**
+ * Позиция входного seek в секундах. None → берётся `spec.time`. 0 → seek не добавляется
+ * (важно для картинок: `-ss >0` на image2 может не отдать кадр).
+ */
+seek: number | null }
+export type PreviewRenderSpec = { 
+/**
+ * Входы по порядку (`-i`). Для keying/convert — один; для overlay/ffSwitch — несколько.
+ */
+inputs: PreviewInput[]; 
+/**
+ * Фильтрграф. complex=false → идёт в `-vf` (один вход). complex=true → в
+ * `-filter_complex`, и граф ОБЯЗАН заканчиваться меткой `out_label` (напр. `[out]`).
+ */
+filterGraph: string; 
+/**
+ * true → многовходовой `-filter_complex` + `-map out_label`. false → `-vf`.
+ */
+complex?: boolean; 
+/**
+ * Метка выходного пада для complex-графа (по умолчанию `[out]`). Для `-vf` игнорируется.
+ */
+outLabel: string | null; 
+/**
+ * Время кадра (сек) — в ключ кэша и как seek по умолчанию для входов без своего seek.
+ */
+time: number; 
+/**
+ * Ограничение по длинной стороне (proxy для скорости). None/0 → исходный размер.
+ */
+maxDim: number | null; 
+/**
+ * Неймспейс кэша (имя плагина: "keying", "convert"…) — раздел в папке кэша.
+ */
+namespace: string }
 export type PreviewResizeOpts = { width: number; height: number; aspectRatio?: number | null; extraHeight?: number | null }
 export type RunScriptInAEArgs = { 
 /**
@@ -940,6 +1062,7 @@ export type SelectFoldersOptions = { multiSelect?: boolean }
  * Возвращает метаданные файла (для полифила node:fs.stat).
  */
 export type StatInfo = { size: number; mtimeMs: number; atimeMs: number; ctimeMs: number; birthtimeMs: number; isFile: boolean; isDir: boolean; isSymlink: boolean }
+export type WhisperModel = { name: string; filename: string; sizeBytes: number; sizeLabel: string; downloaded: boolean; recommended: boolean }
 export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
 
 /** tauri-specta globals **/

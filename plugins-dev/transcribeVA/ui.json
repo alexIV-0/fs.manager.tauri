@@ -8,7 +8,7 @@
 	"height": 680,
 	"data": {
 		"label": "Transcribe VA",
-		"colorType": "ai",
+		"colorType": "aiLocal",
 		"comment": "Транскрипция аудио/видео в текст или титры через Whisper (локально). Модели подключаются в Настройках → Пути.",
 		"properties": [
 			{

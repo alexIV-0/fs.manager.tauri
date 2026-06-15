@@ -1,0 +1,36 @@
+{
+  "_comment": "Манифест возможностей ffmpeg, которые используют плагины. Используется в двух местах: (1) Rust-gate в deps_commands.rs после скачивания сборки — блокирует на 'required', предупреждает на 'optional'; (2) dev-сканер scripts/ffmpeg-scan.mjs — сверяет реальное использование в плагинах с этим списком. Добавить новую проверку = дописать строку, код менять не нужно. Сиды получены реальным сканом plugins-dev/**/*.ts + src-tauri/**/*.rs (см. ниже where).",
+
+  "required": {
+    "_why": "Без этого ключевые плагины не работают вовсе — gate ОБЯЗАН отклонить такую сборку.",
+    "encoders": ["libx264", "aac", "hap"],
+    "encoder_opts": { "hap": ["snappy"] },
+    "filters": [
+      "chromakey", "colorkey", "lumakey", "despill",
+      "erosion", "dilation", "alphaextract", "alphamerge",
+      "ass",
+      "overlay", "scale", "crop", "pad", "format", "setpts", "settb", "setsar", "setparams",
+      "select", "metadata", "blackframe", "thumbnail",
+      "eq", "hflip", "geq", "boxblur",
+      "amix", "atempo", "apad", "tpad", "split", "color", "xfade"
+    ],
+    "demuxers": ["concat"],
+    "where": {
+      "hap+snappy": "keyingFFmpeg.ts:145 (-c:v hap -format hap_q -compressor snappy) + convertFile_v2 (hap/hap_q)",
+      "libx264": "addTitle.ts:147, convertFile_v2 (h264)",
+      "aac": "merge2files.ts, ffSwitch.ts, convertFile_v2",
+      "ass": "addTitle.ts (libass — субтитры)",
+      "chromakey/colorkey/lumakey/despill": "keyingFFmpeg.ts (кеинг)",
+      "concat": "join.ts (-f concat демуксер)"
+    }
+  },
+
+  "optional": {
+    "_why": "Расширенная палитра convertFile_v2. Если отсутствует — НЕ блокируем, а показываем предупреждение в UI ('этот билд не умеет X'). Все подтверждённые источники (martin-riedl, BtbN gpl) их содержат.",
+    "encoders": [
+      "libx265", "libvpx-vp9", "libsvtav1", "prores_ks", "dnxhd",
+      "libopus", "libmp3lame", "flac", "pcm_s16le"
+    ],
+    "where": "convertFile_v2/convertFileV2.ts VIDEO_CODEC_MAP / AUDIO_CODEC_MAP"
+  }
+}

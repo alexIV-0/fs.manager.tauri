@@ -1,5 +1,6 @@
 import { fs, ffmpeg, exec, paths, system, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 import path from 'path';
 
 export { onLoad } from '../_template/tauri';
@@ -15,12 +16,6 @@ const FORMAT_EXT: Record<string, string> = {
 	vtt:      '.vtt',
 	txt:      '.txt',
 };
-
-// Модели от наименьшей к наибольшей для детекта языка
-const DETECT_MODELS = ['ggml-tiny.bin', 'ggml-base.bin', 'ggml-small.bin', 'ggml-medium.bin'];
-
-// Длительности аудио для попыток детекта языка (ms)
-const DETECT_DURATIONS = [20000, 30000, 40000, 50000, 60000];
 
 // ── Пресеты DTW (token-level тайминги) ──────────────────────────────────────────
 // Ключ — нормализованное имя модели, значение — пресет alignment-heads, который
@@ -105,41 +100,38 @@ async function getVadModel(pluginRoot: string): Promise<string | null> {
 	return null;
 }
 
-// ── Наименьшая доступная модель ────────────────────────────────────────────────
-
-async function findLightestModel(modelsFolder: string): Promise<string> {
-	for (const modelName of DETECT_MODELS) {
-		const modelPath = path.join(modelsFolder, modelName);
-		if (await fs.exists(modelPath)) return modelPath;
+// ── Детект языка (только для режима "Detect Language") ───────────────────────────
+// `-dl` (--detect-language): whisper определяет язык и СРАЗУ выходит (без транскрипции).
+// С VAD определяет по речи (а не по музыке в начале) → правильный язык даже когда
+// голос начинается не сразу. Обычная транскрипция язык не предопределяет — отдаёт
+// whisper'у `--language auto`, он сам определяет (по тем же VAD-отфильтрованным данным),
+// поэтому отдельный предварительный детект там не нужен.
+async function detectLanguageOnly(
+	bin: string,
+	modelPath: string,
+	audioFile: string,
+	threads: number,
+	vadModel: string | null,
+	vadThreshold: number,
+	nodeId?: string,
+): Promise<string> {
+	const args = [
+		'-m', modelPath,
+		'-f', audioFile,
+		'--language', 'auto',
+		'--detect-language',
+		'--threads', String(threads),
+	];
+	if (vadModel) {
+		args.push('--vad', '--vad-model', vadModel, '--vad-threshold', String(vadThreshold));
 	}
-	throw new Error(`[whisper] no detect model found in: ${modelsFolder}`);
-}
-
-// ── Детект языка с нарастающей длительностью ──────────────────────────────────
-
-async function detectLanguage(bin: string, modelPath: string, audioFile: string, threads: number, nodeId?: string): Promise<string> {
-	for (const duration of DETECT_DURATIONS) {
-		const args = [
-			'-m', modelPath,
-			'-f', audioFile,
-			'--language', 'auto',
-			'--duration', String(duration),
-			'--threads', String(threads),
-			// `--print-special` намеренно выключен: whisper-cli и без него печатает
-			// "auto-detected language: xx", а с ним льёт тысячи [_TT_*] токенов в stderr —
-			// это затапливало webview-listener и вешало UI (см. exec_commands.rs throttle).
-		];
-		try {
-			const result = await exec(bin, args, { nodeId });
-			const output = (result?.stdout ?? '') + (result?.stderr ?? '');
-			const langMatch = output.match(/auto-detected language:\s*(\w+)/i);
-			if (langMatch?.[1]) {
-				sendToMW('log', { text: `[whisper] language "${langMatch[1]}" detected at ${duration / 1000}s` });
-				return langMatch[1];
-			}
-		} catch (e: any) {
-			sendToMW('log', { level: 'error', text: `[whisper] detect error at ${duration / 1000}s: ${e?.message ?? String(e)}` });
-		}
+	try {
+		const result = await exec(bin, args, { nodeId });
+		const output = (result?.stdout ?? '') + (result?.stderr ?? '');
+		const m = output.match(/auto-detected language:\s*(\w+)/i);
+		if (m?.[1]) return m[1];
+	} catch (e: any) {
+		sendToMW('log', { level: 'error', text: `[whisper] detect error: ${e?.message ?? String(e)}` });
 	}
 	sendToMW('log', { text: '[whisper] language not detected, falling back to "en"' });
 	return 'en';
@@ -308,10 +300,11 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 	const startTime = Date.now();
 	const nodeId: string | undefined = _item?.id;
 
-	const [pluginRoot, platformTarget, cpuCount] = await Promise.all([
+	const [pluginRoot, platformTarget, cpuCount, tmpRoot] = await Promise.all([
 		resolvePluginRoot(_ctx),
 		paths.platformTarget(),
 		system.cpuCount(),
+		paths.tmpdir(),
 	]);
 	if (!pluginRoot) {
 		sendToMW('log', { level: 'error', text: '[whisper] cannot locate plugin folder (install path & plugins-dev both unavailable)' });
@@ -395,88 +388,102 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 		await fs.mkdir(fileDir);
 		const fileBaseName = path.basename(fileTo, path.extname(fileTo));
 
-		// 1. Конвертируем в WAV 16kHz mono
-		const pcmFile = path.join(fileDir, `${fileBaseName}_temp.wav`);
-		await ffmpeg.run({
-			command: ['-y', '-i', fileFrom, '-vn', '-ac', '1', '-ar', '16000', pcmFile],
-			text: `${_description?.infoText ?? ''}: [whisper] preparing audio`,
-		});
+		// Вся I/O whisper (temp WAV + сырой JSON) идёт в ASCII-папку системного temp.
+		// whisper-cli (whisper.cpp, narrow char* argv) на Windows коверкает не-ASCII пути —
+		// кириллица/CJK в реальном пути назначения (имя файла ИЛИ родительские папки) ломают
+		// чтение WAV и запись JSON, и шаг молча возвращает пусто. Поэтому реальный путь
+		// whisper'у не отдаём вообще: работаем в temp под ASCII-именем ($random(5) — nanoid,
+		// гарантированно ASCII), а готовый результат переносим в папку назначения через
+		// Tauri fs (Rust, UTF-8 safe). Папка одноразовая — целиком чистится в finally.
+		const workDir = path.join(tmpRoot, 'whisper', formatNameByPattern({ string: '$random(5)' }));
+		await fs.mkdir(workDir);
+		try {
+			// 1. Конвертируем в WAV 16kHz mono (в temp-папку)
+			const pcmFile = path.join(workDir, 'audio.wav');
+			await ffmpeg.run({
+				command: ['-y', '-i', fileFrom, '-vn', '-ac', '1', '-ar', '16000', pcmFile],
+				text: `${_description?.infoText ?? ''}: [whisper] preparing audio`,
+			});
 
-		// 2. Определяем язык
-		const lightModel = await findLightestModel(modelsFolder);
-		const detectedLang = await detectLanguage(bin, lightModel, pcmFile, threads, nodeId);
-
-		// ── Режим "только детект языка" ───────────────────────────────────────
-		const outputFormatRaw = (_item.outputFormat ?? 'jsonfull');
-		if (outputFormatRaw === 'Detect Language') {
-			const langFile = path.join(fileDir, `${fileBaseName} [${detectedLang}].txt`);
-			await fs.write(langFile, '');
-			sendToMW('log', { text: `[whisper] detected language: "${detectedLang}" → ${langFile}` });
-			finalFiles.push(langFile);
-			await tryRemove(pcmFile);
-			continue;
-		}
-
-		// 3. Основная транскрипция → всегда пословный JSON, затем сборка нужного формата
-		const outputFormat = outputFormatRaw.toLowerCase();
-		const ext = FORMAT_EXT[outputFormat] ?? '.json';
-		const modelFile = _item.whisperModel ?? 'ggml-large-v3-turbo.bin';
-		const modelPath = path.join(modelsFolder, modelFile);
-
-		if (!await fs.exists(modelPath)) {
-			sendToMW('log', { level: 'error', text: `[whisper] model not found: ${modelPath}` });
-			await tryRemove(pcmFile);
-			continue;
-		}
-
-		const dtwPreset = modelToDtwPreset(modelFile);
-		if (dtwPreset) {
-			sendToMW('log', { text: `[whisper] DTW timestamps preset: ${dtwPreset}` });
-		} else {
-			sendToMW('log', { level: 'warn', text: `[whisper] no DTW preset for "${modelFile}" — word timings will be approximate` });
-		}
-
-		const outputBase = path.join(fileDir, `${fileBaseName} (whisper)`);
-		const transcribeArgs = buildTranscribeArgs(modelPath, pcmFile, detectedLang, outputBase, threads, dtwPreset, vadModel, vadThreshold);
-		sendToMW('log', { text: `[whisper] transcribing, model: ${modelFile}, lang: ${detectedLang}, VAD: ${vadModel ? `on (thold ${vadThreshold})` : 'off'}` });
-
-		const transcribeResult = await exec(bin, transcribeArgs, { nodeId });
-		if (transcribeResult.exit_code !== 0) {
-			sendToMW('log', { level: 'error', text: `[whisper] transcription failed:\n${transcribeResult.stderr.slice(-500)}` });
-			await tryRemove(pcmFile);
-			continue;
-		}
-
-		// whisper с --output-json-full пишет <outputBase>.json
-		const rawJsonPath = `${outputBase}.json`;
-
-		if (outputFormat === 'jsonfull') {
-			// Сырой пословный JSON — это и есть запрошенный результат.
-			finalFiles.push(rawJsonPath);
-		} else {
-			// srt / vtt / json / txt — пересобираем слова во фразы с DTW-таймингами.
-			try {
-				const words = parseWhisperWords(await fs.read(rawJsonPath));
-				const lines = groupWords(words);
-				const finalPath = `${outputBase}${ext}`;
-				const content =
-					outputFormat === 'vtt'  ? buildVtt(lines) :
-					outputFormat === 'json' ? buildJson(lines) :
-					outputFormat === 'txt'  ? lines.map(l => l.text).join('\n') + '\n' :
-					buildSrt(lines);
-				await fs.write(finalPath, content);
-				sendToMW('log', { text: `[whisper] built ${outputFormat}: ${lines.length} lines from ${words.length} words` });
-				finalFiles.push(finalPath);
-			} catch (e: any) {
-				sendToMW('log', { level: 'error', text: `[whisper] failed to build ${outputFormat} from words: ${e?.message ?? String(e)}` });
-			} finally {
-				// Сырой JSON — промежуточный, финальный формат уже записан.
-				await tryRemove(rawJsonPath);
+			// 2. Модель (нужна и для detect-only, и для транскрипции)
+			const outputFormatRaw = (_item.outputFormat ?? 'jsonfull');
+			const modelFile = _item.whisperModel ?? 'ggml-large-v3-turbo.bin';
+			const modelPath = path.join(modelsFolder, modelFile);
+			if (!await fs.exists(modelPath)) {
+				sendToMW('log', { level: 'error', text: `[whisper] model not found: ${modelPath}` });
+				continue;
 			}
-		}
 
-		// 4. Удаляем temp WAV
-		await tryRemove(pcmFile);
+			// ── Режим "только детект языка" ───────────────────────────────────────
+			if (outputFormatRaw === 'Detect Language') {
+				const detectedLang = await detectLanguageOnly(bin, modelPath, pcmFile, threads, vadModel, vadThreshold, nodeId);
+				const langFile = path.join(fileDir, `${fileBaseName} [${detectedLang}].txt`);
+				await fs.write(langFile, '');
+				sendToMW('log', { text: `[whisper] detected language: "${detectedLang}" → ${langFile}` });
+				finalFiles.push(langFile);
+				continue;
+			}
+
+			// 3. Основная транскрипция → язык определяет сам whisper (--language auto)
+			// по VAD-отфильтрованной речи; всегда пословный JSON, затем сборка формата.
+			const outputFormat = outputFormatRaw.toLowerCase();
+			const ext = FORMAT_EXT[outputFormat] ?? '.json';
+
+			const dtwPreset = modelToDtwPreset(modelFile);
+			if (dtwPreset) {
+				sendToMW('log', { text: `[whisper] DTW timestamps preset: ${dtwPreset}` });
+			} else {
+				sendToMW('log', { level: 'warn', text: `[whisper] no DTW preset for "${modelFile}" — word timings will be approximate` });
+			}
+
+			// whisper пишет <outputBase>.json в temp-папку (ASCII). Финальное осмысленное имя —
+			// `${fileBaseName} (whisper)` в папке назначения (как было раньше).
+			const outputBase = path.join(workDir, 'out');
+			const finalNameBase = path.join(fileDir, `${fileBaseName} (whisper)`);
+			const transcribeArgs = buildTranscribeArgs(modelPath, pcmFile, 'auto', outputBase, threads, dtwPreset, vadModel, vadThreshold);
+			sendToMW('log', { text: `[whisper] transcribing, model: ${modelFile}, lang: auto, VAD: ${vadModel ? `on (thold ${vadThreshold})` : 'off'}` });
+
+			const transcribeResult = await exec(bin, transcribeArgs, { nodeId });
+			if (transcribeResult.exit_code !== 0) {
+				sendToMW('log', { level: 'error', text: `[whisper] transcription failed:\n${transcribeResult.stderr.slice(-500)}` });
+				continue;
+			}
+			// Какой язык whisper в итоге определил (из stderr основного прогона).
+			const langMatch = (transcribeResult.stderr ?? '').match(/auto-detected language:\s*(\w+)/i);
+			if (langMatch?.[1]) sendToMW('log', { text: `[whisper] auto-detected language: ${langMatch[1]}` });
+
+			// whisper с --output-json-full пишет <outputBase>.json
+			const rawJsonPath = `${outputBase}.json`;
+
+			if (outputFormat === 'jsonfull') {
+				// Сырой пословный JSON — это и есть запрошенный результат. whisper записал его
+				// в temp под ASCII-именем → переносим в папку назначения с осмысленным именем.
+				const finalJson = `${finalNameBase}.json`;
+				await fs.move(rawJsonPath, finalJson);
+				finalFiles.push(finalJson);
+			} else {
+				// srt / vtt / json / txt — пересобираем слова во фразы с DTW-таймингами.
+				try {
+					const words = parseWhisperWords(await fs.read(rawJsonPath));
+					const lines = groupWords(words);
+					const finalPath = `${finalNameBase}${ext}`;
+					const content =
+						outputFormat === 'vtt'  ? buildVtt(lines) :
+						outputFormat === 'json' ? buildJson(lines) :
+						outputFormat === 'txt'  ? lines.map(l => l.text).join('\n') + '\n' :
+						buildSrt(lines);
+					await fs.write(finalPath, content);
+					sendToMW('log', { text: `[whisper] built ${outputFormat}: ${lines.length} lines from ${words.length} words` });
+					finalFiles.push(finalPath);
+				} catch (e: any) {
+					sendToMW('log', { level: 'error', text: `[whisper] failed to build ${outputFormat} from words: ${e?.message ?? String(e)}` });
+				}
+			}
+		} finally {
+			// Одноразовая temp-папка whisper целиком (WAV + сырой JSON + остатки) — удаляем
+			// при любом исходе, включая continue/ошибку.
+			await tryRemove(workDir);
+		}
 	}
 
 	const elapsed = msToTime(Date.now() - startTime);
