@@ -23,7 +23,12 @@ export interface PluginJsonData {
 	external: string[];
 	cost: string;
 	costUnit: CostUnit;
+	/** Ресурсный пул. '' / отсутствует = дефолт по colorType. */
+	resourcePool?: ResourcePool;
 }
+
+export type ResourcePool = '' | 'local' | 'online' | 'ffmpeg' | 'helpers';
+export const RESOURCE_POOLS: ResourcePool[] = ['', 'local', 'online', 'ffmpeg', 'helpers'];
 
 // ── UI JSON ──────────────────────────────────────────────────────────────────
 

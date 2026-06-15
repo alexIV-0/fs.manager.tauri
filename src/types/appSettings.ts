@@ -94,10 +94,34 @@ export const COLOR_TYPE_DEFAULT_LIMITS: Record<string, number> = {
 	ffmpeg: 2,
 	ffprobe: 4,
 	ai: 1,
-	aiLocal: 1,
 	helpers: 10,
 	main: 5,
 };
+
+// ── Ресурсные пулы (по КЛАССУ ресурса, не по цвету ноды) ─────────────────────────
+// Пул определяет, сколько шагов этого класса идут параллельно. Цвет ноды (colorType)
+// — отдельная ось, на пул больше не влияет напрямую.
+export const RESOURCE_POOL_DEFAULT_LIMITS: Record<string, number> = {
+	local: 1,    // тяжёлое локальное / единоличники: afterEffect, moho, whisper. 1 = одно за раз.
+	online: 5,   // облачные ИИ (отправил-жди, локальных ресурсов ~0).
+	ffmpeg: 2,   // ffmpeg/ffprobe — средняя нагрузка.
+	helpers: 10, // лёгкое внутреннее: поиск, копирование, spy, saveOnGD и т.п.
+};
+
+// Дефолтный пул по colorType (для плагинов БЕЗ явного manifest.resourcePool).
+// Покрывает все известные цвета → серой зоны нет, новые ноды цвета X идут в свой пул.
+export const COLORTYPE_TO_POOL: Record<string, string> = {
+	afterEffect: 'local',
+	moho:        'local',
+	ai:          'online',
+	ffmpeg:      'ffmpeg',
+	ffprobe:     'ffmpeg',
+	helpers:     'helpers',
+	main:        'helpers',
+};
+
+// Куда падают ноды без явного пула и с неизвестным colorType — безопасный (НЕ безлимитный) пул.
+export const FALLBACK_POOL = 'helpers';
 
 // Типы, требующие исполняемый файл (путь в programPaths.json).
 // Показываем статус в UI ресурсных пулов.
@@ -109,7 +133,7 @@ export const COLOR_TYPE_REQUIRES_EXECUTABLE: Record<string, string> = {
 };
 
 // Системные типы — всегда присутствуют после rescan, ffplay исключён.
-export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'aiLocal', 'helpers', 'main'];
+export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'helpers', 'main'];
 export const COLOR_TYPE_EXCLUDED: string[] = ['ffplay'];
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {

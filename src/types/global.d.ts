@@ -19,6 +19,8 @@ export interface PluginManifest {
 				[key: string]: any;
 		  };
 	external: string[];
+	/** Ресурсный пул (local/online/ffmpeg/helpers); не задан — дефолт по colorType. */
+	resourcePool?: string;
 }
 
 export interface PluginInfo {

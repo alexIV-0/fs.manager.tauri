@@ -19,10 +19,20 @@ export async function startProcessing() {
 	const { maxParallel } = settings.processing;
 	const MAX_PARALLEL = Math.max(1, maxParallel);
 
-	// Инициализируем семафоры по colorType. Слоты = лимит из settings.resourcePools
-	// (с fallback на COLOR_TYPE_DEFAULT_LIMITS). Пересоздаём на каждый старт, чтобы
-	// подхватить изменения лимитов без перезапуска приложения.
-	initResourcePools(settings.resourcePools ?? {});
+	// Инициализируем семафоры ресурсных пулов. Слоты = лимит из settings.resourcePools
+	// (с fallback на RESOURCE_POOL_DEFAULT_LIMITS). Карта pluginId→пул берётся из
+	// манифестов текущих плагинов → собранные флоу подхватывают актуальное назначение
+	// (резолв пула вживую по pluginId). Пересоздаём на каждый старт.
+	let pluginPools: Array<{ id: string; pool: string }> = [];
+	try {
+		const all = (await window.plugins.getAllPlugins()) ?? [];
+		pluginPools = all
+			.map((p: any) => ({ id: p?.id, pool: p?.manifest?.resourcePool }))
+			.filter((x): x is { id: string; pool: string } => Boolean(x.id && x.pool));
+	} catch (e) {
+		console.warn('[startProcessing] cannot read plugin resourcePools:', e);
+	}
+	initResourcePools(settings.resourcePools ?? {}, pluginPools);
 
 	// Processing events are now routed to logWindow in main process.
 	// Only handle aborted/error here for status bar feedback.

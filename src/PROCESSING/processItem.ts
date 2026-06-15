@@ -8,7 +8,7 @@
 
 import { basename, dirname, join } from '@plugin-api/path';
 import { loadPlugin } from '@/PluginAPI/loader';
-import { acquirePool, releasePool } from './ResourcePool';
+import { acquirePool, releasePool, resolvePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
 
@@ -395,10 +395,11 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		return false;
 	}
 
-	// Захватываем слот ресурсного пула по colorType (afterEffect → лимит 1, helpers → 10 и т.д.).
-	// Если лимит исчерпан — ждём освобождения слота другим item'ом.
-	const colorType: string | undefined = execObj.colorType;
-	if (colorType) await acquirePool(colorType);
+	// Захватываем слот ресурсного пула. Пул резолвится по pluginId (manifest.resourcePool)
+	// → дефолт по colorType → fallback. Live по pluginId, поэтому собранные флоу
+	// подхватывают текущее назначение. Если лимит исчерпан — ждём освобождения слота.
+	const pool = resolvePool(execObj.pluginId, execObj.colorType);
+	await acquirePool(pool);
 
 	send('node:start', { nodeId: logStepId, graphNodeId: stepId, itemId: ctx.itemId });
 	send('log', { level: 'info', text: `→ ${stepId} (${execObj.pluginId}@${execObj.pluginVersion})`, itemId: ctx.itemId, stepId: logStepId });
@@ -484,7 +485,7 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		return false;
 	} finally {
 		// Всегда освобождаем слот — даже при ошибке
-		if (colorType) releasePool(colorType);
+		releasePool(pool);
 	}
 }
 

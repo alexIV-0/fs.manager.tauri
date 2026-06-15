@@ -15,5 +15,6 @@
 	],
 	"external": [],
 	"cost": "0",
-	"costUnit": "run"
+	"costUnit": "run",
+	"resourcePool": "local"
 }

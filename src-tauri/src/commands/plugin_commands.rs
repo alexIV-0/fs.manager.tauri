@@ -33,6 +33,10 @@ pub struct PluginManifest {
     pub cost: String,
     #[serde(rename = "costUnit", default = "default_cost_unit")]
     pub cost_unit: String,
+    // Ресурсный пул (local/online/ffmpeg/helpers). Если не задан — фронт берёт дефолт
+    // по colorType. Прокидывается в processItem для резолва семафора пула.
+    #[serde(rename = "resourcePool", default)]
+    pub resource_pool: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

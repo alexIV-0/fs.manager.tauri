@@ -343,7 +343,6 @@ const defaultNodeType: PatternElement[] = [
 	{ color: '#502dffff', id: 'afterEffect', name: 'afterEffect', path: [], inactivePath: [] },
 	{ color: '#ff2d9dff', id: 'moho', name: 'moho', path: [], inactivePath: [] },
 	{ color: '#2d84ffff', id: 'ai', name: 'ai', path: [], inactivePath: [] },
-	{ color: '#2db4ffff', id: 'aiLocal', name: 'aiLocal', path: [], inactivePath: [] },
 	{ color: '#6900c5ff', id: 'ffprobe', name: 'ffprobe', path: [], inactivePath: [] },
 	// { color: '#7d51a3ff', id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
 ];
