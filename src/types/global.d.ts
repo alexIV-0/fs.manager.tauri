@@ -69,7 +69,7 @@ export interface PluginUINode {
 			required?: boolean;
 		}>;
 		output?: {
-			functionName: string;
+			functionName?: string;
 			sourceProperty?: string;
 		};
 		isUnique?: boolean;

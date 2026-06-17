@@ -7,7 +7,8 @@ export enum HandlerType {
 }
 
 export interface OutputConfig {
-	functionName: string;
+	functionName?: string; // legacy: нужен только built-in search-нодам (mainSearch); плагинам — нет
+
 	execute?: {
 		functionName?: string;
 		arguments?: string[];
@@ -278,6 +279,15 @@ export interface ConvertSettingsPropertyControlProps {
 
 export type ConvertSettingsProperty = PropertyBase<'convertSettings', ConvertSettingsPropertyControlProps>;
 
+export interface TimeRangePropertyControlProps {
+	label?: string;
+	tooltip?: string;
+	value: [number, number]; // [startMin, endMin] — минуты от полуночи (0..1440)
+	editLabel?: boolean;
+}
+
+export type TimeRangeProperty = PropertyBase<'timeRange', TimeRangePropertyControlProps>;
+
 export type Property =
 	| CheckboxProperty
 	| AutocompleteProperty
@@ -296,7 +306,8 @@ export type Property =
 	| OverlaySettingsProperty
 	| VideoAdjustmentProperty
 	| KeyingProperty
-	| ConvertSettingsProperty;
+	| ConvertSettingsProperty
+	| TimeRangeProperty;
 
 // export enum SearchType {
 // 	IMAGE = 'image',

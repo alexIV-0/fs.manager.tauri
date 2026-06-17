@@ -344,6 +344,7 @@ const defaultNodeType: PatternElement[] = [
 	{ color: '#ff2d9dff', id: 'moho', name: 'moho', path: [], inactivePath: [] },
 	{ color: '#2d84ffff', id: 'ai', name: 'ai', path: [], inactivePath: [] },
 	{ color: '#6900c5ff', id: 'ffprobe', name: 'ffprobe', path: [], inactivePath: [] },
+	{ color: 'rgb(81, 129, 184)', id: 'posting', name: 'posting', path: [], inactivePath: [] },
 	// { color: '#7d51a3ff', id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
 ];
 

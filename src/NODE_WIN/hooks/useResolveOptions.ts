@@ -161,6 +161,49 @@ export function useResolveOptions(propertyId?: string) {
 							return allFiles;
 						}
 
+						case 'vkAccounts': {
+							if (!path) return [];
+							// path = "…/mainFolder/projectName" → mainFolderName = предпоследний сегмент
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							try {
+								const res = unwrap(await commands.accountList(mainFolderName, 'vk')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								return arr
+									.map((a: any) => a?.name)
+									.filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+							} catch (e) {
+								console.warn('[#vkAccounts] не удалось получить список аккаунтов:', e);
+								return [];
+							}
+						}
+
+						case 'vkGroups': {
+							if (!path) return [];
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							// выбранный аккаунт — из соседнего поля 'account' этой же ноды
+							let accountName = '';
+							if (nodeId) {
+								const node = getNode(nodeId);
+								const nodeProps = (node?.data as any)?.properties ?? [];
+								const acc = nodeProps.find((pr: any) => pr.id === 'account');
+								accountName = acc?.controlProps?.value ?? '';
+							}
+							if (!accountName) return [];
+							try {
+								const token = unwrap(await commands.accountGetToken(mainFolderName, 'vk', accountName));
+								const groups = unwrap(await commands.vkGroupsGet(token)) as any;
+								const arr = Array.isArray(groups) ? groups : [];
+								return arr.map((g: any) => String(g?.name)).filter((n: string) => n && n !== 'null');
+							} catch (e) {
+								console.warn('[#vkGroups] не удалось получить группы:', e);
+								return [];
+							}
+						}
+
 						default:
 							console.warn('[useResolveOptions] Неизвестный тег:', tag);
 							return [];

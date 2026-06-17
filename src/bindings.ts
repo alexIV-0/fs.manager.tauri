@@ -932,6 +932,90 @@ async previewClearCache(namespace: string | null) : Promise<Result<null, string>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Сохранить/обновить аккаунт платформы (upsert по `name`, токен plaintext).
+ * 
+ * `account` — JSON-объект: name / tokenSource / accessToken / userId /
+ * mainFolderName / mainFolderPath / targetType / targetId / groupName / addedAt.
+ * Поля `platform`, `mainFolderName`, `addedAt` проставляются сервером при отсутствии.
+ */
+async accountSave(mainFolderName: string, platform: string, account: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_save", { mainFolderName, platform, account }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Список аккаунтов платформы БЕЗ токенов (для UI ноды / дропдауна).
+ */
+async accountList(mainFolderName: string, platform: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_list", { mainFolderName, platform }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Достать ТОЛЬКО accessToken аккаунта (для публикатора).
+ */
+async accountGetToken(mainFolderName: string, platform: string, name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_get_token", { mainFolderName, platform, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить аккаунт платформы (idempotent).
+ */
+async accountDelete(mainFolderName: string, platform: string, name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_delete", { mainFolderName, platform, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Открыть окно логина VK. Токен придёт асинхронно событием `vk-auth-result`.
+ * `fresh` зарезервирован (revoke=1 — показать диалог даже при активной сессии).
+ */
+async vkAuthOpen(clientId: string | null, fresh: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vk_auth_open", { clientId, fresh }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Проверка токена через `users.get` (server-side, без CORS).
+ * Возвращает объект пользователя `{ id, first_name, last_name }` или ошибку VK.
+ */
+async vkValidateToken(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vk_validate_token", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Список админ-сообществ пользователя (`groups.get filter=admin`) — для выбора
+ * цели постинга (#vkGroups). Возвращает массив `{ id, name }`.
+ */
+async vkGroupsGet(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vk_groups_get", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

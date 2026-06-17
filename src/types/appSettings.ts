@@ -96,6 +96,7 @@ export const COLOR_TYPE_DEFAULT_LIMITS: Record<string, number> = {
 	ai: 1,
 	helpers: 10,
 	main: 5,
+	posting: 5,
 };
 
 // ── Ресурсные пулы (по КЛАССУ ресурса, не по цвету ноды) ─────────────────────────
@@ -118,6 +119,7 @@ export const COLORTYPE_TO_POOL: Record<string, string> = {
 	ffprobe:     'ffmpeg',
 	helpers:     'helpers',
 	main:        'helpers',
+	posting:     'online',
 };
 
 // Куда падают ноды без явного пула и с неизвестным colorType — безопасный (НЕ безлимитный) пул.
@@ -133,7 +135,7 @@ export const COLOR_TYPE_REQUIRES_EXECUTABLE: Record<string, string> = {
 };
 
 // Системные типы — всегда присутствуют после rescan, ffplay исключён.
-export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'helpers', 'main'];
+export const COLOR_TYPE_SYSTEM: string[] = ['afterEffect', 'moho', 'ffmpeg', 'ffprobe', 'ai', 'helpers', 'main', 'posting'];
 export const COLOR_TYPE_EXCLUDED: string[] = ['ffplay'];
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {

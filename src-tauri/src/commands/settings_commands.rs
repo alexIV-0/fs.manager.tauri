@@ -525,6 +525,7 @@ pub fn color_types_rescan(
         ("ai", 1),
         ("helpers", 10),
         ("main", 5),
+        ("posting", 5),
     ];
     let excluded: std::collections::HashSet<&str> = ["ffplay"].iter().copied().collect();
 

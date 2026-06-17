@@ -8,10 +8,12 @@ import ChipAutocompleteProperty from '../properties/ChipAutocompleteProperty';
 import CustomSlider from '../properties/CustomSlider';
 import TextProperty from '../properties/LinkProperty';
 import TimeCode from '../properties/TimeCode';
+import TimeRange from '../properties/TimeRange';
 import LoopGroupProperty from './LoopGroupProperty';
 import TextEditPropertyComponent from '../properties/TextEditProperty';
 import AddNewPropertyButtom from '../properties/AddNewPropertyButtom';
 import SimpleDDMProperty from '../properties/SimpleDDM';
+import VkAccountDDM from '../properties/VkAccountDDM';
 import PathNavigator from '../properties/PathNavigator';
 import JsonNavigator from '../properties/JsonNavigator';
 import AddPathPropertyButton from '../properties/AddPathPropertyButton';
@@ -37,7 +39,11 @@ function GenericProperty({ property }: { property: Property }) {
 			case 'autocomplete':
 				return <ChipAutocompleteProperty property={property} onChange={handleChange} />;
 			case 'ddm':
-				return <SimpleDDMProperty property={property} onChange={handleChange} />;
+				return property.controlProps.options?.includes('#vkAccounts') ? (
+					<VkAccountDDM property={property} onChange={handleChange} />
+				) : (
+					<SimpleDDMProperty property={property} onChange={handleChange} />
+				);
 			case 'link':
 				return <TextProperty property={property} />;
 			case 'addLink':
@@ -46,6 +52,8 @@ function GenericProperty({ property }: { property: Property }) {
 				return <CustomSlider property={property} onChange={handleChange} />;
 			case 'timecode':
 				return <TimeCode property={property} onChange={handleChange} />;
+			case 'timeRange':
+				return <TimeRange property={property} onChange={handleChange} />;
 			case 'loop':
 				return <LoopGroupProperty property={property} />;
 			case 'textedit':
