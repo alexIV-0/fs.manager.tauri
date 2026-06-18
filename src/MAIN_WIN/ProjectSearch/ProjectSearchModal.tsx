@@ -12,10 +12,11 @@ import {
 	CircularProgress,
 } from '@mui/material';
 import { X } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useProjectSearch_store } from '@/Store/MainWin/projectSearch_store';
+import { plugin_Store } from '@/Store/MainWin/plugin_store';
 import { useProjectPlugins, PluginInfo } from '../hooks/useProjectPlugins';
 import { greyColor, defGray } from '@/Store/Color/grayColor';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
@@ -23,11 +24,11 @@ import useFoldersFromLS from '../hooks/useFoldersFromLS';
 export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
 	const { searchQuery, selectedPlugins, setSearchQuery, togglePlugin, clearFilters } = useProjectSearch_store();
 	const { mainFolderArr } = mainFolders_stor();
-	const { getPluginsForProject, getPluginsForMultipleProjects } = useProjectPlugins();
+	const { getPluginsForMultipleProjects } = useProjectPlugins();
 	const activeMainFolder = setActiveFolders_store((s) => s.activeMainFolder);
+	const { plugins: installedPlugins } = plugin_Store();
 
 	const [loading, setLoading] = useState(false);
-	const [allPlugins, setAllPlugins] = useState<PluginInfo[]>([]);
 	const [projects, setProjects] = useState<string[]>([]);
 	const [projectsPlugins, setProjectsPlugins] = useState<Map<string, PluginInfo[]>>(new Map());
 	const [projectsActive, setProjectsActive] = useState<Map<string, boolean>>(new Map());
@@ -35,7 +36,18 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	// Получаем список отключённых папок из LS (по activeMainFolder как ключ)
 	const { folders: disabledFolders } = useFoldersFromLS(activeMainFolder || '');
 
-	// При открытии модала - загружаем список всех плагинов и папок
+	// Статичное облако плагинов - все установленные, кроме 'empty'
+	const allPlugins = useMemo(() => {
+		return installedPlugins
+			.filter((p) => p.type && !p.type.includes('empty'))
+			.map((p) => ({
+				id: p.id,
+				name: p.name,
+				colorType: p.type?.[0] || 'unknown',
+			}));
+	}, [installedPlugins]);
+
+	// При открытии модала - загружаем плагины для каждой папки
 	useEffect(() => {
 		if (!open || !activeMainFolder) return;
 
@@ -45,18 +57,8 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 				const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
 				if (!activeMain) return;
 
-				// Загружаем плагины для всех папок (получаем ассоциативный Map)
+				// Загружаем плагины для всех папок
 				const pluginsByProject = await getPluginsForMultipleProjects(activeMain.path, activeMain.projectFolders);
-
-				// Собираем все уникальные плагины для статичного облака
-				const pluginsMap = new Map<string, PluginInfo>();
-				pluginsByProject.forEach((plugins) => {
-					plugins.forEach((p) => {
-						if (!pluginsMap.has(p.id)) {
-							pluginsMap.set(p.id, p);
-						}
-					});
-				});
 
 				// Определяем активность каждой папки
 				const activeMap = new Map<string, boolean>();
@@ -64,7 +66,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 					activeMap.set(projectName, !disabledFolders.includes(projectName));
 				});
 
-				setAllPlugins(Array.from(pluginsMap.values()));
 				setProjects(activeMain.projectFolders);
 				setProjectsPlugins(pluginsByProject);
 				setProjectsActive(activeMap);
