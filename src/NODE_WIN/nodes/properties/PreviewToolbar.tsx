@@ -26,13 +26,16 @@ interface PreviewToolbarProps {
 	rightSlot?: ReactNode;
 	/** Rendered as an extra row below the playback row (e.g. mode toggle buttons). */
 	bottomSlot?: ReactNode;
+	/** Replaces the built-in thin progress bar (e.g. with a render-bar timeline). The
+	 *  built-in `update()` still drives the time display; drive the slot's playhead yourself. */
+	progressSlot?: ReactNode;
 
 	/** Explicit container height in px. When omitted the container auto-sizes to content. */
 	height?: number;
 }
 
 const PreviewToolbar = forwardRef<PreviewToolbarHandle, PreviewToolbarProps>(function PreviewToolbar(
-	{ playing, onTogglePlay, onSeek, showPlayback = true, showFrameStep, onStepFrame, rightSlot, bottomSlot, height },
+	{ playing, onTogglePlay, onSeek, showPlayback = true, showFrameStep, onStepFrame, rightSlot, bottomSlot, progressSlot, height },
 	ref,
 ) {
 	const progressBarRef   = useRef<HTMLDivElement>(null);
@@ -83,29 +86,31 @@ const PreviewToolbar = forwardRef<PreviewToolbarHandle, PreviewToolbarProps>(fun
 		}}>
 			{showPlayback && (
 				<>
-					{/* Progress bar */}
-					<div
-						ref={progressBarRef}
-						onMouseDown={(e) => {
-							draggingRef.current = true;
-							const rect = e.currentTarget.getBoundingClientRect();
-							onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
-						}}
-						style={{ position: 'relative', height: 16, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
-					>
-						<div style={{ position: 'absolute', width: '100%', height: 3, background: '#2a2a2a', borderRadius: 2 }}>
-							<div ref={progressFillRef} style={{ width: '0%', height: '100%', background: '#5a9fd4', borderRadius: 2 }} />
-						</div>
+					{/* Progress bar — built-in thin bar, or a caller-provided render-bar timeline. */}
+					{progressSlot ?? (
 						<div
-							ref={progressThumbRef}
-							style={{
-								position: 'absolute', left: '0%', top: '50%',
-								transform: 'translate(-50%, -50%)',
-								width: 10, height: 10, borderRadius: '50%', background: '#ccc',
-								pointerEvents: 'none',
+							ref={progressBarRef}
+							onMouseDown={(e) => {
+								draggingRef.current = true;
+								const rect = e.currentTarget.getBoundingClientRect();
+								onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
 							}}
-						/>
-					</div>
+							style={{ position: 'relative', height: 16, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+						>
+							<div style={{ position: 'absolute', width: '100%', height: 3, background: '#2a2a2a', borderRadius: 2 }}>
+								<div ref={progressFillRef} style={{ width: '0%', height: '100%', background: '#5a9fd4', borderRadius: 2 }} />
+							</div>
+							<div
+								ref={progressThumbRef}
+								style={{
+									position: 'absolute', left: '0%', top: '50%',
+									transform: 'translate(-50%, -50%)',
+									width: 10, height: 10, borderRadius: '50%', background: '#ccc',
+									pointerEvents: 'none',
+								}}
+							/>
+						</div>
+					)}
 
 					{/* Playback row */}
 					<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

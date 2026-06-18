@@ -9,12 +9,18 @@
 //   • Pan/zoom: scroll wheel + middle mouse drag, double-click to fit
 //   • Frame border + checkerboard background around canvas frame
 
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { VideoAdjustSettings, defaultFgShadow } from './types';
 import { toFileUrl } from '@/Utils/mediaUtils';
+import type { PreviewRenderSpec } from '@/bindings';
 import { applyBlur, applyColorAdjust } from '@/Utils/canvasFilters';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
+import { buildFfSwitchGraph } from '@/Utils/ffmpegGraphs/ffSwitchGraph';
 import PreviewToolbar, { type PreviewToolbarHandle } from '../PreviewToolbar';
+import PreviewTimeline, { type PreviewTimelineHandle } from '../PreviewTimeline';
+import PreviewStateDot from '../PreviewStateDot';
+import { usePreviewCache } from '../usePreviewCache';
+import { PreviewState } from '../previewState';
 
 const CONTROLS_H = 52;
 const MIN_SCALE = 0.05;
@@ -41,10 +47,19 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 	const fgVideoRef    = useRef<HTMLVideoElement>(null);
 	const bgVideoRef    = useRef<HTMLVideoElement>(null);
 	const toolbarRef    = useRef<PreviewToolbarHandle>(null);
+	const timelineRef   = useRef<PreviewTimelineHandle>(null);
 	const rafRef        = useRef<number>(0);
 	const settingsRef   = useRef(settings);
 	settingsRef.current = settings;
 	const durationRef   = useRef(0);
+
+	const [duration, setDuration] = useState(0);
+	// On-demand accurate frame: off → live canvas; on → render the exact ffmpeg composite.
+	const [accurate, setAccurate] = useState(false);
+	const accurateRef = useRef(accurate);
+	accurateRef.current = accurate;
+	const [fgDim, setFgDim] = useState<{ w: number; h: number } | null>(null);
+	const [bgDim, setBgDim] = useState<{ w: number; h: number } | null>(null);
 
 	// ── Pan/zoom ─────────────────────────────────────────────────────────────────
 
@@ -69,6 +84,52 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 	const fhRef = useRef(fh);
 	fwRef.current = fw;
 	fhRef.current = fh;
+
+	// ── Accurate-frame engine (same builder as the ffSwitch export) ─────────────
+	const settingsStr = JSON.stringify(settings);
+	const graph = useMemo(() => {
+		if (!fgDim) return null;
+		const fgCopies = Math.max(1, settings.fg.copies);
+		const fgDims = Array.from({ length: fgCopies }, () => ({ width: fgDim.w, height: fgDim.h }));
+		const bgDims = settings.useFgAsBg
+			? { width: fgDim.w, height: fgDim.h }
+			: (bgDim ? { width: bgDim.w, height: bgDim.h } : null);
+		return buildFfSwitchGraph({ settings, fgDims, bgDims, duration: 1 });
+	}, [settingsStr, fgDim, bgDim]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	const cellCount = useMemo(
+		() => (duration > 0 ? Math.min(600, Math.max(20, Math.round(duration * 4))) : 1),
+		[duration],
+	);
+
+	const buildSpec = useCallback(
+		(time: number): PreviewRenderSpec | null => {
+			if (!fgFilePath || !graph) return null;
+			const inputs = Array.from({ length: graph.fgInputCount }, () => ({ path: fgFilePath, seek: time }));
+			if (graph.hasBgInput) {
+				const bgPath = settings.useFgAsBg ? fgFilePath : bgFilePath;
+				if (!bgPath) return null;
+				inputs.push({ path: bgPath, seek: time });
+			}
+			return {
+				inputs,
+				filterGraph: graph.filterComplex,
+				complex: true,
+				outLabel: graph.outLabel,
+				time,
+				maxDim: null,
+				namespace: 'ffswitch',
+			};
+		},
+		[fgFilePath, bgFilePath, graph, settings.useFgAsBg],
+	);
+
+	const { cellStates, frameUrl, frameState, requestFrame } = usePreviewCache({
+		duration,
+		cellCount,
+		buildSpec,
+		graphKey: `${fgFilePath}|${bgFilePath}|${graph?.filterComplex ?? ''}`,
+	});
 
 	const fitToView = useCallback(() => {
 		const area = previewAreaRef.current;
@@ -113,6 +174,7 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 		if (!v) return;
 		const onMeta = () => {
 			durationRef.current = v.duration;
+			setDuration(v.duration);
 			v.play().catch(() => {});
 			const bgV = bgVideoRef.current;
 			if (bgV && bgUrl) bgV.play().catch(() => {});
@@ -129,11 +191,34 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 		if (!v) return;
 		const onMeta = () => {
 			durationRef.current = v.duration;
+			setDuration(v.duration);
 			v.play().catch(() => {});
 		};
 		v.addEventListener('loadedmetadata', onMeta, { once: true });
 		return () => v.removeEventListener('loadedmetadata', onMeta);
 	}, [fgUrl, bgUrl]);
+
+	// ── Track source dimensions for the accurate-frame graph ────────────────────
+
+	useEffect(() => {
+		if (!fgUrl) { setFgDim(null); return; }
+		const v = fgVideoRef.current;
+		if (!v) return;
+		const onMeta = () => setFgDim({ w: v.videoWidth, h: v.videoHeight });
+		if (v.videoWidth > 0) onMeta();
+		v.addEventListener('loadedmetadata', onMeta, { once: true });
+		return () => v.removeEventListener('loadedmetadata', onMeta);
+	}, [fgUrl]);
+
+	useEffect(() => {
+		if (!bgUrl) { setBgDim(null); return; }
+		const v = bgVideoRef.current;
+		if (!v) return;
+		const onMeta = () => setBgDim({ w: v.videoWidth, h: v.videoHeight });
+		if (v.videoWidth > 0) onMeta();
+		v.addEventListener('loadedmetadata', onMeta, { once: true });
+		return () => v.removeEventListener('loadedmetadata', onMeta);
+	}, [bgUrl]);
 
 	// ── Sync playing state ────────────────────────────────────────────────────────
 
@@ -297,6 +382,7 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 		if (masterV && masterV.duration > 0) {
 			durationRef.current = masterV.duration;
 			toolbarRef.current?.update(masterV.currentTime, masterV.duration);
+			timelineRef.current?.update(masterV.currentTime, masterV.duration);
 		}
 	}, []);
 
@@ -390,9 +476,35 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 		const bgV = bgVideoRef.current;
 		if (fgV?.src) fgV.currentTime = t;
 		if (bgV?.src) bgV.currentTime = t;
-	}, []);
+		if (accurateRef.current) requestFrame(t);
+	}, [requestFrame]);
+
+	// On-demand accurate frame: toggle on → pause + render the current frame.
+	const toggleAccurate = useCallback(() => {
+		setAccurate((prev) => {
+			const next = !prev;
+			if (next) {
+				fgVideoRef.current?.pause();
+				bgVideoRef.current?.pause();
+				const t = (fgVideoRef.current ?? bgVideoRef.current)?.currentTime ?? 0;
+				requestFrame(t);
+			}
+			return next;
+		});
+	}, [requestFrame]);
+
+	// Re-render the accurate frame when the graph changes while accurate mode is on.
+	useEffect(() => {
+		if (!accurate || !graph) return;
+		const t = (fgVideoRef.current ?? bgVideoRef.current)?.currentTime ?? 0;
+		requestFrame(t);
+	}, [graph, accurate, requestFrame]);
 
 	// ── Render ────────────────────────────────────────────────────────────────────
+
+	// On-demand accurate frame: 🟢 shown when ready, else live canvas (🟡 while rendering).
+	const showGreen = accurate && frameState === 'cached' && !!frameUrl;
+	const dotState: PreviewState = showGreen ? 'cached' : 'approx';
 
 	return (
 		<div
@@ -421,7 +533,7 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 					boxSizing: 'border-box',
 				}} />
 
-				{/* Canvas */}
+				{/* Canvas (🟡 live approximation) */}
 				<canvas
 					ref={canvasRef}
 					width={fw}
@@ -433,8 +545,29 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 						width: fw * transform.scale,
 						height: fh * transform.scale,
 						imageRendering: 'auto',
+						display: showGreen ? 'none' : 'block',
 					}}
 				/>
+
+				{/* 🟢 Accurate ffmpeg composite (on-demand) */}
+				{showGreen && frameUrl && (
+					<img
+						src={frameUrl}
+						style={{
+							position: 'absolute',
+							left: transform.offsetX,
+							top: transform.offsetY,
+							width: fw * transform.scale,
+							height: fh * transform.scale,
+							imageRendering: 'auto',
+							pointerEvents: 'none',
+						}}
+						alt='Accurate preview'
+					/>
+				)}
+
+				{/* Fidelity indicator — only while accurate mode is on */}
+				{accurate && (fgUrl || bgUrlRaw) && <PreviewStateDot state={dotState} showLabel />}
 
 				{!fgUrl && !bgUrlRaw && (
 					<div style={{
@@ -463,11 +596,39 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 				playing={playing}
 				onTogglePlay={togglePlay}
 				onSeek={seekTo}
-				height={CONTROLS_H}
+				height={CONTROLS_H + 44}
+				progressSlot={
+					<PreviewTimeline
+						ref={timelineRef}
+						duration={duration}
+						cellCount={cellCount}
+						cellStates={cellStates}
+						onSeek={seekTo}
+					/>
+				}
 				rightSlot={
 					<span style={{ color: '#333', fontSize: 10, fontFamily: 'monospace' }}>
 						{fw} × {fh}
 					</span>
+				}
+				bottomSlot={
+					<button
+						onClick={toggleAccurate}
+						disabled={!graph}
+						style={{
+							padding: '3px 8px', fontSize: 10,
+							fontWeight: accurate ? 600 : 400,
+							cursor: graph ? 'pointer' : 'default',
+							borderRadius: 3,
+							border: `1px solid ${accurate ? '#46b450' : '#333'}`,
+							background: accurate ? '#1e3a24' : '#1a1a1a',
+							color: accurate ? '#8fe0a0' : (graph ? '#888' : '#555'),
+							outline: 'none',
+						}}
+						title='Render the exact ffmpeg composite for the current frame'
+					>
+						{accurate ? '🟢 Точный кадр: вкл' : 'Точный кадр'}
+					</button>
 				}
 			/>
 		</div>

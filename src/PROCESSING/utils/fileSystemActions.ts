@@ -123,7 +123,11 @@ export async function createFolder(parentPath: string, folderName = 'Новая 
 		unwrap(await commands.createFolder(newFolderPath));
 
 		const instanceType = getInstanceType(parentPath);
-		useColumnView_Store.getState().refreshAffectedColumns(instanceType, [parentPath]);
+		const store = useColumnView_Store.getState();
+		// Делаем новую папку выбранной + активируем панель: её сразу можно переименовать
+		// по Enter, а в другой панели выделение снимется (см. clearInstanceSelection).
+		store.addAndSelectItemByPath(instanceType, parentPath, { name: folderName, path: newFolderPath, isDir: true });
+		store.refreshAffectedColumns(instanceType, [parentPath]);
 	} catch (err) {
 		console.error('createFolder failed:', err);
 	}
@@ -136,7 +140,10 @@ export async function createTextFile(parentPath: string, fileName = 'Новый 
 		unwrap(await commands.createTextFile(newFilePath));
 
 		const instanceType = getInstanceType(parentPath);
-		useColumnView_Store.getState().refreshAffectedColumns(instanceType, [parentPath]);
+		const store = useColumnView_Store.getState();
+		// Новый файл — сразу выбранный и активный (Enter → переименование).
+		store.addAndSelectItemByPath(instanceType, parentPath, { name: fileName, path: newFilePath, isDir: false });
+		store.refreshAffectedColumns(instanceType, [parentPath]);
 	} catch (err) {
 		console.error('createTextFile failed:', err);
 	}

@@ -10,6 +10,7 @@ import { parseSubtitles, detectFormat } from './parsers';
 import { adaptSettingsToVideo } from './settingsAdapter';
 import { buildPhrases } from './buildPhrases';
 import { buildAssFile } from './buildAss';
+import { resolveFontFamily } from './fontFamily';
 
 export { onLoad } from '../_template/tauri';
 
@@ -22,6 +23,13 @@ function platformFallbackFont(): string {
 	const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
 	if (/Win/i.test(ua)) return 'Arial';
 	return 'Helvetica';
+}
+
+/** Экранирует путь как значение опции в filtergraph ffmpeg (`ass=PATH:fontsdir=DIR`).
+ * Парсер фильтров трактует `:` как разделитель опций, `\` — как escape, `'` — как кавычку;
+ * без экранирования ломаются пути с двоеточием (напр. Windows `C:\...`). */
+function escapeFilterPath(p: string): string {
+	return p.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
 export async function addTitle(_item: any, _description: any): Promise<string[]> {
@@ -105,22 +113,38 @@ export async function addTitle(_item: any, _description: any): Promise<string[]>
 		if (!fontResult) {
 			sendToMW('log', { text: `[addTitle] Font not found: "${adapted.text.font}", using fallback` });
 		}
-		const fontName = fontResult?.name ?? platformFallbackFont();
+		// libass матчит шрифт ASS-стиля по ИМЕНИ СЕМЕЙСТВА, а fonts_get_list отдаёт лишь
+		// stem файла ("ArialHB" вместо "Arial Hebrew") — при несовпадении шрифт молча
+		// подменяется дефолтным. Поэтому читаем настоящее имя семейства из файла.
+		let fontName = fontResult?.name ?? platformFallbackFont();
+		if (fontResult) {
+			const family = await resolveFontFamily(fontResult.path);
+			if (family) fontName = family;
+			else sendToMW('log', { text: `[addTitle] Could not read family name from ${fontResult.path}, using stem "${fontName}"` });
+		}
+		// fontsdir гарантирует, что libass подхватит файл даже если он не в системном кэше.
+		const fontsDir = fontResult ? path.dirname(fontResult.path) : null;
 
 		const assContent = buildAssFile(phrases, adapted, fontName);
 		const assFile = path.join(tmpDir, `addTitle_${Date.now()}.ass`);
 		await fs.write(assFile, assContent);
 
-		sendToMW('log', { text: `[addTitle] ASS written: ${assFile}` });
+		sendToMW('log', {
+			text: `[addTitle] ASS written: ${assFile} (font: "${fontName}"${fontsDir ? `, fontsdir: ${fontsDir}` : ''})`,
+		});
 
 		await fs.mkdir(path.dirname(fileTo));
+
+		const assFilter = fontsDir
+			? `ass=${escapeFilterPath(assFile)}:fontsdir=${escapeFilterPath(fontsDir)}`
+			: `ass=${escapeFilterPath(assFile)}`;
 
 		try {
 			await ffmpeg.run({
 				text: `${_description.infoText}: [add title] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 				duration: videoInfo.durationInSeconds || 10,
 				nodeId: _item.id,
-				command: ['-y', '-i', fileFrom, '-vf', `ass=${assFile}`, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', fileTo],
+				command: ['-y', '-i', fileFrom, '-vf', assFilter, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', fileTo],
 			});
 			finalFile.push(fileTo);
 		} catch (e) {

@@ -3,8 +3,9 @@
 // getFullInfoFromVideoFile → ffmpeg.getInfo; fs/path → helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW, VideoFileInfo } from '../_template/tauri';
+import { fs, ffmpeg, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { buildOverlayGraph } from '../../src/Utils/ffmpegGraphs/overlayGraph';
 
 export { onLoad } from '../_template/tauri';
 
@@ -25,34 +26,9 @@ interface OverlaySettings {
 	square: OverlayFormatSettings;
 }
 
-function isYuvaFormat(pix_fmt?: string): boolean {
-	return !!pix_fmt && pix_fmt.startsWith('yuva');
-}
-
-function isRgbAlphaFormat(pix_fmt?: string): boolean {
-	if (!pix_fmt) return false;
-	if (pix_fmt.startsWith('gbrap')) return true;
-	return ['rgba', 'argb', 'bgra', 'abgr', 'rgba64be', 'rgba64le'].includes(pix_fmt);
-}
-
-function hasAlphaChannel(pix_fmt?: string): boolean {
-	return isYuvaFormat(pix_fmt) || isRgbAlphaFormat(pix_fmt);
-}
-
-// Унифицированная нормализация FG (setparams ВСЕГДА первым, см. оригинальный плагин).
-function buildFgNormalizationFilter(info: VideoFileInfo): string {
-	const pix = info.pix_fmt || '';
-	const setparams = 'setparams=color_trc=bt709:color_primaries=bt709:colorspace=bt709';
-	if (isYuvaFormat(pix)) return `${setparams},format=yuva420p,format=rgba`;
-	if (isRgbAlphaFormat(pix)) return `${setparams},format=rgba`;
-	return `${setparams},format=rgba`;
-}
-
-function getFormatType(width: number, height: number): keyof OverlaySettings {
-	if (width > height) return 'landscape';
-	if (height > width) return 'portrait';
-	return 'square';
-}
+// Нормализация FG + построение видео-filter_complex вынесены в общий модуль
+// src/Utils/ffmpegGraphs/overlayGraph.ts (единый источник правды — превью overlay
+// рендерит точный кадр тем же builder'ом).
 
 // ── Pipeline для одной пары BG+FG ────────────────────────────────────────────
 
@@ -73,29 +49,15 @@ async function processSinglePair(
 	sendToMW('statusbar', { text: `${label} analyze\n${path.basename(fgFile)}` });
 	const fgInfo = await ffmpeg.getInfo(fgFile);
 
-	const formatType = getFormatType(bgInfo.width, bgInfo.height);
-	const fmt = overlaySettings[formatType];
-
-	const scaleFactorX = bgInfo.width / fmt.bgWidth;
-	const scaleFactorY = bgInfo.height / fmt.bgHeight;
-
-	const fgW = Math.round(fmt.scaleW * scaleFactorX);
-	const fgH = Math.round(fmt.scaleH * scaleFactorY);
-	const fgX = Math.round(fmt.posX * scaleFactorX);
-	const fgY = Math.round(fmt.posY * scaleFactorY);
-
-	const bgW = bgInfo.width;
-	const bgH = bgInfo.height;
 	const finalDuration = bgInfo.durationInSeconds > 0 ? bgInfo.durationInSeconds : fgInfo.durationInSeconds;
 
-	const fgScaleFilter = `scale=${fgW}:${fgH}`;
-	let rotateFilter = '';
-	if (fmt.rotation !== 0) {
-		const rotRad = (fmt.rotation * Math.PI) / 180;
-		rotateFilter = `,rotate=${rotRad.toFixed(6)}:ow='rotw(${rotRad.toFixed(6)})':oh='roth(${rotRad.toFixed(6)})'`;
-	}
-
-	const fgColorFilter = `${buildFgNormalizationFilter(fgInfo)},`;
+	// Видео-граф строится общим builder'ом (тот же, что рендерит точный кадр в превью).
+	const { videoFilter, fgNormalization } = buildOverlayGraph({
+		overlaySettings,
+		bgDims: { width: bgInfo.width, height: bgInfo.height },
+		fgPixFmt: fgInfo.pix_fmt || '',
+		offsetBG: opts.offsetBG,
+	});
 
 	sendToMW('log', {
 		level: 'info',
@@ -104,48 +66,8 @@ async function processSinglePair(
 			` pix_fmt=${fgInfo.pix_fmt}` +
 			` primaries=${fgInfo.color_primaries ?? '-'}` +
 			` trc=${fgInfo.color_transfer ?? '-'}` +
-			` alpha=${hasAlphaChannel(fgInfo.pix_fmt)}` +
-			` → ${fgColorFilter.replace(/,$/, '')}`,
+			` → ${fgNormalization}`,
 	});
-
-	let videoFilter: string;
-	const needsOffset = opts.offsetBG && (fgW >= bgW || fgH >= bgH);
-
-	if (needsOffset) {
-		const overflowBottom = fgY + fgH - bgH;
-		const overflowTop = -fgY;
-		const overflowRight = fgX + fgW - bgW;
-		const overflowLeft = -fgX;
-
-		const freeSpaceAbove = fgY;
-		const freeSpaceBelow = bgH - (fgY + fgH);
-		const freeSpaceLeft = fgX;
-		const freeSpaceRight = bgW - (fgX + fgW);
-
-		let bgShiftY = 0;
-		if (overflowBottom >= 0) bgShiftY = Math.round((freeSpaceAbove - freeSpaceBelow) / 2);
-		else if (overflowTop >= 0) bgShiftY = Math.round((freeSpaceBelow - freeSpaceAbove) / 2);
-
-		let bgShiftX = 0;
-		if (overflowRight >= 0) bgShiftX = Math.round((freeSpaceLeft - freeSpaceRight) / 2);
-		else if (overflowLeft >= 0) bgShiftX = Math.round((freeSpaceRight - freeSpaceLeft) / 2);
-
-		const cropY = bgShiftY >= 0 ? bgShiftY / 2 : 0;
-		const padY = bgShiftY <= 0 ? -bgShiftY / 2 : 0;
-		const croppedH = bgH - Math.abs(bgShiftY) / 2;
-
-		const cropX = bgShiftX >= 0 ? bgShiftX / 2 : 0;
-		const padX = bgShiftX <= 0 ? -bgShiftX / 2 : 0;
-		const croppedW = bgW - Math.abs(bgShiftX) / 2;
-
-		videoFilter =
-			`[0:v]crop=w=${croppedW}:h=${croppedH}:x=${cropX}:y=${cropY},` +
-			`pad=w=${bgW}:h=${bgH}:x=${padX}:y=${padY}:color=black[bg];` +
-			`[1:v]${fgColorFilter}${fgScaleFilter}${rotateFilter}[fg];` +
-			`[bg][fg]overlay=${fgX + padX}:${fgY + padY},format=yuv420p[v]`;
-	} else {
-		videoFilter = `[1:v]${fgColorFilter}${fgScaleFilter}${rotateFilter}[fg];[0:v][fg]overlay=${fgX}:${fgY},format=yuv420p[v]`;
-	}
 
 	// Аудио
 	const useBgAudio = opts.bgAudio && bgInfo.hasAudio;

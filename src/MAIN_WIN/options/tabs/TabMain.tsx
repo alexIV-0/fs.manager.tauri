@@ -9,7 +9,15 @@ import MySettingRow from './settings/MySettingRow';
 import MyTooltip from '@/MAIN_WIN/Universal/MyTooltip';
 import MyAutocomplete from '@/MAIN_WIN/Universal/MyAutocomplete';
 import { filePathNamePattern } from '@/NODE_WIN/utils/searchTypes';
-import { COLOR_TYPE_EXCLUDED, COLOR_TYPE_REQUIRES_EXECUTABLE } from '@/types/appSettings';
+import { COLOR_TYPE_EXCLUDED, COLOR_TYPE_REQUIRES_EXECUTABLE, RESOURCE_POOL_DEFAULT_LIMITS } from '@/types/appSettings';
+
+// Короткие подсказки по ресурсным пулам (вариант A — фиксированный набор).
+const POOL_HINTS: Record<string, string> = {
+	local: 'Тяжёлое локальное / программы-единоличники: After Effects, Moho, whisper. 1 = одно за раз.',
+	online: 'Облачные ИИ (отправил запрос — ждёшь ответ). Локальных ресурсов почти не жрут.',
+	ffmpeg: 'ffmpeg / ffprobe — средняя нагрузка.',
+	helpers: 'Лёгкое внутреннее: поиск, копирование, spy и т.п.',
+};
 import type { AppSettings, AppSettingsPatch } from '@/types/appSettings';
 
 const CUSTOM_FOLDER = 'Custom Folder...';
@@ -314,90 +322,21 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 
 			{/* ============ РЕСУРСНЫЕ ПУЛЫ ============ */}
 			<Section title='Ресурсные пулы'>
-				<Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-					<Typography sx={{ color: greyColor(55), fontSize: '0.82rem', flex: 1 }}>
-						Лимиты одновременных шагов по типу ноды (colorType). Применяются при старте.
-					</Typography>
-					<MyTooltip text='Обновить — пересканит установленные плагины и добавит новые colorType. Уже добавленные типы без плагинов помечаются «не используется», но не удаляются автоматически.' />
-					<Button
-						size='small'
-						variant='outlined'
-						startIcon={<RefreshCw size={13} />}
-						onClick={() => rescanColorTypes()}
-						sx={{ textTransform: 'none', fontSize: '0.78rem', py: 0.2 }}
-					>
-						Обновить
-					</Button>
-				</Box>
-				{colorTypes.lastScannedAt && (
-					<Typography sx={{ color: greyColor(40), fontSize: '0.72rem', mb: 0.5 }}>
-						Последнее сканирование: {new Date(colorTypes.lastScannedAt).toLocaleString()}
-					</Typography>
-				)}
-
-				{mergedTypes.map((t) => {
-					const limit = settings.resourcePools[t.name] ?? t.defaultLimit ?? 1;
-					const execKey = COLOR_TYPE_REQUIRES_EXECUTABLE[t.name];
-					const execPath = execKey ? (execPaths[execKey] ?? '') : null;
-					// null = не требует исполняемого; '' = требует но не задан; string = задан
-					const execOk = execPath === null ? null : execPath.length > 0;
-
-					return (
-						<MySettingRow
-							key={t.name}
-							label={
-								<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-									{execOk === true && (
-										<span title={`Путь задан: ${execPath}`} style={{ display: 'flex', alignItems: 'center' }}>
-											<CheckCircle size={13} color='#4caf50' />
-										</span>
-									)}
-									{execOk === false && (
-										<span title='Путь к исполняемому файлу не задан в настройках' style={{ display: 'flex', alignItems: 'center' }}>
-											<AlertTriangle size={13} color='#e8a838' />
-										</span>
-									)}
-									<span style={{ color: t.orphan ? greyColor(45) : undefined }}>
-										{t.name + (t.orphan ? ' — не используется' : '')}
-									</span>
-								</Box>
-							}
-							type='number'
-							value={limit}
-							onChange={(v) => updatePoolLimit(t.name, v)}
-							min={1}
-							trailing={
-								t.orphan ? (
-									<IconButton
-										size='small'
-										onClick={() => deleteType(t.name)}
-										sx={{ p: 0.25, color: greyColor(45), '&:hover': { color: '#d65a5a' } }}
-										title='Удалить тип'
-									>
-										<Trash2 size={14} />
-									</IconButton>
-								) : null
-							}
-						/>
-					);
-				})}
-
-				<Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-					<TextField
-						size='small'
-						variant='standard'
-						placeholder='новый тип'
-						value={newTypeName}
-						onChange={(e) => setNewTypeName(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter') addNewType();
-						}}
-						sx={{ width: 220 }}
+				<Typography sx={{ color: greyColor(55), fontSize: '0.82rem', mb: 1 }}>
+					Лимиты одновременных шагов по классу ресурса. Применяются при старте обработки.
+					Плагин попадает в пул по полю resourcePool в манифесте (или по дефолту своего colorType).
+				</Typography>
+				{Object.keys(RESOURCE_POOL_DEFAULT_LIMITS).map((pool) => (
+					<MySettingRow
+						key={pool}
+						label={pool}
+						tooltip={POOL_HINTS[pool]}
+						type='number'
+						value={settings.resourcePools[pool] ?? RESOURCE_POOL_DEFAULT_LIMITS[pool]}
+						onChange={(v) => updatePoolLimit(pool, v)}
+						min={1}
 					/>
-					<Button size='small' variant='outlined' onClick={addNewType} sx={{ textTransform: 'none', fontSize: '0.78rem', py: 0.2 }}>
-						+ Добавить
-					</Button>
-				</Box>
+				))}
 			</Section>
 
 			{/* ============ ЛОКАЛЬНЫЙ АРХИВ ============ */}

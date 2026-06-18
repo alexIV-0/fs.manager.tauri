@@ -1,6 +1,7 @@
 import { filePathNamePattern } from '@/NODE_WIN/utils/searchTypes';
 import { pathPattern_store, programPathPattern_store, folderPath_store } from '@/Store/MainWin/pathPattern_store';
 import { CustomUserSettings } from '../CustomUserSettings';
+import { FfmpegDownloadSection, WhisperModelsSection } from './DepsDownloadPanel';
 
 export default function TabPaths() {
 	const pathPattern = pathPattern_store();
@@ -28,6 +29,7 @@ export default function TabPaths() {
 				multiselect={false}
 				options={['Custom File...']}
 			/>
+			<FfmpegDownloadSection />
 			<CustomUserSettings
 				title={dopMatFolderText}
 				store={folderPathStore}
@@ -35,6 +37,7 @@ export default function TabPaths() {
 				multiselect={false}
 				options={['Custom Folder...']}
 			/>
+			<WhisperModelsSection />
 		</>
 	);
 }

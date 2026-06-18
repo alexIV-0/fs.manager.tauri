@@ -452,10 +452,12 @@ export const ffmpeg = {
 		return api().invoke('ffprobe_get_path');
 	},
 
-	/** Детект границ сцен через ffmpeg `select=scene` + Otsu. Возвращает массив таймштампов. */
+	/** Детект границ сцен (адаптивный, в духе PySceneDetect AdaptiveDetector).
+	 *  `select='gte(scene,0)'` печатает scene-score КАЖДОГО кадра — нужно, чтобы
+	 *  считать локальное среднее по соседям. Возвращает массив таймштампов. */
 	async detectScenes(filePath: string): Promise<number[]> {
 		const result = await ffmpeg.exec(
-			['-v', 'info', '-vsync', '0', '-i', filePath, '-vf', "select='gt(scene,0.01)',metadata=print:file=-:key=lavfi.scene_score", '-f', 'null', '-'],
+			['-v', 'info', '-vsync', '0', '-i', filePath, '-vf', "select='gte(scene,0)',metadata=print:file=-:key=lavfi.scene_score", '-f', 'null', '-'],
 			{ statusText: `[detectScenes] ${filePath}` },
 		);
 		// metadata=print:file=- пишет в stdout (в нашем Rust-spawn'е stdout захватывается).
@@ -475,50 +477,64 @@ export const ffmpeg = {
 	},
 };
 
-// ── Internal: scene-cut parser (Otsu + threshold) ────────────────────────────
+// ── Internal: scene-cut parser (adaptive, PySceneDetect-style) ───────────────
+//
+// Почему адаптивно, а не фиксированным порогом / Otsu:
+//   • Hard cut    — оценка резко высокая на ОДНОМ кадре, соседи низкие → всплеск.
+//   • Панорама/   — оценка высокая на СЕРИИ кадров подряд → локальное среднее
+//     motion blur   тоже высокое → отношение score/среднее ≈ 1 → НЕ склейка.
+//   • Запись      — оценки равномерно-шумные → ничего не торчит над фоном +
+//     экрана        отсекается абсолютным полом → склеек нет (а не 733).
+// Otsu делил любое распределение надвое даже без реальных склеек — отсюда баг.
+
+// Окно соседних кадров для скользящего среднего (с каждой стороны).
+const SCENE_WINDOW = 3;
+// Во сколько раз оценка должна превышать локальное среднее, чтобы считаться склейкой.
+const SCENE_RATIO = 3.0;
+// Абсолютный пол: ниже — это шум (движение мыши, артефакты сжатия), не склейка.
+const SCENE_MIN_SCORE = 0.3;
+// Минимальный интервал между склейками (сек) — не даём рассыпать видео покадрово.
+const SCENE_MIN_GAP = 0.4;
 
 function parseSceneTimestamps(stdout: string): number[] {
-	type Cand = { time: number; score: number };
+	type Frame = { time: number; score: number };
 	const lines = stdout.split(/\r?\n/);
-	const cands: Cand[] = [];
+	const frames: Frame[] = [];
 	for (let i = 0; i < lines.length - 1; i++) {
 		const tm = lines[i].match(/pts_time:([\d.]+)/);
 		if (!tm) continue;
 		const sm = lines[i + 1]?.match(/lavfi\.scene_score=([\d.]+)/);
 		if (!sm) continue;
-		cands.push({ time: parseFloat(tm[1]), score: parseFloat(sm[1]) });
+		frames.push({ time: parseFloat(tm[1]), score: parseFloat(sm[1]) });
 	}
-	if (cands.length === 0) return [0];
+	if (frames.length === 0) return [0];
 
-	const threshold = otsuThreshold(cands.map((c) => c.score));
-	const filtered = cands.filter((c) => c.score >= threshold).map((c) => c.time);
-	filtered.unshift(0);
-	return [...new Set(filtered)].sort((a, b) => a - b);
-}
+	const cuts: number[] = [];
+	let lastCut = -Infinity;
 
-function otsuThreshold(scores: number[]): number {
-	if (scores.length < 2) return 0.3;
-	const bins = 200;
-	const hist = new Array(bins).fill(0);
-	for (const s of scores) hist[Math.min(Math.floor(s * bins), bins - 1)]++;
-	const total = scores.length;
-	let sum = 0;
-	for (let i = 0; i < bins; i++) sum += i * hist[i];
-	let sumB = 0, wB = 0, maxVar = 0, threshold = 0.3;
-	for (let i = 0; i < bins; i++) {
-		wB += hist[i];
-		if (wB === 0 || wB === total) continue;
-		const wF = total - wB;
-		sumB += i * hist[i];
-		const mB = sumB / wB;
-		const mF = (sum - sumB) / wF;
-		const variance = wB * wF * (mB - mF) ** 2;
-		if (variance > maxVar) {
-			maxVar = variance;
-			threshold = i / bins;
+	for (let i = 0; i < frames.length; i++) {
+		const cur = frames[i];
+		if (cur.score < SCENE_MIN_SCORE) continue; // абсолютный пол — отсекаем шум
+
+		// Скользящее среднее по соседям + проверка, что кадр — локальный пик.
+		let sum = 0, n = 0, isPeak = true;
+		for (let j = i - SCENE_WINDOW; j <= i + SCENE_WINDOW; j++) {
+			if (j < 0 || j >= frames.length || j === i) continue;
+			sum += frames[j].score;
+			n++;
+			if (frames[j].score > cur.score) isPeak = false;
+		}
+		const avg = n > 0 ? sum / n : 0;
+
+		// Склейка = резкий всплеск над локальным фоном И локальный максимум.
+		if (isPeak && cur.score >= SCENE_RATIO * avg && cur.time - lastCut >= SCENE_MIN_GAP) {
+			cuts.push(cur.time);
+			lastCut = cur.time;
 		}
 	}
-	return threshold;
+
+	cuts.unshift(0);
+	return [...new Set(cuts)].sort((a, b) => a - b);
 }
 
 // ─── exec: произвольная внешняя команда ──────────────────────────────────────
@@ -610,9 +626,20 @@ export const paths = {
 		return api().invoke('os_tmpdir');
 	},
 
-	/** Корневая папка plugins-dev (где лежат собранные/dev-плагины с их ресурсами). */
+	/** Корневая папка plugins-dev (ИСХОДНИКИ плагинов, только dev!). В проде её НЕТ —
+	 *  для доступа к ресурсам самого плагина используй pluginInstallPath(). */
 	pluginsDev(): Promise<string> {
 		return api().invoke('get_plugins_dev_path');
+	},
+
+	/** Установочная папка конкретного плагина (где лежат его ассеты: бинарники, модели).
+	 *  Работает и в dev (distr-plugins/<id>@<ver>), и в prod (app_data/plugins/<id>@<ver>) —
+	 *  в отличие от pluginsDev(). id/version бери из 3-го аргумента плагина (pluginCtx). */
+	async pluginInstallPath(pluginId: string, version?: string): Promise<string | null> {
+		// ВАЖНО: позиционные аргументы — у plugin_manager_get_plugin есть argMapper
+		// (pluginId, version?), который ждёт их по порядку, а не единым объектом.
+		const info: any = await api().invoke('plugin_manager_get_plugin', pluginId, version);
+		return info?.path ?? null;
 	},
 
 	/** Сегмент платформы для путей к нативным бинарникам:

@@ -23,7 +23,12 @@ export interface PluginJsonData {
 	external: string[];
 	cost: string;
 	costUnit: CostUnit;
+	/** Ресурсный пул. '' / отсутствует = дефолт по colorType. */
+	resourcePool?: ResourcePool;
 }
+
+export type ResourcePool = '' | 'local' | 'online' | 'ffmpeg' | 'helpers';
+export const RESOURCE_POOLS: ResourcePool[] = ['', 'local', 'online', 'ffmpeg', 'helpers'];
 
 // ── UI JSON ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +71,8 @@ export const HASH_OPTIONS = [
 	{ value: '#typeOfFile', desc: 'Типы файлов из настроек' },
 	{ value: '#folders', desc: 'Папки в текущем проекте' },
 	{ value: '#whisperModels', desc: 'Модели Whisper' },
+	{ value: '#vkAccounts', desc: 'Аккаунты VK для текущей главной папки' },
+	{ value: '#vkGroups', desc: 'Админ-сообщества VK выбранного аккаунта' },
 	{ value: '#recursiveFF', desc: 'Рекурсивный выбор файла/папки' },
 	{ value: '#historyValue', desc: 'История введённых значений (по id свойства)' },
 	{ value: '#historyValue(key)', desc: 'История введённых значений по произвольному ключу (shared между свойствами)' },
@@ -175,6 +182,27 @@ export const CONTROL_TYPE_REGISTRY: ControlTypeConfig[] = [
 			controlType: 'timecode',
 			controlProps: { label: 'Timecode', tooltip: '', value: 0 },
 			outputType: 'timecode',
+			required: false,
+		},
+	},
+	{
+		controlType: 'timeRange',
+		label: 'Time Range',
+		color: '#5181b8',
+		defaultProps: {
+			controlType: 'timeRange',
+			controlProps: {
+				label: 'Time window',
+				tooltip: '',
+				value: [0, 1440],
+				format: 'timecode',
+				unit: 'minutes',
+				step: 5,
+				range: [0, 1440],
+				decimals: 2,
+				allowManualOverride: true,
+			},
+			outputType: 'array',
 			required: false,
 		},
 	},

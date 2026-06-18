@@ -13,9 +13,9 @@ import { useErrors_Store } from '@/Store/Processing/useErrors_Store';
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
+import { getProjectActivity, setProjectActivity, pruneActivity } from '@/Utils/projectActivityLS';
 import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
-import { commands, unwrap } from '@/Utils/specta';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
@@ -73,10 +73,15 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			getOffArr = cleaned;
 			saveToLocalStorage(curMainFolder.id, getOffArr);
 		}
+		// та же чистка для карты активности
+		pruneActivity(curMainFolder.id, finalArr);
 
-		// ── авто-отключение проектов по mtime папки OUT ──────────────────
-		// Если включено в настройках и OUT не модифицировалась N дней —
-		// добавляем проект в off-список (тот же массив в LS, что и ручной чекбокс).
+		// ── авто-отключение «холодных» проектов ──────────────────────────
+		// Если проект не использовался N дней — добавляем в off-список (тот же
+		// массив в LS, что и ручной чекбокс). Дату активности ведём сами в LS,
+		// а НЕ по mtime папки OUT: gsync-демон Google откатывает время каталога
+		// на серверное, и свежие файлы внутри OUT его не омолаживают.
+		// Дату двигает обработка (addedCount > 0) и ручное включение.
 		// Если все подпапки отключены — главная папка остаётся активной (желтеет в UI).
 		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
 		if (autoDisableDays && autoDisableDays > 0) {
@@ -84,15 +89,16 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			const offSet = new Set<string>(getOffArr);
 			for (const projectName of finalArr) {
 				if (offSet.has(projectName)) continue;
-				const outPath = joinPath(curMainFolder.path, projectName, 'OUT');
-				const info: any = unwrap(await commands.getFileInfo(outPath));
-				// getFileInfo (Rust FileInfo) сериализуется в snake_case: is_dir / modified (ms).
-				const isDir = info?.is_dir ?? info?.isDirectory ?? false;
-				const modifiedMs: number | undefined = info?.modified ?? info?.modifiedMs;
-				if (!isDir) continue;
-				if (typeof modifiedMs === 'number' && modifiedMs < cutoffMs) {
+				// Первая встреча проекта — засеваем «сейчас», чтобы при апгрейде
+				// (или у новой папки) ничего не отключилось задним числом.
+				let lastActivityMs = getProjectActivity(curMainFolder.id, projectName);
+				if (lastActivityMs === undefined) {
+					lastActivityMs = Date.now();
+					setProjectActivity(curMainFolder.id, projectName, lastActivityMs);
+				}
+				if (lastActivityMs < cutoffMs) {
 					offSet.add(projectName);
-					console.log(`[autoDisable] ${mainFolderName}/${projectName} — OUT idle > ${autoDisableDays}d`);
+					console.log(`[autoDisable] ${mainFolderName}/${projectName} — idle > ${autoDisableDays}d`);
 				}
 			}
 			if (offSet.size !== getOffArr.length) {
@@ -129,6 +135,10 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			const addedCount = useWorkProject_Store.getState().workProject.length - beforeCount;
 			if (addedCount > 0) {
 				console.log(`%c→ found ${addedCount} item(s)`, 'color: #d4a017');
+				// Проект реально используется — двигаем дату активности на «сейчас».
+				// Пока в него что-то падает, auto-disable его не тронет. Бесплатно:
+				// перебора файлов нет, это побочка уже сделанного поиска.
+				setProjectActivity(curMainFolder.id, projectName, Date.now());
 			}
 
 			console.groupEnd();

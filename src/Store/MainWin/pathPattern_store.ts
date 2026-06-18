@@ -309,7 +309,7 @@ const defaultFileTypes: PatternElement[] = [
 		color: '#0a84feff',
 		id: 'video',
 		name: 'video',
-		path: ['avi', 'mov', 'mp4', 'mpeg', 'mpg', 'm2v', 'm4v', 'ts', 'mxf'],
+		path: ['avi', 'mov', 'mp4', 'mpeg', 'mpg', 'm2v', 'm4v', 'ts', 'mxf', 'mkv'],
 		inactivePath: [],
 	},
 	{ color: '#ffae0cff', id: 'audio', name: 'audio', path: ['mp3', 'wav'], inactivePath: [] },
@@ -344,6 +344,7 @@ const defaultNodeType: PatternElement[] = [
 	{ color: '#ff2d9dff', id: 'moho', name: 'moho', path: [], inactivePath: [] },
 	{ color: '#2d84ffff', id: 'ai', name: 'ai', path: [], inactivePath: [] },
 	{ color: '#6900c5ff', id: 'ffprobe', name: 'ffprobe', path: [], inactivePath: [] },
+	{ color: 'rgb(81, 129, 184)', id: 'posting', name: 'posting', path: [], inactivePath: [] },
 	// { color: '#7d51a3ff', id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
 ];
 

@@ -1,7 +1,8 @@
 import { DDMProperty } from '@/NODE_WIN/definitions/types';
 import { useResolveOptions } from '@/NODE_WIN/hooks/useResolveOptions';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
-import { Box, Divider, InputBase, MenuItem, Select, Stack, Typography } from '@mui/material';
+import { Box, Divider, IconButton, InputBase, MenuItem, Select, Stack, Typography } from '@mui/material';
+import { Trash2 } from 'lucide-react';
 import { useStore } from '@xyflow/react';
 import { memo, useEffect, useRef, useState } from 'react';
 import InputHandle from '../components/InputHandle';
@@ -19,9 +20,13 @@ const getDividerText = (opt: string): string =>
 interface SimpleDDMProps {
 	property: DDMProperty;
 	onChange: (value: string) => void;
+	// Опционально: per-item удаление (для vk-account ddm). При наведении на удаляемую
+	// опцию показывается корзина; клик зовёт onOptionDelete и НЕ выбирает пункт.
+	onOptionDelete?: (option: string) => void;
+	isOptionDeletable?: (option: string) => boolean;
 }
 
-function SimpleDDM({ property, onChange }: SimpleDDMProps) {
+function SimpleDDM({ property, onChange, onOptionDelete, isOptionDeletable }: SimpleDDMProps) {
 	const { controlProps } = property;
 	// useViewport() ре-рендерит на каждый pan-tick. Подписываемся только на zoom.
 	const zoom = useStore((s) => s.transform[2]);
@@ -73,6 +78,17 @@ function SimpleDDM({ property, onChange }: SimpleDDMProps) {
 	const handleOpen = () => {
 		setSearchQuery('');
 		setOpen(true);
+		// Ре-резолв динамических опций (#tokens) при открытии — данные могли измениться
+		// с момента монтирования. Напр. #vkGroups зависит от выбранного выше аккаунта,
+		// а #folders — от текущего пути. Статические опции просто возвращаются как есть.
+		const currentValue = normalizeValue(controlProps.value);
+		resolveOptions(controlProps.options ?? []).then((resolved) => {
+			if (currentValue && !resolved.includes(currentValue)) {
+				setResolvedOptions([currentValue, ...resolved]);
+			} else {
+				setResolvedOptions(resolved);
+			}
+		});
 		// Фокус на поиск после открытия
 		setTimeout(() => searchRef.current?.focus(), 50);
 	};
@@ -167,8 +183,36 @@ function SimpleDDM({ property, onChange }: SimpleDDMProps) {
 								</Divider>
 							</Box>
 						) : (
-							<MenuItem key={opt} value={opt} sx={{ fontSize: '1.2rem', p: '1px 12px' }}>
-								{opt}
+							<MenuItem
+								key={opt}
+								value={opt}
+								sx={{
+									fontSize: '1.2rem',
+									p: '1px 12px',
+									display: 'flex',
+									alignItems: 'center',
+									gap: 1,
+									'&:hover .ddm-del': { opacity: 1 },
+								}}
+							>
+								<Box component='span' sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+									{opt}
+								</Box>
+								{onOptionDelete && isOptionDeletable?.(opt) && (
+									<IconButton
+										className='ddm-del'
+										size='small'
+										onMouseDown={(e) => e.stopPropagation()}
+										onClick={(e) => {
+											e.stopPropagation();
+											e.preventDefault();
+											onOptionDelete(opt);
+										}}
+										sx={{ opacity: 0, p: '2px', color: greyColor(55), '&:hover': { color: '#ff6b6b' } }}
+									>
+										<Trash2 size={14} />
+									</IconButton>
+								)}
 							</MenuItem>
 						),
 					)

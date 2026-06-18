@@ -17,7 +17,8 @@
 		"plug:pack:all": "node plugins-dev/_packScripts/pack-plugins-all.js",
 		"jsx:build": "node jsx/_packScripts/build-jsx.js",
 		"jsx:watch": "node jsx/_packScripts/build-jsx-watch.js",
-		"jsx:play": "node jsx/_packScripts/build-playground.js"
+		"jsx:play": "node jsx/_packScripts/build-playground.js",
+		"ffmpeg:scan": "node scripts/ffmpeg-scan.mjs"
 	},
 	"dependencies": {
 		"@crabnebula/tauri-plugin-drag": "^2.1.0",

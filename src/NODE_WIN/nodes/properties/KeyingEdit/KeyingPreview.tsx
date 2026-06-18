@@ -1,19 +1,26 @@
 // src/NODE_WIN/nodes/properties/KeyingEdit/KeyingPreview.tsx
 //
-// Left panel: original video/image playback + keyed frame preview.
-// - Video plays via <video> for navigation (find the right frame)
-// - Keyed preview is rendered live on a <canvas> (client-side, no ffmpeg) —
-//   same approach as the Convert / ffSwitch previews. See keyingPreviewCanvas.ts.
-// - Toggle between "Original" and "Keying" modes
-// - Eyedropper: click on original frame → pick color
-// - Zoom: scroll wheel, Pan: middle mouse drag, Double-click: fit to view
+// Left panel: keyed-frame preview with the unified render-bar workflow.
+// - Live client-side approximation on a <canvas> (keyingPreviewCanvas.ts) = the 🟡 tier:
+//   instant feedback while you tune sliders (no ffmpeg).
+// - Accurate ffmpeg frame rendered in the background per timeline cell (usePreviewCache) =
+//   the 🟢 tier: on pause it swaps in over the canvas → what you see == the export.
+// - PreviewStateDot (corner) shows the fidelity of the frame on screen.
+// - PreviewTimeline (render-bar) shows which cells are cached and scrubs.
+// - The old Original/Preview toggle buttons are gone — fidelity is shown, not chosen.
+// - Eyedropper: click frame → pick color. Zoom: wheel, Pan: middle drag, Dbl-click: fit.
 
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { toFileUrl } from '@/Utils/mediaUtils';
-import { KeyingSettings } from './types';
+import type { PreviewRenderSpec } from '@/bindings';
+import { KeyingSettings, buildKeyingFilterString } from './types';
 import { renderKeyingPreview } from './keyingPreviewCanvas';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 import PreviewToolbar, { type PreviewToolbarHandle } from '../PreviewToolbar';
+import PreviewTimeline, { type PreviewTimelineHandle } from '../PreviewTimeline';
+import PreviewStateDot from '../PreviewStateDot';
+import { usePreviewCache } from '../usePreviewCache';
+import { PreviewState } from '../previewState';
 
 const CONTROLS_H = 84;
 const MIN_SCALE = 0.1;
@@ -46,13 +53,12 @@ export default function KeyingPreview({
 	const imgRef         = useRef<HTMLImageElement>(null);
 	const keyingCanvasRef = useRef<HTMLCanvasElement>(null);
 	const toolbarRef     = useRef<PreviewToolbarHandle>(null);
+	const timelineRef    = useRef<PreviewTimelineHandle>(null);
 	const rafRef         = useRef<number>(0);
 	const durationRef    = useRef(0);
 
 	const [playing, setPlaying] = useState(false);
-	const [mode, setMode] = useState<'original' | 'keying'>('original');
-	const modeRef = useRef(mode);
-	modeRef.current = mode;
+	const [duration, setDuration] = useState(0);
 
 	// ── Keyed output size (from the rendered canvas) ────────────────────────
 	const [keyedImageSize, setKeyedImageSize] = useState<{ w: number; h: number } | null>(null);
@@ -85,6 +91,43 @@ export default function KeyingPreview({
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
 
+	// ── Filtergraph (single source of truth — same builder as the export) ───
+	const settingsStr = JSON.stringify(settings);
+	const filterGraph = useMemo(() => buildKeyingFilterString(settings), [settingsStr]); // eslint-disable-line react-hooks/exhaustive-deps
+	const hasEffect = filterGraph.length > 0;
+	const hasEffectRef = useRef(hasEffect);
+	hasEffectRef.current = hasEffect;
+
+	// ── Render-bar grid: ~4 cells/sec (250 ms buckets), clamped ─────────────
+	const cellCount = useMemo(
+		() => (duration > 0 ? Math.min(600, Math.max(20, Math.round(duration * 4))) : 1),
+		[duration],
+	);
+
+	// Build the ffmpeg render-spec for a given time (keying = single input, -vf).
+	const buildSpec = useCallback(
+		(time: number): PreviewRenderSpec | null => {
+			if (!filePath || !hasEffect) return null;
+			return {
+				inputs: [{ path: filePath, seek: time }],
+				filterGraph,
+				complex: false,
+				outLabel: null,
+				time,
+				maxDim: null, // full source res — the 🟢 frame is the real thing
+				namespace: 'keying',
+			};
+		},
+		[filePath, hasEffect, filterGraph],
+	);
+
+	const { cellStates, frameUrl, frameState, requestFrame } = usePreviewCache({
+		duration,
+		cellCount,
+		buildSpec,
+		graphKey: `${filePath}|${filterGraph}`,
+	});
+
 	// ── Fit to container ─────────────────────────────────────────────────────
 
 	const fitToView = useCallback(() => {
@@ -92,10 +135,8 @@ export default function KeyingPreview({
 		if (!area) return;
 
 		const v = videoRef.current;
-		const kSize = keyedImageSizeRef.current;
-		const oSize = origImageSizeRef.current;
-		const srcW = (modeRef.current === 'keying' ? kSize?.w : undefined) ?? oSize?.w ?? v?.videoWidth ?? kSize?.w ?? 0;
-		const srcH = (modeRef.current === 'keying' ? kSize?.h : undefined) ?? oSize?.h ?? v?.videoHeight ?? kSize?.h ?? 0;
+		const srcW = keyedImageSizeRef.current?.w ?? origImageSizeRef.current?.w ?? v?.videoWidth ?? 0;
+		const srcH = keyedImageSizeRef.current?.h ?? origImageSizeRef.current?.h ?? v?.videoHeight ?? 0;
 		if (!srcW || !srcH) return;
 
 		const areaW = area.clientWidth;
@@ -127,6 +168,7 @@ export default function KeyingPreview({
 		if (!v) return;
 		const onMeta = () => {
 			durationRef.current = v.duration;
+			setDuration(v.duration);
 			v.play().catch(() => {});
 			if (!hasAutoFitRef.current) {
 				hasAutoFitRef.current = true;
@@ -137,13 +179,16 @@ export default function KeyingPreview({
 		return () => v.removeEventListener('loadedmetadata', onMeta);
 	}, [fileUrl, isImage, fitToView]);
 
-	// ── Sync playing state ────────────────────────────────────────────────────
+	// ── Sync playing state + request an accurate frame on pause ─────────────
 
 	useEffect(() => {
 		const v = videoRef.current;
 		if (!v) return;
 		const onPlay  = () => setPlaying(true);
-		const onPause = () => setPlaying(false);
+		const onPause = () => {
+			setPlaying(false);
+			requestFrame(v.currentTime); // paused → fetch the 🟢 frame for this cell
+		};
 		setPlaying(!v.paused);
 		v.addEventListener('play', onPlay);
 		v.addEventListener('pause', onPause);
@@ -151,7 +196,7 @@ export default function KeyingPreview({
 			v.removeEventListener('play', onPlay);
 			v.removeEventListener('pause', onPause);
 		};
-	}, [fileUrl]);
+	}, [fileUrl, requestFrame]);
 
 	// ── Draw keyed frame onto the canvas (client-side, no ffmpeg) ───────────
 
@@ -195,33 +240,34 @@ export default function KeyingPreview({
 		}
 	}, [isImage, fitToView]);
 
-	// ── RAF loop: progress bar + live keyed render ─────────────────────────
+	// ── RAF loop: progress + timeline playhead + live keyed render ──────────
 
 	useEffect(() => {
 		const loop = () => {
 			const v = videoRef.current;
 			if (v && v.duration > 0) {
 				toolbarRef.current?.update(v.currentTime, v.duration);
+				timelineRef.current?.update(v.currentTime, v.duration);
 			}
-			if (modeRef.current === 'keying') drawKeyed();
+			if (hasEffectRef.current) drawKeyed();
 			rafRef.current = requestAnimationFrame(loop);
 		};
 		rafRef.current = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(rafRef.current);
 	}, [drawKeyed]);
 
-	// Сбрасываем hover при уходе с keying-режима
+	// Reset hover when there's no effect on screen
 	useEffect(() => {
-		if (mode !== 'keying') onPixelHover?.(null);
-	}, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+		if (!hasEffect) onPixelHover?.(null);
+	}, [hasEffect]); // eslint-disable-line react-hooks/exhaustive-deps
 
-	// ── Auto-switch to keying mode when settings change ─────────────────────
+	// ── Re-request the accurate frame when graph / file / duration changes ──
 
-	const settingsStr = JSON.stringify(settings);
 	useEffect(() => {
-		if (!filePath) return;
-		setMode('keying');
-	}, [settingsStr, filePath]);
+		if (!filePath || !hasEffect) return;
+		if (!isImage && duration <= 0) return; // video: wait for metadata (duration)
+		requestFrame(videoRef.current?.currentTime ?? 0);
+	}, [filterGraph, filePath, duration, hasEffect, isImage, requestFrame]);
 
 	// ── Seek ──────────────────────────────────────────────────────────────────
 
@@ -231,7 +277,8 @@ export default function KeyingPreview({
 		const t = ratio * durationRef.current;
 		v.currentTime = t;
 		onTimecodeChange?.(t);
-	}, [onTimecodeChange]);
+		requestFrame(t);
+	}, [onTimecodeChange, requestFrame]);
 
 	// ── Play/Pause ────────────────────────────────────────────────────────────
 
@@ -249,7 +296,8 @@ export default function KeyingPreview({
 		v.pause();
 		v.currentTime = Math.max(0, Math.min(v.duration, v.currentTime + dir * (1 / 30)));
 		onTimecodeChange?.(v.currentTime);
-	}, [onTimecodeChange]);
+		requestFrame(v.currentTime);
+	}, [onTimecodeChange, requestFrame]);
 
 	// ── Zoom (scroll wheel) ──────────────────────────────────────────────────
 
@@ -366,7 +414,7 @@ export default function KeyingPreview({
 
 	const rafHoverRef = useRef<number>(0);
 	const handlePreviewMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-		if (mode !== 'keying' || !onPixelHover) return;
+		if (!hasEffectRef.current || !onPixelHover) return;
 		cancelAnimationFrame(rafHoverRef.current);
 		rafHoverRef.current = requestAnimationFrame(() => {
 			const canvas = keyingCanvasRef.current;
@@ -385,7 +433,7 @@ export default function KeyingPreview({
 			const [r, g, b, a] = ctx.getImageData(localX, localY, 1, 1).data;
 			onPixelHover({ r, g, b, a });
 		});
-	}, [mode, onPixelHover]);
+	}, [onPixelHover]);
 
 	const handlePreviewMouseLeave = useCallback(() => {
 		cancelAnimationFrame(rafHoverRef.current);
@@ -398,12 +446,8 @@ export default function KeyingPreview({
 	const vidW = v?.videoWidth || 1920;
 	const vidH = v?.videoHeight || 1080;
 
-	const displayW = (mode === 'keying' && keyedImageSize)
-		? keyedImageSize.w
-		: (origImageSize?.w ?? vidW);
-	const displayH = (mode === 'keying' && keyedImageSize)
-		? keyedImageSize.h
-		: (origImageSize?.h ?? vidH);
+	const displayW = keyedImageSize?.w ?? origImageSize?.w ?? vidW;
+	const displayH = keyedImageSize?.h ?? origImageSize?.h ?? vidH;
 
 	const mediaStyle: React.CSSProperties = {
 		position: 'absolute',
@@ -414,11 +458,15 @@ export default function KeyingPreview({
 		imageRendering: 'auto',
 	};
 
-	const hasKeyed = mode === 'keying' && !!keyedImageSize;
-
-	// ── Render ────────────────────────────────────────────────────────────────
+	// ── Display rule: 🟢 accurate frame (paused, cached) > 🟡 live canvas > source ──
+	const showGreen  = hasEffect && !playing && frameState === 'cached' && !!frameUrl;
+	const showCanvas = hasEffect && !showGreen;
+	const showSource = !hasEffect;
+	const dotState: PreviewState = !hasEffect ? 'original' : (showGreen ? 'cached' : 'approx');
 
 	const hasKnownSize = origImageSize !== null || (videoRef.current?.videoWidth ?? 0) > 0 || keyedImageSize !== null;
+
+	// ── Render ────────────────────────────────────────────────────────────────
 
 	return (
 		<div
@@ -453,7 +501,7 @@ export default function KeyingPreview({
 					}} />
 				)}
 
-				{/* Static image — always mounted (display source for both modes) */}
+				{/* Static image — always mounted (display source / canvas source) */}
 				{fileUrl && isImage && (
 					<img
 						ref={imgRef}
@@ -469,7 +517,7 @@ export default function KeyingPreview({
 								requestAnimationFrame(() => fitToView());
 							}
 						}}
-						style={mode === 'original'
+						style={showSource
 							? mediaStyle
 							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
 						}
@@ -477,7 +525,7 @@ export default function KeyingPreview({
 					/>
 				)}
 
-				{/* <video> всегда в DOM для получения videoWidth/timecode (скрыт для картинок) */}
+				{/* <video> всегда в DOM для videoWidth/timecode/canvas-source (скрыт когда показываем эффект) */}
 				{fileUrl && !isImage && (
 					<video
 						ref={videoRef}
@@ -486,23 +534,35 @@ export default function KeyingPreview({
 						loop
 						muted
 						playsInline
-						style={mode === 'original'
+						style={showSource
 							? mediaStyle
 							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
 						}
 					/>
 				)}
 
-				{/* Keyed preview — live canvas; checkerboard shows alpha through transparent pixels */}
+				{/* 🟡 Live keyed approximation — client-side canvas over checkerboard */}
 				<canvas
 					ref={keyingCanvasRef}
 					style={{
 						...mediaStyle,
 						...checkerboardStyle,
-						display: hasKeyed ? 'block' : 'none',
+						display: showCanvas ? 'block' : 'none',
 						pointerEvents: 'none',
 					}}
 				/>
+
+				{/* 🟢 Accurate ffmpeg frame — swapped in on pause for the cached cell */}
+				{showGreen && frameUrl && (
+					<img
+						src={frameUrl}
+						style={{ ...mediaStyle, pointerEvents: 'none' }}
+						alt='Accurate preview'
+					/>
+				)}
+
+				{/* Fidelity indicator */}
+				{fileUrl && hasKnownSize && <PreviewStateDot state={dotState} showLabel />}
 
 				{!fileUrl && (
 					<div style={{
@@ -529,7 +589,7 @@ export default function KeyingPreview({
 				</div>
 			</div>
 
-			{/* Controls */}
+			{/* Controls — render-bar timeline replaces the thin progress bar */}
 			<PreviewToolbar
 				ref={toolbarRef}
 				playing={playing}
@@ -539,27 +599,15 @@ export default function KeyingPreview({
 				showFrameStep
 				onStepFrame={stepFrame}
 				height={isImage ? CONTROLS_H / 2 : CONTROLS_H}
-				bottomSlot={
-					<div style={{ display: 'flex', gap: 4 }}>
-						{(['original', 'keying'] as const).map((m) => (
-							<button
-								key={m}
-								onClick={() => setMode(m)}
-								style={{
-									flex: 1, padding: '3px 8px', fontSize: 10,
-									fontWeight: mode === m ? 600 : 400,
-									cursor: 'pointer', borderRadius: 3,
-									border: `1px solid ${mode === m ? '#5a9fd4' : '#333'}`,
-									background: mode === m ? '#1e3a5f' : '#1a1a1a',
-									color: mode === m ? '#8ec8f0' : '#666',
-									outline: 'none', textTransform: 'capitalize',
-								}}
-							>
-								{m === 'original' ? 'Original' : 'Keying Preview'}
-							</button>
-						))}
-					</div>
-				}
+				progressSlot={!isImage ? (
+					<PreviewTimeline
+						ref={timelineRef}
+						duration={duration}
+						cellCount={cellCount}
+						cellStates={cellStates}
+						onSeek={seekTo}
+					/>
+				) : undefined}
 			/>
 		</div>
 	);

@@ -21,6 +21,7 @@ impl WatcherState {
 #[specta::specta]
 pub fn fs_watch_start(
     folder_path: String,
+    recursive: bool,
     app: tauri::AppHandle,
     state: tauri::State<Mutex<WatcherState>>,
 ) -> Result<(), String> {
@@ -47,11 +48,14 @@ pub fn fs_watch_start(
     )
     .map_err(|e| e.to_string())?;
 
+    let mode = if recursive {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
+
     watcher
-        .watch(
-            std::path::Path::new(&folder_path),
-            RecursiveMode::Recursive,
-        )
+        .watch(std::path::Path::new(&folder_path), mode)
         .map_err(|e| e.to_string())?;
 
     state.watchers.insert(folder_path_clone, watcher);

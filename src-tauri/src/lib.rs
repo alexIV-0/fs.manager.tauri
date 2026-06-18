@@ -18,6 +18,10 @@ use commands::{
     settings_commands::*,
     docs_commands::*,
     http_commands::*,
+    deps_commands::*,
+    preview_commands::*,
+    account_commands::*,
+    vk_auth_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
@@ -146,6 +150,24 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             fonts_get_list,
             fonts_load_one,
             shell_open_path,
+            // deps: авто-загрузка ffmpeg/ffprobe + whisper-моделей
+            deps_ffmpeg_status,
+            deps_download_ffmpeg,
+            deps_whisper_models_dir,
+            deps_list_whisper_models,
+            deps_download_whisper_model,
+            // preview: точный ffmpeg-рендер кадра для редакторов фильтров
+            preview_render_frame,
+            preview_clear_cache,
+            // Autopost: хранилище аккаунтов (App Support, сегментация по главной папке + платформе)
+            account_save,
+            account_list,
+            account_get_token,
+            account_delete,
+            // VK OAuth + валидация (vk_auth_capture — внутренняя, через raw invoke из init-скрипта)
+            vk_auth_open,
+            vk_validate_token,
+            vk_groups_get,
         ])
 }
 
@@ -531,6 +553,25 @@ pub fn run() {
             plugin_manager_install,
             plugin_manager_delete,
             plugin_manager_destroy,
+            // Deps: авто-загрузка ffmpeg/ffprobe + whisper-моделей
+            deps_ffmpeg_status,
+            deps_download_ffmpeg,
+            deps_whisper_models_dir,
+            deps_list_whisper_models,
+            deps_download_whisper_model,
+            // Preview render (ffmpeg-кадр для редакторов фильтров)
+            preview_render_frame,
+            preview_clear_cache,
+            // Autopost: хранилище аккаунтов (App Support)
+            account_save,
+            account_list,
+            account_get_token,
+            account_delete,
+            // VK OAuth + валидация
+            vk_auth_open,
+            vk_auth_capture,
+            vk_validate_token,
+            vk_groups_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -18,3 +18,7 @@ pub mod plugin_protocol;
 pub mod http_commands;
 pub mod process_utils;
 pub mod icon_commands;
+pub mod deps_commands;
+pub mod preview_commands;
+pub mod account_commands;
+pub mod vk_auth_commands;

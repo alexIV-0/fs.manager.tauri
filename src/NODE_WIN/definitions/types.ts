@@ -7,7 +7,8 @@ export enum HandlerType {
 }
 
 export interface OutputConfig {
-	functionName: string;
+	functionName?: string; // legacy: нужен только built-in search-нодам (mainSearch); плагинам — нет
+
 	execute?: {
 		functionName?: string;
 		arguments?: string[];
@@ -278,6 +279,21 @@ export interface ConvertSettingsPropertyControlProps {
 
 export type ConvertSettingsProperty = PropertyBase<'convertSettings', ConvertSettingsPropertyControlProps>;
 
+export interface TimeRangePropertyControlProps {
+	label?: string;
+	tooltip?: string;
+	value: [number, number];
+	editLabel?: boolean;
+	format?: 'timecode' | 'float' | 'integer'; // формат отображения
+	unit?: 'minutes' | 'seconds'; // единицы измерения (по умолчанию 'minutes')
+	step?: number; // шаг слайдера
+	range?: [number, number]; // [min, max] диапазон слайдера
+	decimals?: number; // кол-во знаков после запятой для float
+	allowManualOverride?: boolean; // разрешить ручной ввод за пределами диапазона слайдера
+}
+
+export type TimeRangeProperty = PropertyBase<'timeRange', TimeRangePropertyControlProps>;
+
 export type Property =
 	| CheckboxProperty
 	| AutocompleteProperty
@@ -296,7 +312,8 @@ export type Property =
 	| OverlaySettingsProperty
 	| VideoAdjustmentProperty
 	| KeyingProperty
-	| ConvertSettingsProperty;
+	| ConvertSettingsProperty
+	| TimeRangeProperty;
 
 // export enum SearchType {
 // 	IMAGE = 'image',

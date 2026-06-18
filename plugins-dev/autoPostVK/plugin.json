@@ -1,0 +1,17 @@
+{
+	"id": "autoPostVK",
+	"name": "VK aPosting Video",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Автопостинг видео в VK (Clips / Both / Video) по таймеру: интервал, дни недели, окно времени суток. App-timer — за слот постится один файл.",
+	"main": "autoPostVK.js",
+	"ui": "ui.json",
+	"external": [],
+	"resourcePool": "online",
+	"cost": "0",
+	"costUnit": "run"
+}

@@ -357,8 +357,13 @@ export const tauriAPI = {
 	},
 
 	onFsChanged: (callback: (changedPath: string) => void) => {
-		tauriOn('fs-changed', (_event: any, path: string) => callback(path));
-		return () => tauriOff('fs-changed');
+		// ВАЖНО: храним ссылку на обёртку и снимаем именно её. tauriOff('fs-changed')
+		// без listener удалил бы ВЕСЬ Set слушателей канала — а на 'fs-changed' подписаны
+		// обе панели (gd и local). Раньше отписка одной панели (в т.ч. при смене папки,
+		// когда эффект пересоздаётся) убивала слежку у другой.
+		const wrapper = (_event: any, path: string) => callback(path);
+		tauriOn('fs-changed', wrapper);
+		return () => tauriOff('fs-changed', wrapper);
 	},
 
 	getPathForFile: (file: File) => {

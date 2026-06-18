@@ -1,0 +1,163 @@
+{
+	"type": "autoPostVK",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 780,
+	"data": {
+		"label": "VK aPosting Video",
+		"colorType": "posting",
+		"comment": "Автопостинг видео в VK по таймеру (App-timer).&nbsp;<div>Видео — со входа, аккаунт — из главной папки,&nbsp;</div><div>режим Clips/Both/Video. При наступлении слота постится ОДИН файл; не прошедший проверку → errors, берём следующий. Описание (необязательно) приходит по связи.</div>",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Video",
+					"tooltip": "Видео для публикации (из папки IN или другой папки).",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "account",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Account",
+					"tooltip": "Аккаунт VK этой главной папки. «Add New Account» — вход сохранённой сессией. «Login as another account» — чистый вход другим аккаунтом (incognito).",
+					"options": [
+						"#vkAccounts",
+						"---",
+						"Add New Account",
+						"Вставить токен вручную"
+					],
+					"freeInput": false,
+					"value": ""
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "target",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Target",
+					"tooltip": "Куда постим: Profile (своя стена) или твоё сообщество (список тянется по выбранному аккаунту через groups.get).",
+					"options": [
+						"Profile",
+						"---",
+						"#vkGroups"
+					],
+					"freeInput": false,
+					"value": "Profile"
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "description",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Description",
+					"tooltip": "Необязательно. Текст поста (хештеги/упоминания) приходит по связи. Пусто = без описания.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "accepted"
+			},
+			{
+				"id": "interval",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Interval",
+					"tooltip": "Шаг между постами. Можно ввести число (90 = 00:01:30) или HH:MM:SS.",
+					"value": 60
+				},
+				"isInput": false,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "daysOfWeek",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Days of week",
+					"tooltip": "Дни, по которым постим. Пусто = все дни.",
+					"options": [
+						"Mon",
+						"Tue",
+						"Wed",
+						"Thu",
+						"Fri",
+						"Sat",
+						"Sun"
+					],
+					"multiSelect": true,
+					"optionsOnly": true,
+					"allowDuplicates": false,
+					"value": [
+						"Mon",
+						"Tue",
+						"Wed",
+						"Thu",
+						"Fri",
+						"Sat",
+						"Sun"
+					]
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "window",
+				"controlType": "timeRange",
+				"controlProps": {
+					"label": "Time window",
+					"tooltip": "Окно времени суток для постинга. 00:00–24:00 = весь день.",
+					"value": [
+						0,
+						1440
+					]
+				},
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "order",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Order",
+					"tooltip": "Порядок выбора файлов из очереди.",
+					"options": [
+						"by Time",
+						"by Name",
+						"Random"
+					],
+					"freeInput": false,
+					"value": "by Time"
+				},
+				"required": false,
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}
