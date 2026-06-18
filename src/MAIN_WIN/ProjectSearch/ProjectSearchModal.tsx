@@ -19,6 +19,33 @@ import { ProjectListItem } from './ProjectListItem';
 import { commands, unwrap } from '@/Utils/specta';
 import { basename } from '@/Utils/path';
 
+// Функция для добавления прозрачности к цвету любого формата
+function withAlpha(color: string, alpha: number): string {
+	if (!color) return `rgba(102, 102, 102, ${alpha})`;
+
+	// Если это hex
+	if (color.startsWith('#')) {
+		const hex = color.replace('#', '');
+		const r = parseInt(hex.substring(0, 2), 16);
+		const g = parseInt(hex.substring(2, 4), 16);
+		const b = parseInt(hex.substring(4, 6), 16);
+		return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+	}
+
+	// Если это rgb/rgba
+	if (color.startsWith('rgb')) {
+		return color.replace(/[\d.]+\s*\)/, `${alpha})`);
+	}
+
+	// Если это hsl/hsla
+	if (color.startsWith('hsl')) {
+		return color.replace(/[\d.]+\s*\)/, `${alpha})`);
+	}
+
+	// Fallback
+	return `rgba(102, 102, 102, ${alpha})`;
+}
+
 interface ProjectWithMain {
 	mainFolderName: string;
 	mainFolderId: string;
@@ -225,10 +252,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 										const isSelected = selectedPlugins.includes(plugin.id);
 										const bgColor = plugin.color || '#666666';
 										const textColor = complimentColor(bgColor);
-										// Цвет фона: невыбранные полупрозрачные, выбранные полный цвет
-										const backgroundColor = isSelected
-											? bgColor
-											: bgColor + '40'; // добавляем 40 hex для ~25% opacity
 										return (
 											<Chip
 												key={plugin.id}
@@ -237,7 +260,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 												size='small'
 												sx={{
 													cursor: 'pointer',
-													backgroundColor: backgroundColor,
+													backgroundColor: isSelected ? bgColor : withAlpha(bgColor, 0.25),
 													color: textColor,
 													border: 'none',
 													'&:hover': { opacity: 0.9 },
