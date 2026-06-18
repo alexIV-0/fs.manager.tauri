@@ -58,10 +58,18 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	const { searchQuery, selectedPlugins, setSearchQuery, togglePlugin, clearFilters } = useProjectSearch_store();
 	const { mainFolderArr } = mainFolders_stor();
 	const { plugins: installedPlugins } = plugin_Store();
-	const { colorTypes } = colorTypes_store();
+	const colorTypes = colorTypes_store((state) => state.colorTypes);
 
 	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [debugInfo, setDebugInfo] = useState('');
+
+	// Отслеживаем изменения colorTypes
+	useEffect(() => {
+		const keys = Object.keys(colorTypes);
+		const info = `colorTypes: ${keys.length} keys | ${keys.join(', ')}`;
+		setDebugInfo(info);
+	}, [colorTypes]);
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
@@ -234,6 +242,13 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								sx={{ mb: 2, flexShrink: 0 }}
 							/>
 
+							{/* DEBUG */}
+							{debugInfo && (
+								<Box sx={{ fontSize: '9px', color: greyColor(50), mb: 1 }}>
+									{debugInfo}
+								</Box>
+							)}
+
 							{/* Облако плагинов */}
 							{allPlugins.length > 0 ? (
 								<Box
@@ -252,6 +267,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 										const isSelected = selectedPlugins.includes(plugin.id);
 										const bgColor = colorTypes[plugin.colorType] || '#666666';
 										const textColor = complimentColor(bgColor);
+										const finalBgColor = isSelected ? bgColor : withAlpha(bgColor, 0.25);
 										return (
 											<Chip
 												key={plugin.id}
@@ -260,7 +276,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 												size='small'
 												sx={{
 													cursor: 'pointer',
-													backgroundColor: isSelected ? bgColor : withAlpha(bgColor, 0.25),
+													backgroundColor: finalBgColor,
 													color: textColor,
 													border: 'none',
 													'&:hover': { opacity: 0.9 },

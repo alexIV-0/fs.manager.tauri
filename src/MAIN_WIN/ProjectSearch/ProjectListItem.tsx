@@ -102,7 +102,9 @@ export const ProjectListItem = memo(function ProjectListItem({
 	}, [isVisible, projectName, mainFolderPath, getPluginsForProject, selectedPlugins]);
 
 	const handleSelectProject = () => {
-		setActiveFolders_store.getState().setActiveProjectFolder(projectName);
+		const { setMainFolderId, setActiveProjectFolder } = setActiveFolders_store.getState();
+		setMainFolderId(mainFolderId);
+		setActiveProjectFolder(projectName);
 		onSelectProject();
 	};
 
