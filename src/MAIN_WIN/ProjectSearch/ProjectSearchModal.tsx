@@ -62,7 +62,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 
 	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
 	const [loading, setLoading] = useState(false);
-	const [debugInfo, setDebugInfo] = useState('');
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
@@ -79,14 +78,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 		return plugins;
 	}, [installedPlugins]);
 
-	// Отслеживаем изменения colorTypes и allPlugins
-	useEffect(() => {
-		const keys = Object.keys(colorTypes);
-		const info = `colorTypes: ${keys.length} keys | ${keys.join(', ')}`;
-		console.log('[DEBUG] colorTypes:', colorTypes);
-		console.log('[DEBUG] allPlugins[0]:', allPlugins[0], '| bgColor:', colorTypes[allPlugins[0]?.colorType]);
-		setDebugInfo(info);
-	}, [colorTypes, allPlugins]);
 
 	// Загружаем все подпапки только когда модал открывается
 	useEffect(() => {
@@ -244,12 +235,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								sx={{ mb: 2, flexShrink: 0 }}
 							/>
 
-							{/* DEBUG */}
-							{debugInfo && (
-								<Box sx={{ fontSize: '9px', color: greyColor(50), mb: 1 }}>
-									{debugInfo}
-								</Box>
-							)}
 
 							{/* Облако плагинов */}
 							{allPlugins.length > 0 ? (
