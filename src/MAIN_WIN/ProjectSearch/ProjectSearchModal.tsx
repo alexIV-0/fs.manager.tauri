@@ -95,6 +95,8 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 				}
 			}
 
+			// Сортируем по colorType для группировки
+			plugins.sort((a, b) => a.colorType.localeCompare(b.colorType));
 			setAllPlugins(plugins);
 		};
 
