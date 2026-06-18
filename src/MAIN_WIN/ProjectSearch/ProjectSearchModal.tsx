@@ -14,23 +14,36 @@ import { useProjectSearch_store } from '@/Store/MainWin/projectSearch_store';
 import { plugin_Store } from '@/Store/MainWin/plugin_store';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { greyColor, defGray } from '@/Store/Color/grayColor';
+import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { ProjectListItem } from './ProjectListItem';
 import { commands, unwrap } from '@/Utils/specta';
+import { basename } from '@/Utils/path';
+
+interface ProjectWithMain {
+	mainFolderName: string;
+	mainFolderId: string;
+	mainFolderPath: string;
+	projectName: string;
+	isActive: boolean;
+}
 
 export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
 	const { searchQuery, selectedPlugins, setSearchQuery, togglePlugin, clearFilters } = useProjectSearch_store();
 	const { mainFolderArr } = mainFolders_stor();
-	const activeMainFolder = setActiveFolders_store((s) => s.activeMainFolder);
 	const { plugins: installedPlugins } = plugin_Store();
-
-	const [projects, setProjects] = useState<string[]>([]);
-	const [projectsActive, setProjectsActive] = useState<Map<string, boolean>>(new Map());
-	const [mainFolderPath, setMainFolderPath] = useState<string>('');
 	const { colorTypes } = colorTypes_store();
 
-	// Получаем список отключённых папок из LS (по activeMainFolder как ключ)
-	const { folders: disabledFolders } = useFoldersFromLS(activeMainFolder || '');
+	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
+	const disabledFoldersMap = new Map<string, Set<string>>();
+
+	// Получаем список отключённых папок для каждой главной папки
+	useEffect(() => {
+		mainFolderArr.forEach((mainFolder) => {
+			const { folders: disabledFolders } = useFoldersFromLS(mainFolder.id);
+			disabledFoldersMap.set(mainFolder.id, new Set(disabledFolders));
+		});
+	}, [mainFolderArr]);
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
@@ -47,51 +60,71 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 			});
 	}, [installedPlugins, colorTypes]);
 
-	// При открытии модала - загружаем список ВСЕ папок в главной папке
+	// При открытии модала - загружаем все подпапки из всех главных папок
 	useEffect(() => {
-		if (!open || !activeMainFolder) return;
+		if (!open) return;
 
-		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
-		if (!activeMain) return;
-
-		const loadFolders = async () => {
+		const loadAllProjects = async () => {
 			try {
-				// Читаем все папки в главной папке
-				const allFolders = unwrap(
-					await commands.getSomeFromFolder(activeMain.path, [{ type: 'folders', ext: [] }]),
-				) as unknown as { folders: string[] };
+				const allProjects: ProjectWithMain[] = [];
 
-				const folderList = allFolders.folders || [];
+				for (const mainFolder of mainFolderArr) {
+					try {
+						// Читаем все папки в главной папке
+						const allFolders = unwrap(
+							await commands.getSomeFromFolder(mainFolder.path, [{ type: 'folders', ext: [] }]),
+						) as unknown as { folders: string[] };
 
-				// Определяем активность каждой папки
-				const activeMap = new Map<string, boolean>();
-				folderList.forEach((folderName) => {
-					activeMap.set(folderName, !disabledFolders.includes(folderName));
-				});
+						const folderList = allFolders.folders || [];
+						const disabledSet = disabledFoldersMap.get(mainFolder.id) || new Set<string>();
 
-				setMainFolderPath(activeMain.path);
-				setProjects(folderList);
-				setProjectsActive(activeMap);
+						// Добавляем каждую папку с информацией о главной папке
+						folderList.forEach((folderName) => {
+							allProjects.push({
+								mainFolderName: basename(mainFolder.path),
+								mainFolderId: mainFolder.id,
+								mainFolderPath: mainFolder.path,
+								projectName: folderName,
+								isActive: !disabledSet.has(folderName),
+							});
+						});
+					} catch (err) {
+						console.error(`Failed to load folders from ${mainFolder.path}:`, err);
+					}
+				}
+
+				setProjects(allProjects);
 			} catch (err) {
-				console.error('Failed to load folders:', err);
+				console.error('Failed to load projects:', err);
 				setProjects([]);
-				setProjectsActive(new Map());
 			}
 		};
 
-		loadFolders();
-	}, [open, activeMainFolder, mainFolderArr, disabledFolders]);
+		loadAllProjects();
+	}, [open, mainFolderArr]);
 
-	// Фильтруем проекты по поиску только (плагины фильтруются на уровне ProjectListItem)
+	// Фильтруем проекты по поиску
 	const filteredProjects = useMemo(() => {
 		const queryLower = searchQuery.toLowerCase();
-		return projects.filter((projectName) => {
-			if (queryLower && !projectName.toLowerCase().includes(queryLower)) {
-				return false;
-			}
-			return true;
+		return projects.filter((proj) => {
+			// Ищем по имени папки или имени главной папки
+			const projectMatch = proj.projectName.toLowerCase().includes(queryLower);
+			const mainMatch = proj.mainFolderName.toLowerCase().includes(queryLower);
+			return projectMatch || mainMatch;
 		});
 	}, [projects, searchQuery]);
+
+	// Группируем отфильтрованные проекты по главным папкам для отображения
+	const groupedProjects = useMemo(() => {
+		const groups = new Map<string, ProjectWithMain[]>();
+		filteredProjects.forEach((proj) => {
+			if (!groups.has(proj.mainFolderId)) {
+				groups.set(proj.mainFolderId, []);
+			}
+			groups.get(proj.mainFolderId)!.push(proj);
+		});
+		return groups;
+	}, [filteredProjects]);
 
 	return (
 		<Modal open={open} onClose={onClose}>
@@ -160,7 +193,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 							{/* Поиск по имени */}
 							<TextField
 								fullWidth
-								placeholder='Поиск по имени папки...'
+								placeholder='Поиск по имени папки или главной папки...'
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
 								size='small'
@@ -184,6 +217,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 									{allPlugins.map((plugin) => {
 										const isSelected = selectedPlugins.includes(plugin.id);
 										const bgColor = plugin.color || '#666666';
+										const textColor = complimentColor(bgColor);
 										return (
 											<Chip
 												key={plugin.id}
@@ -192,8 +226,8 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 												size='small'
 												sx={{
 													cursor: 'pointer',
-													backgroundColor: isSelected ? bgColor : `${bgColor}40`, // 40 hex = ~25% opacity
-													color: '#fff',
+													backgroundColor: isSelected ? bgColor : `${bgColor}40`,
+													color: textColor,
 													border: `1px solid ${bgColor}`,
 													'&:hover': { opacity: 0.9 },
 													fontWeight: isSelected ? 600 : 400,
@@ -214,21 +248,42 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								</Box>
 							) : null}
 
-							{/* Список папок */}
+							{/* Список папок сгруппированный по главным папкам */}
 							<Box sx={{ border: `1px solid ${greyColor(50)}`, borderRadius: '4px', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 								{filteredProjects.length > 0 ? (
 									<List sx={{ p: 0, flex: 1, overflow: 'auto' }}>
-										{filteredProjects.map((projectName) => (
-											<ProjectListItem
-												key={projectName}
-												projectName={projectName}
-												mainFolderPath={mainFolderPath}
-												isActive={projectsActive.get(projectName) ?? true}
-												selectedPlugins={selectedPlugins}
-												onSelectProject={onClose}
-												onTogglePlugin={togglePlugin}
-												isVisible={true}
-											/>
+										{Array.from(groupedProjects.entries()).map(([mainFolderId, projectsInMain]) => (
+											<Box key={mainFolderId}>
+												{/* Заголовок главной папки */}
+												<Box
+													sx={{
+														px: 2,
+														py: 1,
+														backgroundColor: greyColor(25),
+														borderBottom: `1px solid ${greyColor(40)}`,
+														fontSize: '12px',
+														fontWeight: 600,
+														color: greyColor(60),
+													}}
+												>
+													📁 {projectsInMain[0].mainFolderName}
+												</Box>
+
+												{/* Проекты в этой главной папке */}
+												{projectsInMain.map((proj) => (
+													<ProjectListItem
+														key={`${proj.mainFolderId}-${proj.projectName}`}
+														projectName={proj.projectName}
+														mainFolderPath={proj.mainFolderPath}
+														mainFolderId={proj.mainFolderId}
+														isActive={proj.isActive}
+														selectedPlugins={selectedPlugins}
+														onSelectProject={onClose}
+														onTogglePlugin={togglePlugin}
+														isVisible={true}
+													/>
+												))}
+											</Box>
 										))}
 									</List>
 								) : (

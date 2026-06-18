@@ -1,16 +1,18 @@
 import { ListItem, ListItemText, Checkbox, Box, Chip } from '@mui/material';
-import { memo, useState, useEffect, useMemo } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { greyColor } from '@/Store/Color/grayColor';
+import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
 import { useProjectPlugins, PluginInfo } from '../hooks/useProjectPlugins';
 
 interface ProjectListItemProps {
 	projectName: string;
 	mainFolderPath: string;
+	mainFolderId: string;
 	isActive: boolean;
 	selectedPlugins: string[];
-	onSelectProject: (projectName: string) => void;
+	onSelectProject: () => void;
 	onTogglePlugin: (pluginId: string) => void;
 	isVisible: boolean;
 }
@@ -18,6 +20,7 @@ interface ProjectListItemProps {
 export const ProjectListItem = memo(function ProjectListItem({
 	projectName,
 	mainFolderPath,
+	mainFolderId,
 	isActive,
 	selectedPlugins,
 	onSelectProject,
@@ -54,7 +57,7 @@ export const ProjectListItem = memo(function ProjectListItem({
 
 	const handleSelectProject = () => {
 		setActiveFolders_store.getState().setActiveProjectFolder(projectName);
-		onSelectProject(projectName);
+		onSelectProject();
 	};
 
 	return (
@@ -66,39 +69,45 @@ export const ProjectListItem = memo(function ProjectListItem({
 				'&:last-child': { borderBottom: 'none' },
 				'&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.25)' },
 				py: 1,
+				display: 'flex',
+				alignItems: 'flex-start',
+				gap: 1,
 			}}
 			disablePadding
 		>
 			<Checkbox
 				checked={isActive}
 				onClick={(e) => e.stopPropagation()}
-				sx={{ mr: 1 }}
+				sx={{ mr: 0.5, flexShrink: 0, mt: 0.25 }}
 				size='small'
 				readOnly
 			/>
-			<ListItemText
-				primary={projectName}
-				sx={{
-					flex: 1,
-					'& .MuiListItemText-primary': {
-						fontSize: '14px',
-						overflow: 'hidden',
-						textOverflow: 'ellipsis',
-						whiteSpace: 'nowrap',
-					},
-				}}
-			/>
-			{/* Плагины у папки */}
+
+			{/* Левая часть - имя папки (250-350px)*/}
+			<Box sx={{ minWidth: '250px', maxWidth: '350px', flexShrink: 0 }}>
+				<ListItemText
+					primary={projectName}
+					sx={{
+						m: 0,
+						'& .MuiListItemText-primary': {
+							fontSize: '14px',
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							whiteSpace: 'nowrap',
+						},
+					}}
+				/>
+			</Box>
+
+			{/* Правая часть - плагины на всю оставшуюся ширину */}
 			<Box
 				sx={{
 					display: 'flex',
 					gap: 0.5,
 					flexWrap: 'wrap',
-					justifyContent: 'flex-end',
-					ml: 1,
+					alignContent: 'flex-start',
 					flex: 1,
 					minHeight: '24px',
-					alignItems: 'center',
 				}}
 				onClick={(e) => e.stopPropagation()}
 			>
@@ -108,6 +117,8 @@ export const ProjectListItem = memo(function ProjectListItem({
 					plugins.map((plugin) => {
 						const isSelected = selectedPlugins.includes(plugin.id);
 						const bgColor = colorTypes[plugin.colorType] || '#666666';
+						const textColor = complimentColor(bgColor);
+
 						return (
 							<Chip
 								key={plugin.id}
@@ -116,9 +127,9 @@ export const ProjectListItem = memo(function ProjectListItem({
 								onClick={() => onTogglePlugin(plugin.id)}
 								sx={{
 									cursor: 'pointer',
-									backgroundColor: isSelected ? bgColor : `${bgColor}40`, // 40 hex = ~25% opacity
-									color: '#fff',
-									border: `1px solid ${bgColor}`,
+									backgroundColor: isSelected ? bgColor : `${bgColor}40`,
+									color: textColor,
+									border: 'none',
 									'&:hover': { opacity: 0.9 },
 									fontSize: '11px',
 									height: '24px',
