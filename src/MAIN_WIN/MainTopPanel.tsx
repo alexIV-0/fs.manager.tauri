@@ -1,6 +1,6 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
 import { commands } from '@/Utils/specta';
-import { AlertTriangle, Blocks, BookOpen, Hammer, Settings, Wrench } from 'lucide-react';
+import { AlertTriangle, Blocks, BookOpen, Hammer, Settings, Wrench, Search } from 'lucide-react';
 import OptionsPopover from './options/Options.Popover';
 import { useState, useEffect } from 'react';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
@@ -11,6 +11,8 @@ import DocModal from '@/NODE_WIN/layout/DocModal';
 import { buildNodeDefinitions, isNodeDefinitionsInitialized } from '@/NODE_WIN/definitions';
 import { loadAllUINodes } from '@/Utils/loadAllUINodes';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
+import { ProjectSearchModal } from './ProjectSearch/ProjectSearchModal';
+import { useProjectSearch_store } from '@/Store/MainWin/projectSearch_store';
 
 export function MainTopPanel() {
 	const { isScanning } = isScanningStore();
@@ -20,6 +22,7 @@ export function MainTopPanel() {
 	const [isDev, setIsDev] = useState(false);
 	const { getFilteredGroups } = plugin_Store();
 	const { iterationCount, successCount, errorItemsCount } = useProcessingStats_store();
+	const { isOpen: projectSearchOpen, setIsOpen: setProjectSearchOpen } = useProjectSearch_store();
 
 	const defGrayColor = defGray;
 
@@ -66,6 +69,12 @@ export function MainTopPanel() {
 				<Tooltip title='Документация'>
 					<IconButton sx={{ p: 0, margin: '0 10px' }} size='small' onClick={handleOpenDoc}>
 						<BookOpen strokeWidth={1} />
+					</IconButton>
+				</Tooltip>
+
+				<Tooltip title='Поиск проектов'>
+					<IconButton sx={{ p: 0, margin: '0 10px' }} size='small' onClick={() => setProjectSearchOpen(true)}>
+						<Search strokeWidth={1} />
 					</IconButton>
 				</Tooltip>
 
@@ -134,6 +143,7 @@ export function MainTopPanel() {
 			<OptionsPopover open={open} handleClose={() => setOpen(false)} />
 			{isDev && <PluginBuilderModal open={builderOpen} onClose={() => setBuilderOpen(false)} />}
 			<DocModal open={docOpen} onClose={() => setDocOpen(false)} />
+			<ProjectSearchModal open={projectSearchOpen} onClose={() => setProjectSearchOpen(false)} />
 		</Box>
 	);
 }
