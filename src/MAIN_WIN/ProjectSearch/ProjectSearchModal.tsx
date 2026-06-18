@@ -18,6 +18,7 @@ import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
 import { ProjectListItem } from './ProjectListItem';
 import { commands, unwrap } from '@/Utils/specta';
 import { basename } from '@/Utils/path';
+import { joinPath } from '@/Utils/joinPath';
 
 // Функция для добавления прозрачности к цвету любого формата
 function withAlpha(color: string, alpha: number): string {
@@ -62,20 +63,42 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 
 	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [allPlugins, setAllPlugins] = useState<Array<{ id: string; name: string; colorType: string }>>([]);
 
-	// Статичное облако плагинов - все установленные, кроме 'empty'
-	const allPlugins = useMemo(() => {
-		const plugins = installedPlugins
-			.filter((p) => p.type && !p.type.includes('empty'))
-			.map((p) => {
-				const colorType = p.type?.[0] || 'unknown';
-				return {
-					id: p.id,
-					name: p.name,
-					colorType: colorType,
-				};
-			});
-		return plugins;
+	// Загружаем colorType из UI.json каждого плагина
+	useEffect(() => {
+		const loadPluginColors = async () => {
+			const plugins = [];
+
+			for (const p of installedPlugins) {
+				if (!p.type || p.type.includes('empty')) continue;
+
+				try {
+					// Читаем UI.json плагина для получения colorType
+					const uiJsonPath = joinPath(p.path, 'UI.json');
+					const fileContent = unwrap(await commands.readFileSync(uiJsonPath));
+					const uiData = JSON.parse(fileContent);
+					const colorType = uiData.data?.colorType || 'unknown';
+
+					plugins.push({
+						id: p.id,
+						name: p.name,
+						colorType: colorType,
+					});
+				} catch (err) {
+					// Если нет UI.json, используем fallback из p.type
+					plugins.push({
+						id: p.id,
+						name: p.name,
+						colorType: p.type?.[0] || 'unknown',
+					});
+				}
+			}
+
+			setAllPlugins(plugins);
+		};
+
+		loadPluginColors();
 	}, [installedPlugins]);
 
 
