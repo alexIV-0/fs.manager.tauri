@@ -77,11 +77,11 @@ export const ProjectListItem = memo(function ProjectListItem({
 				const projectPlugins = await getPluginsForProject(mainFolderPath, projectName);
 				setPlugins(projectPlugins);
 
-				// Если выбраны плагины, проверяем есть ли они в этой папке
+				// Если выбраны плагины, проверяем есть ли ВСЕ из них в этой папке
 				if (selectedPlugins.length > 0) {
 					const pluginIds = projectPlugins.map((p) => p.id);
-					const hasAnySelected = selectedPlugins.some((selected) => pluginIds.includes(selected));
-					setShouldHide(!hasAnySelected);
+					const hasAllSelected = selectedPlugins.every((selected) => pluginIds.includes(selected));
+					setShouldHide(!hasAllSelected);
 				} else {
 					setShouldHide(false);
 				}
