@@ -310,22 +310,23 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 					</>
 				)}
 
-				{/* ── controlType-specific ── */}
-				{(property.controlType === 'autocomplete' ||
-					property.controlType === 'ddm' ||
-					property.controlType === 'slider' ||
-					property.controlType === 'textedit' ||
-					property.controlType === 'jsonNavigator' ||
-					property.controlType === 'checkbox' ||
-					property.controlType === 'link') && (
-					<Box sx={{ borderTop: `1px solid ${gray40}`, mt: 0.5, pt: 0.5 }}>
-						<Box sx={{ px: 0.5, py: 0.25 }}>
-							<Box component='span' sx={{ color: greyColor(60), fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>
-								// {property.controlType} options
-							</Box>
+			{/* ── controlType-specific ── */}
+			{(property.controlType === 'autocomplete' ||
+				property.controlType === 'ddm' ||
+				property.controlType === 'slider' ||
+				property.controlType === 'textedit' ||
+				property.controlType === 'jsonNavigator' ||
+				property.controlType === 'checkbox' ||
+				property.controlType === 'link' ||
+				property.controlType === 'timeRange') && (
+				<Box sx={{ borderTop: `1px solid ${gray40}`, mt: 0.5, pt: 0.5 }}>
+					<Box sx={{ px: 0.5, py: 0.25 }}>
+						<Box component='span' sx={{ color: greyColor(60), fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>
+							// {property.controlType} options
 						</Box>
 					</Box>
-				)}
+				</Box>
+			)}
 
 				{property.controlType === 'autocomplete' && (
 					<>
@@ -529,24 +530,116 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 					</JsonField>
 				)}
 
-				{property.controlType === 'link' && (
-					<JsonField label='outputMarker'>
-						<Stack direction='row' alignItems='center' gap={0.5}>
-							<input
-								value={property.outputMarker ?? ''}
-								onChange={(e) => setProp('outputMarker', e.target.value || undefined)}
-								placeholder='не задан'
-								style={inp(120, '#f5c2e7')}
-							/>
-							<Box component='span' sx={{ color: greyColor(50), fontFamily: 'monospace', fontSize: 10, fontStyle: 'italic' }}>
-								показывать в downstream нодах
+			{property.controlType === 'link' && (
+				<JsonField label='outputMarker'>
+					<Stack direction='row' alignItems='center' gap={0.5}>
+						<input
+							value={property.outputMarker ?? ''}
+							onChange={(e) => setProp('outputMarker', e.target.value || undefined)}
+							placeholder='не задан'
+							style={inp(120, '#f5c2e7')}
+						/>
+						<Box component='span' sx={{ color: greyColor(50), fontFamily: 'monospace', fontSize: 10, fontStyle: 'italic' }}>
+							показывать в downstream нодах
+						</Box>
+					</Stack>
+				</JsonField>
+			)}
+
+			{property.controlType === 'timeRange' && (
+				<>
+					<Box sx={{ borderTop: `1px solid ${gray40}`, mt: 0.5, pt: 0.5 }}>
+						<Box sx={{ px: 0.5, py: 0.25 }}>
+							<Box component='span' sx={{ color: greyColor(60), fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>
+								// timeRange options
 							</Box>
+						</Box>
+					</Box>
+					<JsonField label='format'>
+						<select
+							value={cp.format ?? 'timecode'}
+							onChange={(e) => setCp('format', e.target.value)}
+							style={{
+								background: 'transparent',
+								border: `1px solid ${gray40}`,
+								outline: 'none',
+								color: '#cdd6f4',
+								fontFamily: 'monospace',
+								fontSize: 13,
+								padding: '2px 4px',
+								borderRadius: 4,
+							}}
+						>
+							<option value='timecode' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+								timecode
+							</option>
+							<option value='float' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+								float
+							</option>
+							<option value='integer' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+								integer
+							</option>
+						</select>
+					</JsonField>
+					<JsonField label='unit'>
+						<select
+							value={cp.unit ?? 'minutes'}
+							onChange={(e) => setCp('unit', e.target.value)}
+							style={{
+								background: 'transparent',
+								border: `1px solid ${gray40}`,
+								outline: 'none',
+								color: '#cdd6f4',
+								fontFamily: 'monospace',
+								fontSize: 13,
+								padding: '2px 4px',
+								borderRadius: 4,
+							}}
+						>
+							<option value='minutes' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+								minutes
+							</option>
+							<option value='seconds' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+								seconds
+							</option>
+						</select>
+					</JsonField>
+					<JsonField label='step'>
+						<NumInput value={cp.step ?? 5} onChange={(v) => setCp('step', v)} style={inp(60, '#fab387')} />
+					</JsonField>
+					<JsonField label='range'>
+						<Stack direction='row' gap={0.5}>
+							<NumInput
+								value={Array.isArray(cp.range) ? cp.range[0] : 0}
+								onChange={(v) => setCp('range', [v, Array.isArray(cp.range) ? cp.range[1] : 1440])}
+								style={inp(50, '#fab387')}
+							/>
+							<Box component='span' sx={{ color: gray40, fontFamily: 'monospace', fontSize: 13, pt: 0.3 }}>
+								…
+							</Box>
+							<NumInput
+								value={Array.isArray(cp.range) ? cp.range[1] : 1440}
+								onChange={(v) => setCp('range', [Array.isArray(cp.range) ? cp.range[0] : 0, v])}
+								style={inp(50, '#fab387')}
+							/>
 						</Stack>
 					</JsonField>
-				)}
-			</Box>
+					<JsonField label='decimals'>
+						<NumInput value={cp.decimals ?? 2} onChange={(v) => setCp('decimals', v)} style={inp(40, '#fab387')} />
+					</JsonField>
+					<JsonField label='allowManualOverride'>
+						<Checkbox
+							size='small'
+							checked={cp.allowManualOverride !== false}
+							onChange={(e) => setCp('allowManualOverride', e.target.checked)}
+							sx={{ py: 0 }}
+						/>
+					</JsonField>
+				</>
+			)}
+		</Box>
 
-			{/* Modals */}
+		{/* Modals */}
 			<OptionsPickerModal
 				open={optionsModalOpen}
 				title='Выбор опций для Autocomplete'
