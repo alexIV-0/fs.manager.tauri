@@ -102,10 +102,13 @@ export const ProjectListItem = memo(function ProjectListItem({
 	}, [isVisible, projectName, mainFolderPath, getPluginsForProject, selectedPlugins]);
 
 	const handleSelectProject = () => {
-		const { setMainFolderId, setActiveProjectFolder } = setActiveFolders_store.getState();
-		setMainFolderId(mainFolderId);
-		setActiveProjectFolder(projectName);
-		onSelectProject();
+		const state = setActiveFolders_store.getState();
+		state.setMainFolderId(mainFolderId);
+		// Небольшая задержка чтобы mainFolderId установился прежде чем установим projectFolder
+		requestAnimationFrame(() => {
+			state.setActiveProjectFolder(projectName);
+			onSelectProject();
+		});
 	};
 
 	if (shouldHide) {

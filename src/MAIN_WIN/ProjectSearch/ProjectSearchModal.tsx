@@ -13,6 +13,7 @@ import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useProjectSearch_store } from '@/Store/MainWin/projectSearch_store';
 import { plugin_Store } from '@/Store/MainWin/plugin_store';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
+import { typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { greyColor, defGray } from '@/Store/Color/grayColor';
 import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
 import { ProjectListItem } from './ProjectListItem';
@@ -59,17 +60,22 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	const { mainFolderArr } = mainFolders_stor();
 	const { plugins: installedPlugins } = plugin_Store();
 	const colorTypes = colorTypes_store((state) => state.colorTypes);
+	const nodeTypePatterns = typeOfNodes_store((state) => state.patternStore);
 
 	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [debugInfo, setDebugInfo] = useState('');
 
-	// Отслеживаем изменения colorTypes
-	useEffect(() => {
-		const keys = Object.keys(colorTypes);
-		const info = `colorTypes: ${keys.length} keys | ${keys.join(', ')}`;
-		setDebugInfo(info);
-	}, [colorTypes]);
+	// Создаём map pluginId → color из typeOfNodes_store
+	const pluginColorMap = useMemo(() => {
+		const map: Record<string, string> = {};
+		for (const item of nodeTypePatterns) {
+			if (item.name && item.color) {
+				map[item.name] = item.color;
+			}
+		}
+		return map;
+	}, [nodeTypePatterns]);
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
@@ -85,6 +91,15 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 			});
 		return plugins;
 	}, [installedPlugins]);
+
+	// Отслеживаем изменения colorTypes и allPlugins
+	useEffect(() => {
+		const keys = Object.keys(colorTypes);
+		const info = `colorTypes: ${keys.length} keys | ${keys.join(', ')}`;
+		console.log('[DEBUG] colorTypes:', colorTypes);
+		console.log('[DEBUG] allPlugins[0]:', allPlugins[0], '| bgColor:', colorTypes[allPlugins[0]?.colorType]);
+		setDebugInfo(info);
+	}, [colorTypes, allPlugins]);
 
 	// Загружаем все подпапки только когда модал открывается
 	useEffect(() => {
@@ -265,7 +280,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								>
 									{allPlugins.map((plugin) => {
 										const isSelected = selectedPlugins.includes(plugin.id);
-										const bgColor = colorTypes[plugin.colorType] || '#666666';
+										const bgColor = pluginColorMap[plugin.id] || '#666666';
 										const textColor = complimentColor(bgColor);
 										const finalBgColor = isSelected ? bgColor : withAlpha(bgColor, 0.25);
 										return (
