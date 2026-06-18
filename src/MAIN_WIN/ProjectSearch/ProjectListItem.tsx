@@ -1,5 +1,6 @@
-import { ListItem, ListItemText, Checkbox, Box, Chip } from '@mui/material';
+import { ListItem, ListItemText, Checkbox, Box, Chip, IconButton } from '@mui/material';
 import { memo, useState, useEffect } from 'react';
+import { AlertCircle, RotateCcw } from 'lucide-react';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { greyColor } from '@/Store/Color/grayColor';
 import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
@@ -58,41 +59,44 @@ export const ProjectListItem = memo(function ProjectListItem({
 	const [plugins, setPlugins] = useState<PluginInfo[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [shouldHide, setShouldHide] = useState(false);
+	const [error, setError] = useState(false);
 	const { getPluginsForProject } = useProjectPlugins();
 	// Получаем статус включения папки
 	const { folders: disabledFolders } = useFoldersFromLS(mainFolderId);
 	const isActive = !disabledFolders.includes(projectName);
 
 	// Загружаем плагины только если элемент видим
+	const loadPlugins = async () => {
+		setLoading(true);
+		setError(false);
+		try {
+			const projectPlugins = await getPluginsForProject(mainFolderPath, projectName);
+			setPlugins(projectPlugins);
+
+			// Если выбраны плагины, проверяем есть ли ВСЕ из них в этой папке
+			if (selectedPlugins.length > 0) {
+				const pluginIds = projectPlugins.map((p) => p.id);
+				const hasAllSelected = selectedPlugins.every((selected) => pluginIds.includes(selected));
+				setShouldHide(!hasAllSelected);
+			} else {
+				setShouldHide(false);
+			}
+		} catch (err) {
+			setError(true);
+			setPlugins([]);
+			setShouldHide(false);
+		} finally {
+			setLoading(false);
+		}
+	};
+
 	useEffect(() => {
 		if (!isVisible) {
 			setPlugins([]);
 			setShouldHide(false);
+			setError(false);
 			return;
 		}
-
-		const loadPlugins = async () => {
-			setLoading(true);
-			try {
-				const projectPlugins = await getPluginsForProject(mainFolderPath, projectName);
-				setPlugins(projectPlugins);
-
-				// Если выбраны плагины, проверяем есть ли ВСЕ из них в этой папке
-				if (selectedPlugins.length > 0) {
-					const pluginIds = projectPlugins.map((p) => p.id);
-					const hasAllSelected = selectedPlugins.every((selected) => pluginIds.includes(selected));
-					setShouldHide(!hasAllSelected);
-				} else {
-					setShouldHide(false);
-				}
-			} catch (err) {
-				console.error(`Failed to load plugins for ${projectName}:`, err);
-				setPlugins([]);
-				setShouldHide(false);
-			} finally {
-				setLoading(false);
-			}
-		};
 
 		loadPlugins();
 	}, [isVisible, projectName, mainFolderPath, getPluginsForProject, selectedPlugins]);
@@ -154,11 +158,31 @@ export const ProjectListItem = memo(function ProjectListItem({
 					alignContent: 'flex-start',
 					flex: 1,
 					minHeight: '24px',
+					alignItems: 'center',
 				}}
 				onClick={(e) => e.stopPropagation()}
 			>
 				{loading ? (
 					<Box sx={{ fontSize: '11px', color: greyColor(40) }}>загрузка...</Box>
+				) : error ? (
+					<Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+						<AlertCircle size={16} color='#ffc107' />
+						<Box sx={{ fontSize: '11px', color: greyColor(40) }}>ошибка загрузки</Box>
+						<IconButton
+							size='small'
+							onClick={(e) => {
+								e.stopPropagation();
+								loadPlugins();
+							}}
+							sx={{
+								p: '2px',
+								color: greyColor(40),
+								'&:hover': { color: greyColor(60) },
+							}}
+						>
+							<RotateCcw size={14} />
+						</IconButton>
+					</Box>
 				) : (
 					plugins.map((plugin) => {
 						const isSelected = selectedPlugins.includes(plugin.id);

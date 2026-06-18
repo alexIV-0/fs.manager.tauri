@@ -51,7 +51,7 @@ export const useProjectPlugins = () => {
 
 				return Array.from(pluginsMap.values());
 			} catch (err) {
-				console.error(`Failed to load plugins for ${mainFolderPath}/${projectName}:`, err);
+				// Молча игнорируем ошибку если файла нет - это нормально для папок без options.json
 				return [];
 			}
 		},

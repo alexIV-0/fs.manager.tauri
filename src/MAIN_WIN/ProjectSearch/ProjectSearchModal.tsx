@@ -65,7 +65,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
-		return installedPlugins
+		const plugins = installedPlugins
 			.filter((p) => p.type && !p.type.includes('empty'))
 			.map((p) => {
 				const colorType = p.type?.[0] || 'unknown';
@@ -73,10 +73,10 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 					id: p.id,
 					name: p.name,
 					colorType: colorType,
-					color: colorTypes[colorType] || '#666666',
 				};
 			});
-	}, [installedPlugins, colorTypes]);
+		return plugins;
+	}, [installedPlugins]);
 
 	// Загружаем все подпапки только когда модал открывается
 	useEffect(() => {
@@ -250,7 +250,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								>
 									{allPlugins.map((plugin) => {
 										const isSelected = selectedPlugins.includes(plugin.id);
-										const bgColor = plugin.color || '#666666';
+										const bgColor = colorTypes[plugin.colorType] || '#666666';
 										const textColor = complimentColor(bgColor);
 										return (
 											<Chip
