@@ -15,7 +15,6 @@ import { plugin_Store } from '@/Store/MainWin/plugin_store';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { greyColor, defGray } from '@/Store/Color/grayColor';
 import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
-import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { ProjectListItem } from './ProjectListItem';
 import { commands, unwrap } from '@/Utils/specta';
 import { basename } from '@/Utils/path';
@@ -35,15 +34,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	const { colorTypes } = colorTypes_store();
 
 	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
-	const disabledFoldersMap = new Map<string, Set<string>>();
-
-	// Получаем список отключённых папок для каждой главной папки
-	useEffect(() => {
-		mainFolderArr.forEach((mainFolder) => {
-			const { folders: disabledFolders } = useFoldersFromLS(mainFolder.id);
-			disabledFoldersMap.set(mainFolder.id, new Set(disabledFolders));
-		});
-	}, [mainFolderArr]);
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
@@ -76,7 +66,6 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 						) as unknown as { folders: string[] };
 
 						const folderList = allFolders.folders || [];
-						const disabledSet = disabledFoldersMap.get(mainFolder.id) || new Set<string>();
 
 						// Добавляем каждую папку с информацией о главной папке
 						folderList.forEach((folderName) => {
@@ -85,7 +74,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								mainFolderId: mainFolder.id,
 								mainFolderPath: mainFolder.path,
 								projectName: folderName,
-								isActive: !disabledSet.has(folderName),
+								isActive: true, // все папки показываем как активные
 							});
 						});
 					} catch (err) {
