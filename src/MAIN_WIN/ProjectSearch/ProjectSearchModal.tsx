@@ -116,7 +116,17 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	};
 
 	return (
-		<Dialog open={open} onClose={onClose} maxWidth='sm' fullWidth>
+		<Dialog
+			open={open}
+			onClose={onClose}
+			PaperProps={{
+				sx: {
+					width: '96vw',
+					height: '88vh',
+					maxHeight: 'none',
+				}
+			}}
+		>
 			<DialogTitle
 				sx={{
 					display: 'flex',
@@ -143,138 +153,150 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 				</Box>
 			</DialogTitle>
 
-			<DialogContent>
-				{/* Поиск по имени */}
-				<TextField
-					fullWidth
-					placeholder='Поиск по имени папки...'
-					value={searchQuery}
-					onChange={(e) => setSearchQuery(e.target.value)}
-					size='small'
-					sx={{ mb: 2 }}
-				/>
-
-				{/* Облако плагинов */}
+			<DialogContent
+				sx={{
+					flex: 1,
+					display: 'flex',
+					flexDirection: 'column',
+					overflow: 'hidden',
+					p: 2,
+				}}
+			>
 				{loading ? (
-					<Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
-						<CircularProgress size={40} />
+					<Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
+						<CircularProgress />
 					</Box>
-				) : allPlugins.length > 0 ? (
-					<Box
-						sx={{
-							mb: 2,
-							p: 1.5,
-							backgroundColor: `rgba(0, 0, 0, 0.15)`,
-							borderRadius: '4px',
-							display: 'flex',
-							flexWrap: 'wrap',
-							gap: 1,
-						}}
-					>
-						{allPlugins.map((plugin) => (
-							<Chip
-								key={plugin.id}
-								label={plugin.id}
-								onClick={() => togglePlugin(plugin.id)}
-								variant={selectedPlugins.includes(plugin.id) ? 'filled' : 'outlined'}
-								color={selectedPlugins.includes(plugin.id) ? 'primary' : 'default'}
-								size='small'
-								sx={{
-									cursor: 'pointer',
-									'&:hover': { opacity: 0.8 },
-								}}
-							/>
-						))}
-						{selectedPlugins.length > 0 && (
-							<Chip
-								icon={<X size={16} />}
-								label='Очистить'
-								onClick={clearFilters}
-								size='small'
-								variant='outlined'
-								sx={{ cursor: 'pointer' }}
-							/>
-						)}
-					</Box>
-				) : null}
+				) : (
+					<>
+						{/* Поиск по имени */}
+						<TextField
+							fullWidth
+							placeholder='Поиск по имени папки...'
+							value={searchQuery}
+							onChange={(e) => setSearchQuery(e.target.value)}
+							size='small'
+							sx={{ mb: 2 }}
+						/>
 
-				{/* Список папок */}
-				<Box sx={{ mt: 2, border: `1px solid ${greyColor(50)}`, borderRadius: '4px', maxHeight: '400px', overflowY: 'auto' }}>
-					{filteredProjects.length > 0 ? (
-						<List sx={{ p: 0 }}>
-							{filteredProjects.map(([projectName, data]) => (
-								<ListItem
-									key={projectName}
-									onClick={() => handleSelectProject(projectName)}
-									sx={{
-										cursor: 'pointer',
-										borderBottom: `1px solid ${greyColor(80)}`,
-										'&:last-child': { borderBottom: 'none' },
-										'&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.25)' },
-										py: 1,
-									}}
-									disablePadding
-								>
-									<Checkbox
-										checked={data.active}
-										onClick={(e) => e.stopPropagation()}
-										sx={{ mr: 1 }}
+						{/* Облако плагинов */}
+						{allPlugins.length > 0 ? (
+							<Box
+								sx={{
+									mb: 2,
+									p: 1.5,
+									backgroundColor: `rgba(0, 0, 0, 0.15)`,
+									borderRadius: '4px',
+									display: 'flex',
+									flexWrap: 'wrap',
+									gap: 1,
+								}}
+							>
+								{allPlugins.map((plugin) => (
+									<Chip
+										key={plugin.id}
+										label={plugin.id}
+										onClick={() => togglePlugin(plugin.id)}
+										variant={selectedPlugins.includes(plugin.id) ? 'filled' : 'outlined'}
+										color={selectedPlugins.includes(plugin.id) ? 'primary' : 'default'}
 										size='small'
-										readOnly
-									/>
-									<ListItemText
-										primary={projectName}
 										sx={{
-											flex: 1,
-											'& .MuiListItemText-primary': {
-												fontSize: '14px',
-												overflow: 'hidden',
-												textOverflow: 'ellipsis',
-												whiteSpace: 'nowrap',
-											},
+											cursor: 'pointer',
+											'&:hover': { opacity: 0.8 },
 										}}
 									/>
-									{/* Плагины у папки */}
-									<Box
-										sx={{
-											display: 'flex',
-											gap: 0.5,
-											flexWrap: 'wrap',
-											justifyContent: 'flex-end',
-											ml: 1,
-											maxWidth: '200px',
-										}}
-										onClick={(e) => e.stopPropagation()}
-									>
-										{data.plugins.map((plugin) => (
-											<Chip
-												key={plugin.id}
-												label={plugin.id}
+								))}
+								{selectedPlugins.length > 0 && (
+									<Chip
+										icon={<X size={16} />}
+										label='Очистить'
+										onClick={clearFilters}
+										size='small'
+										variant='outlined'
+										sx={{ cursor: 'pointer' }}
+									/>
+								)}
+							</Box>
+						) : null}
+
+						{/* Список папок */}
+						<Box sx={{ mt: 2, border: `1px solid ${greyColor(50)}`, borderRadius: '4px', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+							{filteredProjects.length > 0 ? (
+								<List sx={{ p: 0, flex: 1, overflow: 'auto' }}>
+									{filteredProjects.map(([projectName, data]) => (
+										<ListItem
+											key={projectName}
+											onClick={() => handleSelectProject(projectName)}
+											sx={{
+												cursor: 'pointer',
+												borderBottom: `1px solid ${greyColor(80)}`,
+												'&:last-child': { borderBottom: 'none' },
+												'&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.25)' },
+												py: 1,
+											}}
+											disablePadding
+										>
+											<Checkbox
+												checked={data.active}
+												onClick={(e) => e.stopPropagation()}
+												sx={{ mr: 1 }}
 												size='small'
-												variant={selectedPlugins.includes(plugin.id) ? 'filled' : 'outlined'}
-												color={selectedPlugins.includes(plugin.id) ? 'primary' : 'default'}
-												onClick={() => togglePlugin(plugin.id)}
+												readOnly
+											/>
+											<ListItemText
+												primary={projectName}
 												sx={{
-													cursor: 'pointer',
-													'&:hover': { opacity: 0.8 },
-													fontSize: '11px',
-													height: '24px',
-													'& .MuiChip-label': {
-														px: '6px',
+													flex: 1,
+													'& .MuiListItemText-primary': {
+														fontSize: '14px',
+														overflow: 'hidden',
+														textOverflow: 'ellipsis',
+														whiteSpace: 'nowrap',
 													},
 												}}
 											/>
-										))}
-									</Box>
-								</ListItem>
-							))}
-						</List>
-					) : (
-						<Box sx={{ p: 2, textAlign: 'center', color: defGray }}>
-							{projectsWithPlugins.size === 0 ? 'Нет проектов' : 'Проекты не найдены'}
+											{/* Плагины у папки */}
+											<Box
+												sx={{
+													display: 'flex',
+													gap: 0.5,
+													flexWrap: 'wrap',
+													justifyContent: 'flex-end',
+													ml: 1,
+													maxWidth: '200px',
+												}}
+												onClick={(e) => e.stopPropagation()}
+											>
+												{data.plugins.map((plugin) => (
+													<Chip
+														key={plugin.id}
+														label={plugin.id}
+														size='small'
+														variant={selectedPlugins.includes(plugin.id) ? 'filled' : 'outlined'}
+														color={selectedPlugins.includes(plugin.id) ? 'primary' : 'default'}
+														onClick={() => togglePlugin(plugin.id)}
+														sx={{
+															cursor: 'pointer',
+															'&:hover': { opacity: 0.8 },
+															fontSize: '11px',
+															height: '24px',
+															'& .MuiChip-label': {
+																px: '6px',
+															},
+														}}
+													/>
+												))}
+											</Box>
+										</ListItem>
+									))}
+								</List>
+							) : (
+								<Box sx={{ p: 2, textAlign: 'center', color: defGray }}>
+									{projectsWithPlugins.size === 0 ? 'Нет проектов' : 'Проекты не найдены'}
+								</Box>
+							)}
 						</Box>
-					)}
-				</Box>
+					</>
+				)}
 			</DialogContent>
 		</Dialog>
 	);
