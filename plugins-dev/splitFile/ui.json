@@ -50,7 +50,8 @@
 					"format": "timecode",
 					"unit": "seconds",
 					"step": 1,
-					"max": 86400,
+					"range": [0, 3600],
+					"allowManualOverride": true,
 					"value": [0, 0]
 				},
 				"isInput": true,

@@ -287,8 +287,9 @@ export interface TimeRangePropertyControlProps {
 	format?: 'timecode' | 'float' | 'integer'; // формат отображения
 	unit?: 'minutes' | 'seconds'; // единицы измерения (по умолчанию 'minutes')
 	step?: number; // шаг слайдера
-	max?: number; // максимальное значение
+	range?: [number, number]; // [min, max] диапазон слайдера
 	decimals?: number; // кол-во знаков после запятой для float
+	allowManualOverride?: boolean; // разрешить ручной ввод за пределами диапазона слайдера
 }
 
 export type TimeRangeProperty = PropertyBase<'timeRange', TimeRangePropertyControlProps>;
