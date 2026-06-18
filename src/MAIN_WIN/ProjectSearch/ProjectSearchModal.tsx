@@ -12,9 +12,11 @@ import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useProjectSearch_store } from '@/Store/MainWin/projectSearch_store';
 import { plugin_Store } from '@/Store/MainWin/plugin_store';
+import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { greyColor, defGray } from '@/Store/Color/grayColor';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { ProjectListItem } from './ProjectListItem';
+import { commands, unwrap } from '@/Utils/specta';
 
 export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
 	const { searchQuery, selectedPlugins, setSearchQuery, togglePlugin, clearFilters } = useProjectSearch_store();
@@ -25,6 +27,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	const [projects, setProjects] = useState<string[]>([]);
 	const [projectsActive, setProjectsActive] = useState<Map<string, boolean>>(new Map());
 	const [mainFolderPath, setMainFolderPath] = useState<string>('');
+	const { colorTypes } = colorTypes_store();
 
 	// Получаем список отключённых папок из LS (по activeMainFolder как ключ)
 	const { folders: disabledFolders } = useFoldersFromLS(activeMainFolder || '');
@@ -33,29 +36,50 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	const allPlugins = useMemo(() => {
 		return installedPlugins
 			.filter((p) => p.type && !p.type.includes('empty'))
-			.map((p) => ({
-				id: p.id,
-				name: p.name,
-				colorType: p.type?.[0] || 'unknown',
-			}));
-	}, [installedPlugins]);
+			.map((p) => {
+				const colorType = p.type?.[0] || 'unknown';
+				return {
+					id: p.id,
+					name: p.name,
+					colorType: colorType,
+					color: colorTypes[colorType] || '#666666',
+				};
+			});
+	}, [installedPlugins, colorTypes]);
 
-	// При открытии модала - загружаем только список папок (без загрузки плагинов)
+	// При открытии модала - загружаем список ВСЕ папок в главной папке
 	useEffect(() => {
 		if (!open || !activeMainFolder) return;
 
 		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
 		if (!activeMain) return;
 
-		// Определяем активность каждой папки
-		const activeMap = new Map<string, boolean>();
-		activeMain.projectFolders.forEach((projectName) => {
-			activeMap.set(projectName, !disabledFolders.includes(projectName));
-		});
+		const loadFolders = async () => {
+			try {
+				// Читаем все папки в главной папке
+				const allFolders = unwrap(
+					await commands.getSomeFromFolder(activeMain.path, [{ type: 'folders', ext: [] }]),
+				) as unknown as { folders: string[] };
 
-		setMainFolderPath(activeMain.path);
-		setProjects(activeMain.projectFolders);
-		setProjectsActive(activeMap);
+				const folderList = allFolders.folders || [];
+
+				// Определяем активность каждой папки
+				const activeMap = new Map<string, boolean>();
+				folderList.forEach((folderName) => {
+					activeMap.set(folderName, !disabledFolders.includes(folderName));
+				});
+
+				setMainFolderPath(activeMain.path);
+				setProjects(folderList);
+				setProjectsActive(activeMap);
+			} catch (err) {
+				console.error('Failed to load folders:', err);
+				setProjects([]);
+				setProjectsActive(new Map());
+			}
+		};
+
+		loadFolders();
 	}, [open, activeMainFolder, mainFolderArr, disabledFolders]);
 
 	// Фильтруем проекты по поиску только (плагины фильтруются на уровне ProjectListItem)
@@ -157,20 +181,26 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 										flexShrink: 0,
 									}}
 								>
-									{allPlugins.map((plugin) => (
-										<Chip
-											key={plugin.id}
-											label={plugin.id}
-											onClick={() => togglePlugin(plugin.id)}
-											variant={selectedPlugins.includes(plugin.id) ? 'filled' : 'outlined'}
-											color={selectedPlugins.includes(plugin.id) ? 'primary' : 'default'}
-											size='small'
-											sx={{
-												cursor: 'pointer',
-												'&:hover': { opacity: 0.8 },
-											}}
-										/>
-									))}
+									{allPlugins.map((plugin) => {
+										const isSelected = selectedPlugins.includes(plugin.id);
+										const bgColor = plugin.color || '#666666';
+										return (
+											<Chip
+												key={plugin.id}
+												label={plugin.id}
+												onClick={() => togglePlugin(plugin.id)}
+												size='small'
+												sx={{
+													cursor: 'pointer',
+													backgroundColor: isSelected ? bgColor : `${bgColor}40`, // 40 hex = ~25% opacity
+													color: '#fff',
+													border: `1px solid ${bgColor}`,
+													'&:hover': { opacity: 0.9 },
+													fontWeight: isSelected ? 600 : 400,
+												}}
+											/>
+										);
+									})}
 									{selectedPlugins.length > 0 && (
 										<Chip
 											icon={<X size={16} />}

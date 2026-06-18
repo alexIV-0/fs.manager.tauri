@@ -1,6 +1,7 @@
 import { ListItem, ListItemText, Checkbox, Box, Chip } from '@mui/material';
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useMemo } from 'react';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { greyColor } from '@/Store/Color/grayColor';
 import { useProjectPlugins, PluginInfo } from '../hooks/useProjectPlugins';
 
@@ -26,6 +27,7 @@ export const ProjectListItem = memo(function ProjectListItem({
 	const [plugins, setPlugins] = useState<PluginInfo[]>([]);
 	const [loading, setLoading] = useState(false);
 	const { getPluginsForProject } = useProjectPlugins();
+	const { colorTypes } = colorTypes_store();
 
 	// Загружаем плагины только если элемент видим
 	useEffect(() => {
@@ -94,7 +96,7 @@ export const ProjectListItem = memo(function ProjectListItem({
 					flexWrap: 'wrap',
 					justifyContent: 'flex-end',
 					ml: 1,
-					maxWidth: '200px',
+					flex: 1,
 					minHeight: '24px',
 					alignItems: 'center',
 				}}
@@ -103,25 +105,31 @@ export const ProjectListItem = memo(function ProjectListItem({
 				{loading ? (
 					<Box sx={{ fontSize: '11px', color: greyColor(40) }}>загрузка...</Box>
 				) : (
-					plugins.map((plugin) => (
-						<Chip
-							key={plugin.id}
-							label={plugin.id}
-							size='small'
-							variant={selectedPlugins.includes(plugin.id) ? 'filled' : 'outlined'}
-							color={selectedPlugins.includes(plugin.id) ? 'primary' : 'default'}
-							onClick={() => onTogglePlugin(plugin.id)}
-							sx={{
-								cursor: 'pointer',
-								'&:hover': { opacity: 0.8 },
-								fontSize: '11px',
-								height: '24px',
-								'& .MuiChip-label': {
-									px: '6px',
-								},
-							}}
-						/>
-					))
+					plugins.map((plugin) => {
+						const isSelected = selectedPlugins.includes(plugin.id);
+						const bgColor = colorTypes[plugin.colorType] || '#666666';
+						return (
+							<Chip
+								key={plugin.id}
+								label={plugin.id}
+								size='small'
+								onClick={() => onTogglePlugin(plugin.id)}
+								sx={{
+									cursor: 'pointer',
+									backgroundColor: isSelected ? bgColor : `${bgColor}40`, // 40 hex = ~25% opacity
+									color: '#fff',
+									border: `1px solid ${bgColor}`,
+									'&:hover': { opacity: 0.9 },
+									fontSize: '11px',
+									height: '24px',
+									fontWeight: isSelected ? 600 : 400,
+									'& .MuiChip-label': {
+										px: '6px',
+									},
+								}}
+							/>
+						);
+					})
 				)}
 			</Box>
 		</ListItem>
