@@ -21,14 +21,25 @@ function withAlpha(color: string, alpha: number): string {
 		return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 	}
 
-	// Если это rgb/rgba
+	// Если это rgb/rgba - заменяем альфа параметр правильно
 	if (color.startsWith('rgb')) {
-		return color.replace(/[\d.]+\s*\)/, `${alpha})`);
+		// Удаляем существующий альфа параметр если есть
+		const rgbMatch = color.match(/rgba?\(([^)]+)\)/);
+		if (rgbMatch) {
+			const params = rgbMatch[1].split(',').map(p => p.trim());
+			// Берём только RGB значения (первые 3)
+			return `rgba(${params.slice(0, 3).join(', ')}, ${alpha})`;
+		}
 	}
 
-	// Если это hsl/hsla
+	// Если это hsl/hsla - конвертируем в rgb
 	if (color.startsWith('hsl')) {
-		return color.replace(/[\d.]+\s*\)/, `${alpha})`);
+		const hslMatch = color.match(/hsla?\(([^)]+)\)/);
+		if (hslMatch) {
+			const params = hslMatch[1].split(',').map(p => p.trim());
+			// Берём только HSL значения (первые 3)
+			return `hsla(${params.slice(0, 3).join(', ')}, ${alpha})`;
+		}
 	}
 
 	// Fallback
