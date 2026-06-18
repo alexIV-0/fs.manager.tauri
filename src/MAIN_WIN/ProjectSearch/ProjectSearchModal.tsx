@@ -225,8 +225,10 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 										const isSelected = selectedPlugins.includes(plugin.id);
 										const bgColor = plugin.color || '#666666';
 										const textColor = complimentColor(bgColor);
-										// Полупрозрачность: невыбранные ~25%, выбранные полная яркость
-										const opacity = isSelected ? 1 : 0.25;
+										// Цвет фона: невыбранные полупрозрачные, выбранные полный цвет
+										const backgroundColor = isSelected
+											? bgColor
+											: bgColor + '40'; // добавляем 40 hex для ~25% opacity
 										return (
 											<Chip
 												key={plugin.id}
@@ -235,11 +237,10 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 												size='small'
 												sx={{
 													cursor: 'pointer',
-													backgroundColor: bgColor,
+													backgroundColor: backgroundColor,
 													color: textColor,
-													opacity: opacity,
 													border: 'none',
-													'&:hover': { opacity: Math.min(opacity + 0.2, 1) },
+													'&:hover': { opacity: 0.9 },
 													fontWeight: isSelected ? 600 : 400,
 												}}
 											/>
