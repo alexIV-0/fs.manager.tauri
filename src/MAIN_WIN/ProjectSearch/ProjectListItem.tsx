@@ -71,6 +71,8 @@ export const ProjectListItem = memo(function ProjectListItem({
 		setError(false);
 		try {
 			const projectPlugins = await getPluginsForProject(mainFolderPath, projectName);
+			// Сортируем по colorType для группировки
+			projectPlugins.sort((a, b) => a.colorType.localeCompare(b.colorType));
 			setPlugins(projectPlugins);
 
 			// Если выбраны плагины, проверяем есть ли ВСЕ из них в этой папке
