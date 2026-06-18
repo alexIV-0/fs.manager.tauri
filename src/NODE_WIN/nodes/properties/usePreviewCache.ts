@@ -134,7 +134,8 @@ export function usePreviewCache({
 	const requestFrame = useCallback(
 		(time: number) => {
 			const cc = cellCountRef.current;
-			if (cc <= 0 || durationRef.current <= 0) return;
+			// duration may legitimately be 0 (still image = single cell at t=0); only cellCount must be valid.
+			if (cc <= 0) return;
 			const idx = cellForTime(time, durationRef.current, cc);
 			currentCellRef.current = idx;
 

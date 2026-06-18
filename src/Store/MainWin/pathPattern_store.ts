@@ -309,7 +309,7 @@ const defaultFileTypes: PatternElement[] = [
 		color: '#0a84feff',
 		id: 'video',
 		name: 'video',
-		path: ['avi', 'mov', 'mp4', 'mpeg', 'mpg', 'm2v', 'm4v', 'ts', 'mxf'],
+		path: ['avi', 'mov', 'mp4', 'mpeg', 'mpg', 'm2v', 'm4v', 'ts', 'mxf', 'mkv'],
 		inactivePath: [],
 	},
 	{ color: '#ffae0cff', id: 'audio', name: 'audio', path: ['mp3', 'wav'], inactivePath: [] },

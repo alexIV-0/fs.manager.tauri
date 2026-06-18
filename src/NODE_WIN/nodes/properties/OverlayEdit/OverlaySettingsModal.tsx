@@ -175,6 +175,9 @@ export default function OverlaySettingsModal({ value, onSave, onClose }: Overlay
 					fgImageSrc={fgDataUrl || undefined}
 					canvasRef={canvasRef}
 					lockAspect={lockAspect}
+					allFormats={settings}
+					fgFilePath={effectiveFgPath}
+					bgFilePath={effectiveBgPath}
 				/>
 			}
 			panelSlot={(panelWidth) => (

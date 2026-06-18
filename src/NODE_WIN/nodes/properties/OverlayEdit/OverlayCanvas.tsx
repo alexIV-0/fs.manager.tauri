@@ -1,11 +1,16 @@
 // src/NODE_WIN/nodes/properties/OverlayEdit/OverlayCanvas.tsx
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { OverlayFormatSettings } from './types';
+import { invoke } from '@tauri-apps/api/core';
+import { OverlayFormatSettings, OverlaySettings } from './types';
 import { drawChecker } from '../TitleEdit/canvasUtils';
 import { useCanvasTransform } from '@/NODE_WIN/hooks/useCanvasTransform';
 import { HANDLE_SIZE, ROTATION_HANDLE_DIST } from './constants';
 import { CHECKER_COLOR_LIGHT, CHECKER_COLOR_DARK } from '@/Utils/CheckerboardBg';
+import { commands, unwrap } from '@/Utils/specta';
+import { toFileUrl } from '@/Utils/mediaUtils';
+import { buildOverlayGraph } from '@/Utils/ffmpegGraphs/overlayGraph';
+import PreviewStateDot from '../PreviewStateDot';
 
 interface OverlayCanvasProps {
 	settings: OverlayFormatSettings;
@@ -14,6 +19,30 @@ interface OverlayCanvasProps {
 	fgImageSrc?: string;
 	canvasRef: React.RefObject<HTMLCanvasElement | null>;
 	lockAspect?: boolean;
+	/** Full per-format settings — for the accurate ffmpeg render (format chosen by real BG dims). */
+	allFormats?: OverlaySettings;
+	/** Absolute FG/BG paths — for the accurate render (the canvas itself only has thumbnails). */
+	fgFilePath?: string;
+	bgFilePath?: string;
+}
+
+/** Minimal ffprobe stream shape we read for the accurate-frame graph. */
+interface ProbeDims { width: number; height: number; pixFmt: string; }
+
+async function probeDims(filePath: string): Promise<ProbeDims | null> {
+	try {
+		const json = await invoke<string>('ffprobe_get_info', { filePath });
+		const streams = (JSON.parse(json).streams ?? []) as Array<Record<string, unknown>>;
+		const v = streams.find((s) => s.codec_type === 'video');
+		if (!v) return null;
+		return {
+			width: Number(v.width) || 0,
+			height: Number(v.height) || 0,
+			pixFmt: String(v.pix_fmt ?? ''),
+		};
+	} catch {
+		return null;
+	}
 }
 
 // ── Типы взаимодействия ────────────────────────────────────────────────────
@@ -135,8 +164,75 @@ export default function OverlayCanvas({
 	fgImageSrc,
 	canvasRef,
 	lockAspect,
+	allFormats,
+	fgFilePath,
+	bgFilePath,
 }: OverlayCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+
+	// ── Accurate frame (on-demand ffmpeg composite, same builder as the export) ──
+	const [accurate, setAccurate] = useState(false);
+	const [accurateUrl, setAccurateUrl] = useState<string | null>(null);
+	const [accurateLoading, setAccurateLoading] = useState(false);
+	const probeCache = useRef<Map<string, ProbeDims>>(new Map());
+
+	const cachedProbe = useCallback(async (p: string): Promise<ProbeDims | null> => {
+		const hit = probeCache.current.get(p);
+		if (hit) return hit;
+		const dims = await probeDims(p);
+		if (dims) probeCache.current.set(p, dims);
+		return dims;
+	}, []);
+
+	const renderAccurate = useCallback(async () => {
+		if (!fgFilePath || !bgFilePath || !allFormats) return;
+		setAccurateLoading(true);
+		try {
+			const [bgD, fgD] = await Promise.all([cachedProbe(bgFilePath), cachedProbe(fgFilePath)]);
+			if (!bgD || bgD.width <= 0) throw new Error('bg probe failed');
+			// offsetBG is a node-level option not known to the modal — assume off (FG usually < BG).
+			const { videoFilter, outLabel } = buildOverlayGraph({
+				overlaySettings: allFormats,
+				bgDims: { width: bgD.width, height: bgD.height },
+				fgPixFmt: fgD?.pixFmt ?? '',
+				offsetBG: false,
+			});
+			const res = await commands
+				.previewRenderFrame({
+					inputs: [
+						{ path: bgFilePath, seek: 0 },
+						{ path: fgFilePath, seek: 0 },
+					],
+					filterGraph: videoFilter,
+					complex: true,
+					outLabel,
+					time: 0,
+					maxDim: null,
+					namespace: 'overlay',
+				})
+				.then(unwrap);
+			setAccurateUrl(toFileUrl(res.path));
+		} catch (e) {
+			console.warn('[overlay] accurate render failed:', e);
+			setAccurateUrl(null);
+		} finally {
+			setAccurateLoading(false);
+		}
+	}, [fgFilePath, bgFilePath, allFormats, cachedProbe]);
+
+	const toggleAccurate = useCallback(() => {
+		setAccurate((prev) => {
+			const next = !prev;
+			if (next) renderAccurate();
+			return next;
+		});
+	}, [renderAccurate]);
+
+	// Editing (drag / panel / format tab) invalidates the snapshot → back to live canvas.
+	useEffect(() => {
+		setAccurate(false);
+		setAccurateUrl(null);
+	}, [settings]);
 
 	// Все данные через refs — draw() не пересоздаётся
 	const settingsRef = useRef(settings);
@@ -580,6 +676,46 @@ export default function OverlayCanvas({
 	return (
 		<div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
 			<canvas ref={canvasRef} style={{ display: 'block' }} />
+
+			{/* 🟢 Accurate ffmpeg composite (on-demand) over the BG frame rect */}
+			{accurate && accurateUrl && (
+				<img
+					src={accurateUrl}
+					alt='Accurate composite'
+					style={{
+						position: 'absolute',
+						left: transform.offsetX,
+						top: transform.offsetY,
+						width: settings.bgWidth * transform.scale,
+						height: settings.bgHeight * transform.scale,
+						objectFit: 'contain',
+						pointerEvents: 'none',
+						zIndex: 2,
+					}}
+				/>
+			)}
+
+			{/* Accurate-frame control + fidelity dot */}
+			{fgFilePath && bgFilePath && (
+				<button
+					onClick={toggleAccurate}
+					style={{
+						position: 'absolute', top: 8, right: 8, zIndex: 4,
+						padding: '3px 8px', fontSize: 10, borderRadius: 3,
+						fontWeight: accurate ? 600 : 400,
+						border: `1px solid ${accurate ? '#46b450' : '#333'}`,
+						background: accurate ? '#1e3a24' : '#1a1a1acc',
+						color: accurate ? '#8fe0a0' : '#aaa',
+						cursor: 'pointer', outline: 'none',
+					}}
+					title='Render the exact ffmpeg composite for the current settings'
+				>
+					{accurate ? (accurateLoading ? '⏳ Точный кадр…' : '🟢 Точный кадр') : 'Точный кадр'}
+				</button>
+			)}
+			{accurate && (
+				<PreviewStateDot state={accurateUrl ? 'cached' : 'approx'} showLabel style={{ top: 36, right: 8 }} />
+			)}
 
 			{/* Размер BG холста */}
 			<div

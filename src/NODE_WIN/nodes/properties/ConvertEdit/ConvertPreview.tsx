@@ -1,20 +1,24 @@
 // src/NODE_WIN/nodes/properties/ConvertEdit/ConvertPreview.tsx
 //
-// Left panel: original video/image playback + converted frame preview.
-// - Video plays via <video> for navigation (pick the right frame)
-// - Converted preview is rendered live on a <canvas> (client-side, no ffmpeg) —
-//   same approach as the ffSwitch (VideoAdjust) preview. See convertPreviewCanvas.ts.
-// - Toggle between "Original" and "Converted" modes
-// - Zoom: scroll wheel, Pan: middle mouse drag, Double-click: fit to view
+// Left panel: converted-frame preview with the unified render-bar workflow (same as
+// KeyingPreview). Live client-side canvas approximation (🟡) → accurate ffmpeg frame
+// swapped in on pause (🟢). The old Original/Converted toggle is gone — fidelity is
+// shown by the corner dot, not chosen. Render-bar timeline shows cached cells & scrubs.
+// Interactive scale/crop/position handles (ConvertHandleOverlay) stay.
 
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { toFileUrl } from '@/Utils/mediaUtils';
-import { ConvertSettings, FALLBACK_IMAGE_FORMATS } from './types';
+import type { PreviewRenderSpec } from '@/bindings';
+import { ConvertSettings, FALLBACK_IMAGE_FORMATS, buildPreviewFilterString } from './types';
 import { renderConvertPreview } from './convertPreviewCanvas';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import ConvertHandleOverlay from './ConvertHandleOverlay';
 import PreviewToolbar, { type PreviewToolbarHandle } from '../PreviewToolbar';
+import PreviewTimeline, { type PreviewTimelineHandle } from '../PreviewTimeline';
+import PreviewStateDot from '../PreviewStateDot';
+import { usePreviewCache } from '../usePreviewCache';
+import { PreviewState } from '../previewState';
 
 const CONTROLS_H = 84;
 const MIN_SCALE = 0.1;
@@ -38,11 +42,15 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const imgRef          = useRef<HTMLImageElement>(null);
 	const convertedCanvasRef = useRef<HTMLCanvasElement>(null);
 	const toolbarRef      = useRef<PreviewToolbarHandle>(null);
+	const timelineRef     = useRef<PreviewTimelineHandle>(null);
 	const rafRef          = useRef<number>(0);
 	const durationRef     = useRef(0);
 
 	const [playing, setPlaying] = useState(false);
-	const [mode,    setMode]    = useState<'original' | 'converted'>('original');
+	const [duration, setDuration] = useState(0);
+	// View toggle: 'original' for editing crop on the source frame, 'converted' (Result)
+	// for the rendered output where the accurate-frame engine lives.
+	const [mode, setMode] = useState<'original' | 'converted'>('original');
 	const modeRef = useRef(mode);
 	modeRef.current = mode;
 
@@ -92,6 +100,43 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
 
+	// ── Filtergraph (single source of truth — same builder as the export) ───
+	const settingsStr = JSON.stringify(settings);
+	const filterGraph = useMemo(
+		() => buildPreviewFilterString(settings, outputMode),
+		[settingsStr, outputMode], // eslint-disable-line react-hooks/exhaustive-deps
+	);
+	// Audio output has no frame to render; an empty graph means "no visible change".
+	const hasEffect = outputMode !== 'audio' && filterGraph.length > 0;
+
+	const cellCount = useMemo(
+		() => (duration > 0 ? Math.min(600, Math.max(20, Math.round(duration * 4))) : 1),
+		[duration],
+	);
+
+	const buildSpec = useCallback(
+		(time: number): PreviewRenderSpec | null => {
+			if (!filePath || !hasEffect) return null;
+			return {
+				inputs: [{ path: filePath, seek: time }],
+				filterGraph,
+				complex: false,
+				outLabel: null,
+				time,
+				maxDim: null,
+				namespace: 'convert',
+			};
+		},
+		[filePath, hasEffect, filterGraph],
+	);
+
+	const { cellStates, frameUrl, frameState, requestFrame } = usePreviewCache({
+		duration,
+		cellCount,
+		buildSpec,
+		graphKey: `${filePath}|${outputMode}|${filterGraph}`,
+	});
+
 	// Reset sizes and auto-fit guard on file change
 	useEffect(() => {
 		setOrigImageSize(null);
@@ -134,6 +179,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		setPlaybackError(false);
 		const onMeta = () => {
 			durationRef.current = v.duration;
+			setDuration(v.duration);
 			setOrigVideoSize({ w: v.videoWidth, h: v.videoHeight });
 			onOrigSizeDetected?.(v.videoWidth, v.videoHeight);
 			// A hidden, paused video doesn't reliably decode a frame for the canvas in
@@ -154,13 +200,16 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		};
 	}, [fileUrl, isImage, fitToView, onOrigSizeDetected]);
 
-	// ── Sync playing state ─────────────────────────────────────────────────
+	// ── Sync playing state + request an accurate frame on pause ─────────────
 
 	useEffect(() => {
 		const v = videoRef.current;
 		if (!v) return;
 		const onPlay  = () => setPlaying(true);
-		const onPause = () => setPlaying(false);
+		const onPause = () => {
+			setPlaying(false);
+			if (modeRef.current === 'converted') requestFrame(v.currentTime);
+		};
 		setPlaying(!v.paused);
 		v.addEventListener('play', onPlay);
 		v.addEventListener('pause', onPause);
@@ -168,7 +217,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 			v.removeEventListener('play', onPlay);
 			v.removeEventListener('pause', onPause);
 		};
-	}, [fileUrl]);
+	}, [fileUrl, requestFrame]);
 
 	// ── Draw converted frame onto the canvas (client-side, no ffmpeg) ──────
 
@@ -213,13 +262,14 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		}
 	}, [isImage, fitToView]);
 
-	// ── RAF loop: progress bar + live converted render ─────────────────────
+	// ── RAF loop: progress + timeline playhead + live converted render ──────
 
 	useEffect(() => {
 		const loop = () => {
 			const v = videoRef.current;
 			if (v && v.duration > 0) {
 				toolbarRef.current?.update(v.currentTime, v.duration);
+				timelineRef.current?.update(v.currentTime, v.duration);
 			}
 			if (modeRef.current === 'converted') drawConverted();
 			rafRef.current = requestAnimationFrame(loop);
@@ -228,12 +278,19 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		return () => cancelAnimationFrame(rafRef.current);
 	}, [drawConverted]);
 
-	// Auto-switch to converted mode when settings change so the user sees the effect.
-	const settingsStr = JSON.stringify(settings);
+	// Auto-switch to Result view when settings change so the user sees the effect.
 	useEffect(() => {
 		if (!filePath) return;
 		setMode('converted');
 	}, [settingsStr, filePath]);
+
+	// ── Re-request the accurate frame when graph / file / duration / view changes ──
+
+	useEffect(() => {
+		if (!filePath || !hasEffect || mode !== 'converted') return;
+		if (!isImage && duration <= 0) return; // video: wait for metadata (duration)
+		requestFrame(videoRef.current?.currentTime ?? 0);
+	}, [filterGraph, filePath, duration, hasEffect, isImage, outputMode, mode, requestFrame]);
 
 	// ── Seek ───────────────────────────────────────────────────────────────
 
@@ -243,7 +300,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		const t = ratio * durationRef.current;
 		v.currentTime = t;
 		onTimecodeChange?.(t);
-	}, [onTimecodeChange]);
+		if (modeRef.current === 'converted') requestFrame(t);
+	}, [onTimecodeChange, requestFrame]);
 
 	const togglePlay = useCallback(() => {
 		const v = videoRef.current;
@@ -257,7 +315,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		v.pause();
 		v.currentTime = Math.max(0, Math.min(v.duration, v.currentTime + dir * (1 / 30)));
 		onTimecodeChange?.(v.currentTime);
-	}, [onTimecodeChange]);
+		if (modeRef.current === 'converted') requestFrame(v.currentTime);
+	}, [onTimecodeChange, requestFrame]);
 
 	// ── Zoom ───────────────────────────────────────────────────────────────
 
@@ -324,7 +383,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const displayW = mode === 'converted' && convertedSize ? convertedSize.w : (origImageSize?.w ?? vidW);
 	const displayH = mode === 'converted' && convertedSize ? convertedSize.h : (origImageSize?.h ?? vidH);
 
-	// Original frame dimensions for the frame-boundary outline
+	// Original frame dimensions for the frame-boundary outline / handles
 	const origW = origImageSize?.w ?? origVideoSize?.w ?? 0;
 	const origH = origImageSize?.h ?? origVideoSize?.h ?? 0;
 
@@ -337,7 +396,15 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		imageRendering: 'auto',
 	};
 
-	const hasConverted = mode === 'converted' && !!convertedSize;
+	// ── Display rule per view ──────────────────────────────────────────────
+	// Original view → source frame (+ crop handles). Result view → 🟡 live canvas,
+	// swapped to 🟢 accurate ffmpeg frame on pause when an effect is active.
+	const engineActive = mode === 'converted' && hasEffect;
+	const showGreen  = engineActive && !playing && frameState === 'cached' && !!frameUrl;
+	const showCanvas = mode === 'converted' && !showGreen;
+	const showSource = mode === 'original';
+	const dotState: PreviewState =
+		mode === 'original' ? 'original' : (!hasEffect ? 'original' : (showGreen ? 'cached' : 'approx'));
 
 	// ── Render ─────────────────────────────────────────────────────────────
 
@@ -356,7 +423,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				onDoubleClick={fitToView}
 			>
 				{/* Frame background — checkerboard + border */}
-				{fileUrl && (origW > 0 || hasConverted) && (
+				{fileUrl && (origW > 0 || convertedSize) && (
 					<div style={{
 						position: 'absolute',
 						left: transform.offsetX,
@@ -384,7 +451,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 					/>
 				)}
 
-				{/* Static image — always mounted (display source for both modes) */}
+				{/* Static image — always mounted (display source / canvas source) */}
 				{fileUrl && isImage && (
 					<img
 						ref={imgRef}
@@ -401,7 +468,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 								requestAnimationFrame(() => fitToView());
 							}
 						}}
-						style={mode === 'original'
+						style={showSource
 							? { ...mediaStyle, zIndex: 1 }
 							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
 						}
@@ -419,25 +486,37 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 						muted
 						playsInline
 						preload='auto'
-						style={mode === 'original'
+						style={showSource
 							? { ...mediaStyle, zIndex: 1 }
 							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
 						}
 					/>
 				)}
 
-				{/* Converted preview — live canvas; checkerboard shows alpha through transparent pixels */}
+				{/* 🟡 Live converted approximation — client-side canvas over checkerboard */}
 				<canvas
 					ref={convertedCanvasRef}
 					style={{
 						...mediaStyle,
 						...checkerboardStyle,
 						zIndex: 1,
-						display: hasConverted ? 'block' : 'none',
+						display: showCanvas ? 'block' : 'none',
 					}}
 				/>
 
-				{mode === 'original' && !isImage && fileUrl && playbackError && (
+				{/* 🟢 Accurate ffmpeg frame — swapped in on pause for the cached cell */}
+				{showGreen && frameUrl && (
+					<img
+						src={frameUrl}
+						style={{ ...mediaStyle, zIndex: 1, pointerEvents: 'none' }}
+						alt='Accurate preview'
+					/>
+				)}
+
+				{/* Fidelity indicator */}
+				{fileUrl && (origW > 0 || convertedSize) && <PreviewStateDot state={dotState} showLabel />}
+
+				{showSource && !isImage && fileUrl && playbackError && (
 					<div style={{
 						position: 'absolute', inset: 0, zIndex: 2,
 						display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -445,7 +524,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 						textAlign: 'center', padding: 16,
 					}}>
 						Preview playback not supported for this codec.<br/>
-						Switch to “Converted Preview” to view a rendered frame.
+						Adjust settings to render a frame.
 					</div>
 				)}
 
@@ -468,7 +547,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				</div>
 			</div>
 
-			{/* Controls */}
+			{/* Controls — render-bar timeline replaces the thin progress bar */}
 			<PreviewToolbar
 				ref={toolbarRef}
 				playing={playing}
@@ -478,6 +557,15 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				showFrameStep
 				onStepFrame={stepFrame}
 				height={isImage ? CONTROLS_H / 2 : CONTROLS_H}
+				progressSlot={!isImage ? (
+					<PreviewTimeline
+						ref={timelineRef}
+						duration={duration}
+						cellCount={cellCount}
+						cellStates={cellStates}
+						onSeek={seekTo}
+					/>
+				) : undefined}
 				bottomSlot={
 					<div style={{ display: 'flex', gap: 4 }}>
 						{(['original', 'converted'] as const).map((m) => (
@@ -491,10 +579,11 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 									border: `1px solid ${mode === m ? '#5a9fd4' : '#333'}`,
 									background: mode === m ? '#1e3a5f' : '#1a1a1a',
 									color: mode === m ? '#8ec8f0' : '#666',
-									outline: 'none', textTransform: 'capitalize',
+									outline: 'none',
 								}}
+								title={m === 'original' ? 'Source frame — edit crop here' : 'Rendered result (accurate frame on pause)'}
 							>
-								{m === 'original' ? 'Original' : 'Converted Preview'}
+								{m === 'original' ? 'Original' : 'Result'}
 							</button>
 						))}
 					</div>

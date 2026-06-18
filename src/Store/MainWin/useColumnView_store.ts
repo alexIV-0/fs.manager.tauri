@@ -35,9 +35,20 @@ interface UniversalColumnViewState {
 		colIndex: number,
 		item: { name: string; path: string; isDir: boolean },
 	) => void;
+	// Оптимистично добавляет элемент в колонку с путём parentPath и сразу делает его
+	// активным выбором + активирует панель (чтобы только что созданную папку/файл
+	// можно было переименовать по Enter). Если колонки с таким путём нет — no-op.
+	addAndSelectItemByPath: (
+		instanceType: 'gd' | 'local',
+		parentPath: string,
+		item: { name: string; path: string; isDir: boolean },
+	) => void;
 	toggleMultiSelect: (instanceType: 'gd' | 'local', colIndex: number, path: string) => void;
 	setMultiSelectedPaths: (instanceType: 'gd' | 'local', paths: string[], anchor: { colIndex: number; path: string }) => void;
 	clearMultiSelection: (instanceType: 'gd' | 'local') => void;
+	// Полностью снимает выбор в панели: и мульти-выбор, и одиночную подсветку
+	// (selected) во всех её колонках.
+	clearInstanceSelection: (instanceType: 'gd' | 'local') => void;
 	// Делает панель (gd/local) активной для клавиатуры: ставит фокус и
 	// синхронизирует lastSelectedItem с уже выбранным элементом этой панели
 	// (или с первым элементом корневой колонки, если ничего не выбрано).
@@ -405,6 +416,43 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 		}));
 	},
 
+	addAndSelectItemByPath: (instanceType, parentPath, item) => {
+		const cols = get().instances[instanceType].columns;
+		if (cols.findIndex((c) => c.path === parentPath) === -1) return; // родитель не открыт колонкой
+
+		useColumnFocus_store.getState().setFocusedColumn(instanceType);
+
+		set((state) => {
+			const sCols = state.instances[instanceType].columns;
+			const idx = sCols.findIndex((c) => c.path === parentPath);
+			if (idx === -1) return state;
+
+			const col = sCols[idx];
+			const exists = col.items.some((it: any) => it.path === item.path);
+			const items = exists
+				? col.items
+				: [...col.items, item].sort((a: any, b: any) => {
+						if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+						return a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' });
+					});
+
+			return {
+				lastActiveInstance: instanceType,
+				lastSelectedItem: { colIndex: idx, item },
+				activeColumnPath: parentPath,
+				instances: {
+					...state.instances,
+					[instanceType]: {
+						...state.instances[instanceType],
+						columns: sCols.map((c, i) => (i === idx ? { ...c, items, selected: item.name } : c)),
+						multiSelectedPaths: [],
+						multiSelectAnchor: { colIndex: idx, path: item.path },
+					},
+				},
+			};
+		});
+	},
+
 	toggleMultiSelect: (instanceType: 'gd' | 'local', colIndex: number, path: string) => {
 		useColumnFocus_store.getState().setFocusedColumn(instanceType);
 		set((state) => {
@@ -456,6 +504,25 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 					...state.instances[instanceType],
 					multiSelectedPaths: [],
 					multiSelectAnchor: null,
+				},
+			},
+		}));
+	},
+
+	// Снимает и мульти-выбор, и одиночную подсветку во всех колонках панели.
+	// Зовётся при уходе в другую панель (верх↔низ), чтобы клавиатура (Enter/Delete)
+	// и подсветка не действовали на «остаточный» выбор в неактивной панели.
+	clearInstanceSelection: (instanceType: 'gd' | 'local') => {
+		set((state) => ({
+			instances: {
+				...state.instances,
+				[instanceType]: {
+					...state.instances[instanceType],
+					multiSelectedPaths: [],
+					multiSelectAnchor: null,
+					columns: state.instances[instanceType].columns.map((col) =>
+						col.selected ? { ...col, selected: null } : col,
+					),
 				},
 			},
 		}));

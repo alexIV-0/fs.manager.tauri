@@ -8,7 +8,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
 import { joinPath } from '@/Utils/joinPath';
-import { getAppSettings } from '@/Store/Settings/appSettings_client';
+import { setProjectActivity } from '@/Utils/projectActivityLS';
 import { commands, unwrap } from '@/Utils/specta';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
@@ -50,38 +50,13 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			addFolder(name);
 		} else {
 			removeFolder(name);
-			// Если папка была давно «холодной» — даём ей сутки до повторного auto-disable,
-			// сдвигая mtime OUT. Иначе autoDisable на следующем тике снова её выключит.
-			void bumpOutMtimeIfStale();
+			// Ручное включение = проект снова в работе. Ставим активность «сейчас» —
+			// auto-disable даст ему полные N дней (а не сутки, как делал старый bump).
+			// Дату ведём в LS, т.к. mtime папки OUT на gsync ненадёжен (его откатывает синк).
+			const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
+			if (activeMain) setProjectActivity(activeMain.id, name, Date.now());
 		}
 		setOnOffVal(!_prev);
-	}
-
-	async function bumpOutMtimeIfStale() {
-		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
-		if (!autoDisableDays || autoDisableDays <= 0) return;
-
-		const { mainFolderArr } = mainFolders_stor.getState();
-		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
-		if (!activeMain) return;
-
-		const outPath = joinPath(activeMain.path, name, 'OUT');
-		try {
-			const info: any = unwrap(await commands.getFileInfo(outPath));
-			const isDir = info?.is_dir ?? info?.isDirectory ?? false;
-			const modifiedMs: number | undefined = info?.modified ?? info?.modifiedMs;
-			if (!isDir || typeof modifiedMs !== 'number') return;
-
-			const dayMs = 86_400_000;
-			const ageMs = Date.now() - modifiedMs;
-			// Трогаем только если OUT уже «просрочена» — иначе оставляем mtime как есть.
-			if (ageMs <= autoDisableDays * dayMs) return;
-
-			const newMtimeMs = Date.now() - (autoDisableDays - 1) * dayMs;
-			unwrap(await commands.setPathMtime(outPath, newMtimeMs));
-		} catch {
-			// OUT может не существовать — это нормально, autoDisable пропустит её.
-		}
 	}
 
 	const handleMainClick = () => {

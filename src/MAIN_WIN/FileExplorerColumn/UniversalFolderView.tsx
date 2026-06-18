@@ -28,10 +28,13 @@ interface UniversalFolderViewProps {
 export function UniversalFolderView({ type, containerHeight = '100%', onStartResize }: UniversalFolderViewProps) {
 	const { activeMainFolder, activeProjectFolder } = setActiveFolders_store();
 	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths, clearMultiSelection } = useColumnView_Store();
+	const lastActiveInstance = useColumnView_Store((s) => s.lastActiveInstance);
 	const { localFolder } = localFolders_stor();
 
 	const refreshTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const pendingChangedPaths = useRef<Set<string>>(new Set());
+	// Пути колонок, за которыми сейчас следит watcher (по одному на открытую папку).
+	const watchedPaths = useRef<Set<string>>(new Set());
 	// Путь, для которого уже пробовали авто-пересборку — чтобы не дёргать её повторно,
 	// если папку так и не удалось прочитать (например, корень недоступен).
 	const lastHealedPath = useRef<string | null>(null);
@@ -93,6 +96,16 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		};
 		fetchData();
 	}, [type, localFolder, activeMainFolder, activeProjectFolder]); // openRoot — стабильная функция стора, не нужна в deps
+
+	// Когда активной становится ДРУГАЯ панель (верх↔низ) — снимаем выделение в этой,
+	// чтобы Enter/Delete и подсветка относились только к активной панели.
+	useEffect(() => {
+		if (lastActiveInstance && lastActiveInstance !== type) {
+			const inst = useColumnView_Store.getState().instances[type];
+			const hasSelection = inst.multiSelectedPaths.length > 0 || inst.columns.some((c) => c.selected);
+			if (hasSelection) useColumnView_Store.getState().clearInstanceSelection(type);
+		}
+	}, [lastActiveInstance, type]);
 
 	// ==============================
 	// 🔹 Хендлеры мультивыбора
@@ -184,6 +197,9 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		skipOnInput: true,
 		callback: async () => {
 			const state = useColumnView_Store.getState();
+			// Только активная панель реагирует на Delete (иначе удалялось бы
+			// «остаточное» выделение и в верхней, и в нижней панели).
+			if (state.lastActiveInstance !== type) return;
 			const { multiSelectedPaths } = state.instances[type];
 
 			if (multiSelectedPaths.length > 0) {
@@ -223,20 +239,12 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		},
 	});
 
-	// Запускаем watcher когда знаем корневой путь колонки
+	// Подписка на fs-события. Делается один раз на маунт панели — обработчик читает
+	// актуальные колонки из стора в момент срабатывания, поэтому колонки в deps не нужны.
+	// Накопительный debounce: одно перемещение/копирование папки эмитит десятки
+	// fs-событий — собираем их все и в конце обновляем все затронутые колонки
+	// (и источник, и приёмник), а не только последний путь.
 	useEffect(() => {
-		const rootCol = instance.columns[0];
-		if (!rootCol?.path) return;
-
-		const rootPath = rootCol.path;
-
-		// Стартуем слежку (типизированный specta-биндинг; fire-and-forget как раньше)
-		commands.fsWatchStart(rootPath);
-
-		// Подписываемся на изменения. Накопительный debounce:
-		// одно перемещение/копирование папки эмитит десятки fs-событий —
-		// собираем их все и в конце обновляем все затронутые колонки
-		// (и источник, и приёмник), а не только последний путь.
 		const unsubscribe = window.tauriAPI.onFsChanged((changedPath: string) => {
 			if (!changedPath) return;
 			pendingChangedPaths.current.add(changedPath);
@@ -260,11 +268,44 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 		});
 
 		return () => {
-			// При размонтировании — останавливаем watcher и отписываемся
-			commands.fsWatchStop(rootPath);
 			unsubscribe();
+			if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
 		};
-	}, [instance.columns[0]?.path, type]);
+	}, [type]);
+
+	// Следим за КАЖДОЙ открытой колонкой по отдельности и НЕ рекурсивно: события
+	// приходят только по прямым детям видимых папок, а не по всему дереву под корнем
+	// (раньше один рекурсивный watcher на корне ловил лавину событий при синке/глубоких
+	// изменениях). При навигации стартуем слежку за новыми путями и снимаем за закрытыми.
+	const columnPathsKey = columns.map((c) => c.path).join('\n');
+	useEffect(() => {
+		const desired = new Set(columns.map((c) => c.path).filter(Boolean));
+
+		// старт для вновь открытых колонок
+		desired.forEach((p) => {
+			if (!watchedPaths.current.has(p)) {
+				commands.fsWatchStart(p, false); // non-recursive — только прямые дети
+				watchedPaths.current.add(p);
+			}
+		});
+
+		// стоп для закрытых (срезанных) колонок
+		watchedPaths.current.forEach((p) => {
+			if (!desired.has(p)) {
+				commands.fsWatchStop(p);
+				watchedPaths.current.delete(p);
+			}
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [columnPathsKey]);
+
+	// На размонтировании панели — снимаем все наши watcher'ы.
+	useEffect(() => {
+		return () => {
+			watchedPaths.current.forEach((p) => commands.fsWatchStop(p));
+			watchedPaths.current.clear();
+		};
+	}, []);
 
 	// ==============================
 	// 🔹 Обработчик выбора папки для local

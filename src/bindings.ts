@@ -24,9 +24,9 @@ async launchAeWithScript(aePath: string, scriptPath: string) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
-async fsWatchStart(folderPath: string) : Promise<Result<null, string>> {
+async fsWatchStart(folderPath: string, recursive: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fs_watch_start", { folderPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("fs_watch_start", { folderPath, recursive }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

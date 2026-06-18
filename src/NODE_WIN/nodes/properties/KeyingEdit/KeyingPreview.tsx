@@ -265,8 +265,9 @@ export default function KeyingPreview({
 
 	useEffect(() => {
 		if (!filePath || !hasEffect) return;
+		if (!isImage && duration <= 0) return; // video: wait for metadata (duration)
 		requestFrame(videoRef.current?.currentTime ?? 0);
-	}, [filterGraph, filePath, duration, hasEffect, requestFrame]);
+	}, [filterGraph, filePath, duration, hasEffect, isImage, requestFrame]);
 
 	// ── Seek ──────────────────────────────────────────────────────────────────
 
