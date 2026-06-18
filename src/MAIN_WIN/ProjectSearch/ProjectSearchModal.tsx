@@ -34,6 +34,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	const { colorTypes } = colorTypes_store();
 
 	const [projects, setProjects] = useState<ProjectWithMain[]>([]);
+	const [loading, setLoading] = useState(false);
 
 	// Статичное облако плагинов - все установленные, кроме 'empty'
 	const allPlugins = useMemo(() => {
@@ -50,11 +51,15 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 			});
 	}, [installedPlugins, colorTypes]);
 
-	// При открытии модала - загружаем все подпапки из всех главных папок
+	// Загружаем все подпапки только когда модал открывается
 	useEffect(() => {
-		if (!open) return;
+		if (!open) {
+			setProjects([]);
+			return;
+		}
 
 		const loadAllProjects = async () => {
+			setLoading(true);
 			try {
 				const allProjects: ProjectWithMain[] = [];
 
@@ -74,7 +79,7 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 								mainFolderId: mainFolder.id,
 								mainFolderPath: mainFolder.path,
 								projectName: folderName,
-								isActive: true, // все папки показываем как активные
+								isActive: true, // будет определяться в ProjectListItem
 							});
 						});
 					} catch (err) {
@@ -86,20 +91,29 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 			} catch (err) {
 				console.error('Failed to load projects:', err);
 				setProjects([]);
+			} finally {
+				setLoading(false);
 			}
 		};
 
 		loadAllProjects();
 	}, [open, mainFolderArr]);
 
-	// Фильтруем проекты по поиску
+	// Фильтруем проекты по поиску И по выбранным плагинам
 	const filteredProjects = useMemo(() => {
 		const queryLower = searchQuery.toLowerCase();
+
 		return projects.filter((proj) => {
-			// Ищем по имени папки или имени главной папки
+			// Фильтр по имени
 			const projectMatch = proj.projectName.toLowerCase().includes(queryLower);
 			const mainMatch = proj.mainFolderName.toLowerCase().includes(queryLower);
-			return projectMatch || mainMatch;
+			if (queryLower && !projectMatch && !mainMatch) {
+				return false;
+			}
+
+			// Если выбраны плагины - фильтруем по ним
+			// (это будет проверяться в ProjectListItem при загрузке плагинов)
+			return true;
 		});
 	}, [projects, searchQuery]);
 
@@ -173,8 +187,12 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 						p: 2,
 					}}
 				>
-					{projects.length === 0 ? (
-						<Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
+					{loading ? (
+						<Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
+							<Typography color={defGray}>Загрузка проектов...</Typography>
+						</Box>
+					) : projects.length === 0 ? (
+						<Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
 							<Typography color={defGray}>Нет проектов</Typography>
 						</Box>
 					) : (
@@ -207,6 +225,8 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 										const isSelected = selectedPlugins.includes(plugin.id);
 										const bgColor = plugin.color || '#666666';
 										const textColor = complimentColor(bgColor);
+										// Полупрозрачность: невыбранные ~25%, выбранные полная яркость
+										const opacity = isSelected ? 1 : 0.25;
 										return (
 											<Chip
 												key={plugin.id}
@@ -215,10 +235,11 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 												size='small'
 												sx={{
 													cursor: 'pointer',
-													backgroundColor: isSelected ? bgColor : `${bgColor}40`,
+													backgroundColor: bgColor,
 													color: textColor,
-													border: `1px solid ${bgColor}`,
-													'&:hover': { opacity: 0.9 },
+													opacity: opacity,
+													border: 'none',
+													'&:hover': { opacity: Math.min(opacity + 0.2, 1) },
 													fontWeight: isSelected ? 600 : 400,
 												}}
 											/>
@@ -265,11 +286,11 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 														projectName={proj.projectName}
 														mainFolderPath={proj.mainFolderPath}
 														mainFolderId={proj.mainFolderId}
-														isActive={proj.isActive}
 														selectedPlugins={selectedPlugins}
 														onSelectProject={onClose}
 														onTogglePlugin={togglePlugin}
 														isVisible={true}
+														colorTypes={colorTypes}
 													/>
 												))}
 											</Box>

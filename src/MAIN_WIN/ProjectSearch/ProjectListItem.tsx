@@ -1,41 +1,46 @@
 import { ListItem, ListItemText, Checkbox, Box, Chip } from '@mui/material';
 import { memo, useState, useEffect } from 'react';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
-import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { greyColor } from '@/Store/Color/grayColor';
 import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
 import { useProjectPlugins, PluginInfo } from '../hooks/useProjectPlugins';
+import useFoldersFromLS from '../hooks/useFoldersFromLS';
+import type { ColorTypesMap } from '@/Store/Color/colorTypes_store';
 
 interface ProjectListItemProps {
 	projectName: string;
 	mainFolderPath: string;
 	mainFolderId: string;
-	isActive: boolean;
 	selectedPlugins: string[];
 	onSelectProject: () => void;
 	onTogglePlugin: (pluginId: string) => void;
 	isVisible: boolean;
+	colorTypes: ColorTypesMap;
 }
 
 export const ProjectListItem = memo(function ProjectListItem({
 	projectName,
 	mainFolderPath,
 	mainFolderId,
-	isActive,
 	selectedPlugins,
 	onSelectProject,
 	onTogglePlugin,
 	isVisible,
+	colorTypes,
 }: ProjectListItemProps) {
 	const [plugins, setPlugins] = useState<PluginInfo[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [shouldHide, setShouldHide] = useState(false);
 	const { getPluginsForProject } = useProjectPlugins();
-	const { colorTypes } = colorTypes_store();
+	// Получаем статус включения папки
+	const { folders: disabledFolders } = useFoldersFromLS(mainFolderId);
+	const isActive = !disabledFolders.includes(projectName);
 
 	// Загружаем плагины только если элемент видим
 	useEffect(() => {
 		if (!isVisible) {
 			setPlugins([]);
+			setShouldHide(false);
 			return;
 		}
 
@@ -44,21 +49,35 @@ export const ProjectListItem = memo(function ProjectListItem({
 			try {
 				const projectPlugins = await getPluginsForProject(mainFolderPath, projectName);
 				setPlugins(projectPlugins);
+
+				// Если выбраны плагины, проверяем есть ли они в этой папке
+				if (selectedPlugins.length > 0) {
+					const pluginIds = projectPlugins.map((p) => p.id);
+					const hasAnySelected = selectedPlugins.some((selected) => pluginIds.includes(selected));
+					setShouldHide(!hasAnySelected);
+				} else {
+					setShouldHide(false);
+				}
 			} catch (err) {
 				console.error(`Failed to load plugins for ${projectName}:`, err);
 				setPlugins([]);
+				setShouldHide(false);
 			} finally {
 				setLoading(false);
 			}
 		};
 
 		loadPlugins();
-	}, [isVisible, projectName, mainFolderPath, getPluginsForProject]);
+	}, [isVisible, projectName, mainFolderPath, getPluginsForProject, selectedPlugins]);
 
 	const handleSelectProject = () => {
 		setActiveFolders_store.getState().setActiveProjectFolder(projectName);
 		onSelectProject();
 	};
+
+	if (shouldHide) {
+		return null;
+	}
 
 	return (
 		<ListItem
@@ -118,6 +137,8 @@ export const ProjectListItem = memo(function ProjectListItem({
 						const isSelected = selectedPlugins.includes(plugin.id);
 						const bgColor = colorTypes[plugin.colorType] || '#666666';
 						const textColor = complimentColor(bgColor);
+						// Полупрозрачность: невыбранные ~25%, выбранные полная яркость
+						const opacity = isSelected ? 1 : 0.25;
 
 						return (
 							<Chip
@@ -127,10 +148,11 @@ export const ProjectListItem = memo(function ProjectListItem({
 								onClick={() => onTogglePlugin(plugin.id)}
 								sx={{
 									cursor: 'pointer',
-									backgroundColor: isSelected ? bgColor : `${bgColor}40`,
+									backgroundColor: bgColor,
 									color: textColor,
+									opacity: opacity,
 									border: 'none',
-									'&:hover': { opacity: 0.9 },
+									'&:hover': { opacity: Math.min(opacity + 0.2, 1) },
 									fontSize: '11px',
 									height: '24px',
 									fontWeight: isSelected ? 600 : 400,
