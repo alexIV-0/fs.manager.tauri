@@ -1,7 +1,5 @@
 import {
-	Dialog,
-	DialogTitle,
-	DialogContent,
+	Modal,
 	TextField,
 	Box,
 	List,
@@ -10,6 +8,7 @@ import {
 	Checkbox,
 	Chip,
 	CircularProgress,
+	Typography,
 } from '@mui/material';
 import { X } from 'lucide-react';
 import { useState, useEffect, useMemo, memo } from 'react';
@@ -105,52 +104,63 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 	};
 
 	return (
-		<Dialog
-			open={open}
-			onClose={onClose}
-			PaperProps={{
-				sx: {
-					width: '96vw',
-					height: '88vh',
-					maxHeight: 'none',
-				}
-			}}
-		>
-			<DialogTitle
+		<Modal open={open} onClose={onClose}>
+			<Box
 				sx={{
-					display: 'flex',
-					justifyContent: 'space-between',
-					alignItems: 'center',
-					pb: 1,
-				}}
-			>
-				Поиск проектов
-				<Box
-					component='button'
-					onClick={onClose}
-					sx={{
-						background: 'none',
-						border: 'none',
-						cursor: 'pointer',
-						padding: '4px',
-						display: 'flex',
-						alignItems: 'center',
-						'&:hover': { opacity: 0.7 },
-					}}
-				>
-					<X size={20} />
-				</Box>
-			</DialogTitle>
-
-			<DialogContent
-				sx={{
-					flex: 1,
+					position: 'absolute',
+					top: '50%',
+					left: '50%',
+					transform: 'translate(-50%, -50%)',
+					width: '90%',
+					height: '90%',
 					display: 'flex',
 					flexDirection: 'column',
+					bgcolor: 'rgba(20, 20, 20, 0.95)',
+					border: `1px solid ${greyColor(50)}`,
+					borderRadius: '4px',
+					boxShadow: 24,
 					overflow: 'hidden',
-					p: 2,
 				}}
 			>
+				{/* Заголовок */}
+				<Box
+					sx={{
+						display: 'flex',
+						justifyContent: 'space-between',
+						alignItems: 'center',
+						p: 2,
+						borderBottom: `1px solid ${greyColor(50)}`,
+						flexShrink: 0,
+					}}
+				>
+					<Typography sx={{ fontSize: 18, fontWeight: 600 }}>Поиск проектов</Typography>
+					<Box
+						component='button'
+						onClick={onClose}
+						sx={{
+							background: 'none',
+							border: 'none',
+							cursor: 'pointer',
+							padding: '4px',
+							display: 'flex',
+							alignItems: 'center',
+							'&:hover': { opacity: 0.7 },
+						}}
+					>
+						<X size={20} />
+					</Box>
+				</Box>
+
+				{/* Контент */}
+				<Box
+					sx={{
+						flex: 1,
+						display: 'flex',
+						flexDirection: 'column',
+						overflow: 'hidden',
+						p: 2,
+					}}
+				>
 				{loading ? (
 					<Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
 						<CircularProgress />
@@ -291,7 +301,8 @@ export const ProjectSearchModal = ({ open, onClose }: { open: boolean; onClose: 
 						</Box>
 					</>
 				)}
-			</DialogContent>
-		</Dialog>
+				</Box>
+			</Box>
+		</Modal>
 	);
 };
