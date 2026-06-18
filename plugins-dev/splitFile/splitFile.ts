@@ -8,12 +8,27 @@ import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByP
 
 export { onLoad } from '../_template/tauri';
 
+function getRandomInRange(min: number, max: number): number {
+	if (min === max) return min;
+	return min + Math.random() * (max - min);
+}
+
 export async function splitFileFunc(_item: any, _description: any): Promise<string[]> {
 	const finalFile: string[] = [];
 
 	const sceneDetect: boolean = _item.sceneDetection || false;
 	const blackFrames: boolean = _item.blackFrames || false;
-	const splitBy: number = Number(_item.splitBy || 0);
+
+	// splitBy может быть числом (old format) или массивом [min, max] (new format)
+	let splitByMin = 0;
+	let splitByMax = 0;
+	if (Array.isArray(_item.splitBy)) {
+		[splitByMin, splitByMax] = _item.splitBy as [number, number];
+	} else {
+		const val = Number(_item.splitBy || 0);
+		splitByMin = val;
+		splitByMax = val;
+	}
 
 	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName (split $random(3))'] : [..._item.targetPath];
 	const tPath: string[] = _item.import.targetPath || [];
@@ -34,13 +49,14 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 		sendToMW('statusbar', { text: `${_description.infoText}: [split file]\n${path.basename(fileFrom)}` });
 
 		const finalArrTimeStamp: { stTime: number; sceneDuration: number }[] = [];
+		const isSceneMode = splitByMin === 0 && splitByMax === 0;
 
-		if (sceneDetect || blackFrames || splitBy === 0) {
+		if (sceneDetect || blackFrames || isSceneMode) {
 			let blackFramesTimeStamp: number[] = [];
 			let sceneTimeStamp: number[] = [];
 
 			if (blackFrames) blackFramesTimeStamp = await ffmpeg.detectBlackFrames(fileFrom);
-			if (sceneDetect || splitBy === 0) sceneTimeStamp = await ffmpeg.detectScenes(fileFrom);
+			if (sceneDetect || isSceneMode) sceneTimeStamp = await ffmpeg.detectScenes(fileFrom);
 
 			const combined = [...blackFramesTimeStamp, ...sceneTimeStamp];
 			const timeStamp = [...new Set(combined)].sort((a, b) => a - b);
@@ -56,20 +72,24 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 				if (timeStamp[i] < startSceneTime) curStTimeScene = startSceneTime;
 				const curSceneLength = Math.round((nextTime - curStTimeScene) * 1000) / 1000;
 
-				if (curSceneLength >= splitBy && splitBy > 0) {
+				// Если это диапазон нарезки (а не режим сцен)
+				const targetDuration = !isSceneMode ? getRandomInRange(splitByMin, splitByMax) : 0;
+
+				if (!isSceneMode && curSceneLength >= targetDuration && targetDuration > 0) {
 					if (accumulatedDuration > 0) {
 						finalArrTimeStamp.push({ stTime: startSceneTime, sceneDuration: accumulatedDuration });
 						accumulatedDuration = 0;
 					}
-					finalArrTimeStamp.push({ stTime: curStTimeScene, sceneDuration: splitBy });
-					startSceneTime = curStTimeScene + splitBy;
+					finalArrTimeStamp.push({ stTime: curStTimeScene, sceneDuration: targetDuration });
+					startSceneTime = curStTimeScene + targetDuration;
 				} else {
 					if (accumulatedDuration === 0) {
 						if (timeStamp[i] > startSceneTime) startSceneTime = timeStamp[i];
 						accumulatedDuration = curSceneLength;
 						i++;
 					} else {
-						if (accumulatedDuration + curSceneLength <= splitBy) {
+						const maxAccum = !isSceneMode ? targetDuration : Infinity;
+						if (accumulatedDuration + curSceneLength <= maxAccum) {
 							accumulatedDuration += curSceneLength;
 							i++;
 						} else {
@@ -84,10 +104,12 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 				finalArrTimeStamp.push({ stTime: startSceneTime, sceneDuration: accumulatedDuration });
 			}
 		} else {
+			// Режим нарезки по длительности (без сцен)
 			let stTime = 0;
 			while (stTime < fileInfo.durationInSeconds) {
-				finalArrTimeStamp.push({ stTime, sceneDuration: splitBy });
-				stTime += splitBy;
+				const duration = getRandomInRange(splitByMin, splitByMax);
+				finalArrTimeStamp.push({ stTime, sceneDuration: duration });
+				stTime += duration;
 			}
 		}
 

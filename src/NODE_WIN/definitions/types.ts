@@ -282,8 +282,13 @@ export type ConvertSettingsProperty = PropertyBase<'convertSettings', ConvertSet
 export interface TimeRangePropertyControlProps {
 	label?: string;
 	tooltip?: string;
-	value: [number, number]; // [startMin, endMin] — минуты от полуночи (0..1440)
+	value: [number, number];
 	editLabel?: boolean;
+	format?: 'timecode' | 'float' | 'integer'; // формат отображения
+	unit?: 'minutes' | 'seconds'; // единицы измерения (по умолчанию 'minutes')
+	step?: number; // шаг слайдера
+	max?: number; // максимальное значение
+	decimals?: number; // кол-во знаков после запятой для float
 }
 
 export type TimeRangeProperty = PropertyBase<'timeRange', TimeRangePropertyControlProps>;
