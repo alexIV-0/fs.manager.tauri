@@ -147,8 +147,8 @@ export interface TextEditPropertyControlProps {
 	editLabel?: boolean; // если true — двойной клик по label позволяет его редактировать
 }
 
-export type AddableType = 'Link' | 'TextEdit' | 'Timecode' | 'Slider' | 'Checkbox';
-export const ALL_ADDABLE_TYPES: AddableType[] = ['Link', 'TextEdit', 'Timecode', 'Slider', 'Checkbox'];
+export type AddableType = 'Link' | 'TextEdit' | 'Timecode' | 'Slider' | 'Checkbox' | 'TimeRange' | 'NumberRange';
+export const ALL_ADDABLE_TYPES: AddableType[] = ['Link', 'TextEdit', 'Timecode', 'Slider', 'Checkbox', 'TimeRange', 'NumberRange'];
 
 export interface AddNewPropertyControlProps {
 	label?: string;
@@ -279,7 +279,7 @@ export interface ConvertSettingsPropertyControlProps {
 
 export type ConvertSettingsProperty = PropertyBase<'convertSettings', ConvertSettingsPropertyControlProps>;
 
-export interface TimeRangePropertyControlProps {
+export interface ValueRangePropertyControlProps {
 	label?: string;
 	tooltip?: string;
 	value: [number, number];
@@ -292,7 +292,7 @@ export interface TimeRangePropertyControlProps {
 	allowManualOverride?: boolean; // разрешить ручной ввод за пределами диапазона слайдера
 }
 
-export type TimeRangeProperty = PropertyBase<'timeRange', TimeRangePropertyControlProps>;
+export type ValueRangeProperty = PropertyBase<'valueRange', ValueRangePropertyControlProps>;
 
 export type Property =
 	| CheckboxProperty
@@ -313,7 +313,7 @@ export type Property =
 	| VideoAdjustmentProperty
 	| KeyingProperty
 	| ConvertSettingsProperty
-	| TimeRangeProperty;
+	| ValueRangeProperty;
 
 // export enum SearchType {
 // 	IMAGE = 'image',

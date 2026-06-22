@@ -13,16 +13,18 @@
 		"properties": [
 			{
 				"id": "aeScript",
-				"controlType": "link",
+				"controlType": "pathNavigator",
 				"controlProps": {
 					"label": "AE script",
-					"tooltip": "Путь до скрипта который будет исполняться в After Effects.<br>Для его написания нужны знания extendScripts",
+					"tooltip": "",
 					"value": ""
 				},
-				"isInput": true,
-				"acceptedTypes": ["scripts"],
+				"outputType": "path",
 				"required": true,
-				"outputType": "accepted"
+				"isInput": true,
+				"acceptedTypes": [
+					"scripts"
+				]
 			},
 			{
 				"id": "targetPath",
@@ -30,14 +32,20 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если не указан - выбрать сохранен в ту же папку с рандомным именем",
-					"options": ["#filePattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"options": [
+						"#filePattern",
+						"Custom Folder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": false
 			},
 			{
@@ -46,7 +54,9 @@
 				"controlProps": {
 					"label": "Input files",
 					"tooltip": "Параметр для добавление новых input, которые передадутся в After Effect.<div>Все inputs нужно переименовать так, что бы при написании скрипта для обработки можно было использовать эти имена входов для получения информации с их коенктеров.<br>Так же тут нужно выставить тип файла, который мы получим в результате обработки в After Effect.&nbsp;</div>",
-					"value": ["video"]
+					"value": [
+						"video"
+					]
 				},
 				"isInput": false,
 				"isOutput": true,
@@ -62,7 +72,11 @@
 					"value": 600
 				},
 				"isInput": true,
-				"acceptedTypes": ["timecode", "string", "text"],
+				"acceptedTypes": [
+					"timecode",
+					"string",
+					"text"
+				],
 				"required": false,
 				"outputType": "string"
 			}

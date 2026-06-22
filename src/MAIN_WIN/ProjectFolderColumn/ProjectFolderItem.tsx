@@ -8,7 +8,8 @@ import { memo, useEffect, useRef, useState } from 'react';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
 import { joinPath } from '@/Utils/joinPath';
-import { setProjectActivity } from '@/Utils/projectActivityLS';
+import { getProjectActivity, setProjectActivity } from '@/Utils/projectActivityLS';
+import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { commands, unwrap } from '@/Utils/specta';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
@@ -50,13 +51,33 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			addFolder(name);
 		} else {
 			removeFolder(name);
-			// Ручное включение = проект снова в работе. Ставим активность «сейчас» —
-			// auto-disable даст ему полные N дней (а не сутки, как делал старый bump).
-			// Дату ведём в LS, т.к. mtime папки OUT на gsync ненадёжен (его откатывает синк).
-			const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
-			if (activeMain) setProjectActivity(activeMain.id, name, Date.now());
+			reactivateOnManualEnable();
 		}
 		setOnOffVal(!_prev);
+	}
+
+	// Двойная логика ручного включения:
+	// — папка давно холодная (активность > N дней, т.е. была авто-отключена) →
+	//   даём ровно сутки. Если за эти сутки в неё что-то обработается, addedCount>0
+	//   поднимет активность до «сейчас» → полные N дней. Если ничего не попало —
+	//   на следующем проходе она снова отключится.
+	// — свежая папка (активность ≤ N дней) → не трогаем, ведёт себя как обычно.
+	// Дату ведём в LS, т.к. mtime папки OUT на gsync ненадёжен (его откатывает синк).
+	function reactivateOnManualEnable() {
+		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
+		if (!autoDisableDays || autoDisableDays <= 0) return;
+
+		const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
+		if (!activeMain) return;
+
+		const dayMs = 86_400_000;
+		const activity = getProjectActivity(activeMain.id, name);
+		// Нет истории — пусть auto-disable засеет «сейчас» (полные N дней).
+		if (activity === undefined) return;
+		// Свежая папка — оставляем как есть.
+		if (Date.now() - activity <= autoDisableDays * dayMs) return;
+		// Холодная — сутки до повторного auto-disable.
+		setProjectActivity(activeMain.id, name, Date.now() - (autoDisableDays - 1) * dayMs);
 	}
 
 	const handleMainClick = () => {

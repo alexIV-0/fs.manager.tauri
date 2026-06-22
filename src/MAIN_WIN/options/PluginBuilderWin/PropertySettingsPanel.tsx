@@ -318,7 +318,7 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 				property.controlType === 'jsonNavigator' ||
 				property.controlType === 'checkbox' ||
 				property.controlType === 'link' ||
-				property.controlType === 'timeRange') && (
+				property.controlType === 'valueRange') && (
 				<Box sx={{ borderTop: `1px solid ${gray40}`, mt: 0.5, pt: 0.5 }}>
 					<Box sx={{ px: 0.5, py: 0.25 }}>
 						<Box component='span' sx={{ color: greyColor(60), fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>
@@ -546,12 +546,12 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 				</JsonField>
 			)}
 
-			{property.controlType === 'timeRange' && (
+			{property.controlType === 'valueRange' && (
 				<>
 					<Box sx={{ borderTop: `1px solid ${gray40}`, mt: 0.5, pt: 0.5 }}>
 						<Box sx={{ px: 0.5, py: 0.25 }}>
 							<Box component='span' sx={{ color: greyColor(60), fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>
-								// timeRange options
+								// valueRange options
 							</Box>
 						</Box>
 					</Box>

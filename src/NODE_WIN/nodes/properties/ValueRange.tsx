@@ -1,14 +1,15 @@
-import { TimeRangeProperty, CustomNodeData } from '@/NODE_WIN/definitions/types';
+import { ValueRangeProperty, CustomNodeData } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { Slider, Stack, TextField } from '@mui/material';
-import { useReactFlow } from '@xyflow/react';
-import { useCallback, useState } from 'react';
+import { useNodesData, useReactFlow } from '@xyflow/react';
+import { useCallback, useRef, useState } from 'react';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import PropertyLabelEditor from './PropertyLabelEditor';
 import TooltipOrDelete from './TooltipOrDelete';
+import { blueColor } from '@/Store/Color/grayColor';
 
-interface TimeRangeProps {
-	property: TimeRangeProperty;
+interface ValueRangeProps {
+	property: ValueRangeProperty;
 	onChange?: (value: [number, number]) => void;
 }
 
@@ -28,11 +29,8 @@ interface FormatConfig {
 
 function getFormatConfig(controlProps: any): FormatConfig {
 	const unit = controlProps?.unit ?? 'minutes';
-	const defaultRange: [number, number] =
-		unit === 'seconds' ? [0, MAX_SECONDS] : [0, DAY_MIN];
-	const range = Array.isArray(controlProps?.range)
-		? (controlProps.range as [number, number])
-		: defaultRange;
+	const defaultRange: [number, number] = unit === 'seconds' ? [0, MAX_SECONDS] : [0, DAY_MIN];
+	const range = Array.isArray(controlProps?.range) ? (controlProps.range as [number, number]) : defaultRange;
 
 	return {
 		format: controlProps?.format ?? 'timecode',
@@ -118,13 +116,19 @@ function parseValue(input: string, config: FormatConfig, allowOverride: boolean 
 	return clampValue(parsed, min, max);
 }
 
-export default function TimeRange({ property, onChange }: TimeRangeProps) {
+export default function ValueRange({ property, onChange }: ValueRangeProps) {
 	const nodeId = useNodeContext();
 	const reactFlow = useReactFlow();
 	const { controlProps } = property;
 	const colorTypes = colorTypes_store((s) => s.colorTypes);
 	const config = getFormatConfig(controlProps);
 	const [sliderMin, sliderMax] = config.range!;
+	const minColor = blueColor(40, 80);
+	const maxColor = blueColor(70, 80);
+
+	// Получаем статус валидности ноды — реактивно (getNode не подписан на обновления).
+	const reactiveData = useNodesData(nodeId)?.data as CustomNodeData | undefined;
+	const isNodeValid = reactiveData?.isValid ?? true;
 
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
@@ -178,15 +182,61 @@ export default function TimeRange({ property, onChange }: TimeRangeProps) {
 		});
 	}, [nodeId, property.id, reactFlow]);
 
+	// Какой бегунок схвачен в текущем жесте + «храповик» (peak) значений.
+	// grabbed фиксируем на pointerdown по data-index — это надёжнее, чем activeThumb
+	// от MUI (который при равных значениях/пересечении может относиться к другому бегунку).
+	const dragRef = useRef<{ grabbed: number; lo: number; hi: number } | null>(null);
+
+	const applyRange = (lo: number, hi: number) => {
+		setRange([lo, hi]);
+		setStartText(formatValue(lo, config));
+		setEndText(formatValue(hi, config));
+	};
+
+	const onSliderPointerDown = (e: React.PointerEvent) => {
+		const thumb = (e.target as HTMLElement).closest('.MuiSlider-thumb');
+		const idx = thumb?.getAttribute('data-index');
+		if (idx === '0' || idx === '1') {
+			dragRef.current = { grabbed: Number(idx), lo: range[0], hi: range[1] };
+		} else {
+			dragRef.current = null; // клик по рельсе — обычное поведение
+		}
+	};
+
 	// Слайдер: live-обновление окошек на drag, сохранение — на commit.
-	const onSlider = (_: Event, v: number | number[]) => {
+	// activeThumb — индекс реально двигающегося бегунка; v[activeThumb] = позиция пальца.
+	const onSlider = (_: Event, v: number | number[], activeThumb: number) => {
 		if (!Array.isArray(v)) return;
-		setRange([v[0], v[1]] as [number, number]);
-		setStartText(formatValue(v[0], config));
-		setEndText(formatValue(v[1], config));
+		const st = dragRef.current;
+		if (!st) {
+			// Клик по рельсе — просто ставим отсортированные значения.
+			applyRange(Math.min(v[0], v[1]), Math.max(v[0], v[1]));
+			return;
+		}
+		const finger = v[activeThumb];
+		let lo: number;
+		let hi: number;
+		if (st.grabbed === 0) {
+			// Тянем минимум: максимум «храповиком» растёт за ним, но не опускается обратно.
+			lo = finger;
+			hi = Math.max(st.hi, finger);
+		} else {
+			// Тянем максимум: минимум «храповиком» падает за ним, но не поднимается обратно.
+			hi = finger;
+			lo = Math.min(st.lo, finger);
+		}
+		st.lo = lo;
+		st.hi = hi;
+		applyRange(lo, hi);
 	};
 	const onSliderCommit = (_: Event | React.SyntheticEvent, v: number | number[]) => {
-		if (Array.isArray(v)) commit([v[0], v[1]] as [number, number]);
+		const st = dragRef.current;
+		dragRef.current = null;
+		if (st) {
+			commit([st.lo, st.hi]);
+		} else if (Array.isArray(v)) {
+			commit([v[0], v[1]] as [number, number]);
+		}
 	};
 
 	const boxSx = {
@@ -235,11 +285,58 @@ export default function TimeRange({ property, onChange }: TimeRangeProps) {
 					min={sliderMin}
 					max={sliderMax}
 					step={config.step}
-					disableSwap
+					onPointerDown={onSliderPointerDown}
 					onChange={onSlider}
 					onChangeCommitted={onSliderCommit}
 					valueLabelDisplay='off'
-					sx={{ flex: 1, mx: 0.5 }}
+					sx={{
+						flex: 1,
+						mx: 0.5,
+						'& .MuiSlider-thumb': {
+							width: '10px',
+							height: '20px',
+							borderRadius: '2px',
+							border: 'none',
+							// Бегунки полностью статичны: никаких анимаций и смены стиля на hover.
+							// Любое изменение box-shadow/opacity при наведении вызывало перерисовку
+							// и мерцание. Цвета min/max и так разные — отдельная подсветка не нужна.
+							opacity: 1,
+							transition: 'none',
+							boxShadow: 'none',
+							'&:hover, &.Mui-active, &.Mui-focusVisible': {
+								boxShadow: 'none',
+							},
+							// MUI добавляет невидимый ::after 42×42px (зона касания) — он торчит
+							// за пределы прямоугольника и перекрывает соседний бегунок. Сжимаем
+							// его до размера самого бегунка, чтобы зоны не накладывались.
+							'&::after': {
+								width: '100%',
+								height: '100%',
+								borderRadius: '2px',
+							},
+							// Левый бегунок (min): сдвигаем влево на половину ширины,
+							// чтобы при равных значениях он стоял встык, а не поверх правого.
+							'&[data-index="0"]': {
+								backgroundColor: isNodeValid ? minColor : '#888888',
+								transform: 'translate(calc(-50% - 4px), -50%)',
+							},
+							// Правый бегунок (max): сдвигаем вправо на половину ширины.
+							'&[data-index="1"]': {
+								backgroundColor: isNodeValid ? maxColor : '#888888',
+								transform: 'translate(calc(-50% + 6px), -50%)',
+							},
+						},
+						'& .MuiSlider-rail': {
+							backgroundColor: colorTypes.default as string,
+							opacity: 0.2,
+							height: '4px',
+						},
+						'& .MuiSlider-track': {
+							backgroundColor: colorTypes.default as string,
+							opacity: 0.5,
+							height: '4px',
+						},
+					}}
 				/>
 
 				<TextField

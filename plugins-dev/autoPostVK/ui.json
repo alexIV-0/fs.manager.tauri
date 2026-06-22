@@ -125,7 +125,7 @@
 			},
 			{
 				"id": "window",
-				"controlType": "timeRange",
+				"controlType": "valueRange",
 				"controlProps": {
 					"label": "Time window",
 					"tooltip": "Окно времени суток для постинга. 00:00–24:00 = весь день.",

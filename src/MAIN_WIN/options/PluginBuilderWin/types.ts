@@ -186,11 +186,11 @@ export const CONTROL_TYPE_REGISTRY: ControlTypeConfig[] = [
 		},
 	},
 	{
-		controlType: 'timeRange',
-		label: 'Time Range',
+		controlType: 'valueRange',
+		label: 'Value Range',
 		color: '#5181b8',
 		defaultProps: {
-			controlType: 'timeRange',
+			controlType: 'valueRange',
 			controlProps: {
 				label: 'Time window',
 				tooltip: '',

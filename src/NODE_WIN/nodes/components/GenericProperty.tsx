@@ -8,7 +8,7 @@ import ChipAutocompleteProperty from '../properties/ChipAutocompleteProperty';
 import CustomSlider from '../properties/CustomSlider';
 import TextProperty from '../properties/LinkProperty';
 import TimeCode from '../properties/TimeCode';
-import TimeRange from '../properties/TimeRange';
+import ValueRange from '../properties/ValueRange';
 import LoopGroupProperty from './LoopGroupProperty';
 import TextEditPropertyComponent from '../properties/TextEditProperty';
 import AddNewPropertyButtom from '../properties/AddNewPropertyButtom';
@@ -52,8 +52,8 @@ function GenericProperty({ property }: { property: Property }) {
 				return <CustomSlider property={property} onChange={handleChange} />;
 			case 'timecode':
 				return <TimeCode property={property} onChange={handleChange} />;
-			case 'timeRange':
-				return <TimeRange property={property} onChange={handleChange} />;
+			case 'valueRange':
+				return <ValueRange property={property} onChange={handleChange} />;
 			case 'loop':
 				return <LoopGroupProperty property={property} />;
 			case 'textedit':
