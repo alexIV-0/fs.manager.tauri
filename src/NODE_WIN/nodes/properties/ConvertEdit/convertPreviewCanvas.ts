@@ -81,8 +81,8 @@ function applyFilter(
 			return out;
 		}
 		case 'blur': {
-			if (f.radius <= 0) return input;
-			applyBlur(input, f.radius);
+			if (f.sigma <= 0) return input;
+			applyBlur(input, f.sigma);
 			return input;
 		}
 		case 'eq': {

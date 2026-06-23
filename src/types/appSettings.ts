@@ -52,6 +52,12 @@ export interface LogsArchiveSettings {
 	retentionDays: number;
 }
 
+export interface UiSettings {
+	// Показывать короткие подсказки (tooltips) к фильтрам/настройкам.
+	// Тексты подсказок подключаются позже — флаг заводим заранее как инфраструктуру.
+	showHints: boolean;
+}
+
 export interface AppSettings {
 	version: number;
 	processing: ProcessingSettings;
@@ -61,6 +67,7 @@ export interface AppSettings {
 	cleanup: CleanupSettings;
 	logging: LoggingSettings;
 	logs: LogsArchiveSettings;
+	ui: UiSettings;
 }
 
 export type AppSettingsPatch = {
@@ -162,6 +169,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 	},
 	logs: {
 		retentionDays: 2,
+	},
+	ui: {
+		showHints: false,
 	},
 };
 

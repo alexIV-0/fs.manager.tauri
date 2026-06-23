@@ -1,0 +1,17 @@
+{
+	"id": "autoPostTG",
+	"name": "TG aPosting Video",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Автопостинг видео в Telegram-каналы по таймеру (App-timer): интервал, дни недели, окно времени суток. За слот постится один файл во все выбранные каналы (1 загрузка → file_id для остальных).",
+	"main": "autoPostTG.js",
+	"ui": "ui.json",
+	"external": [],
+	"resourcePool": "online",
+	"cost": "0",
+	"costUnit": "run"
+}

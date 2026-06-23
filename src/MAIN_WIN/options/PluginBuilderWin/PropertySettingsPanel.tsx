@@ -9,6 +9,7 @@ import { ALL_ADDABLE_TYPES } from '@/NODE_WIN/definitions/types';
 import { typeOfFile_store, typeOfdata_store } from '@/Store/MainWin/pathPattern_store';
 import { OptionsPickerModal } from './OptionsPickerModal';
 import { TooltipEditorModal } from './TooltipEditorModal';
+import { CONVERT_THEMES } from '@/NODE_WIN/nodes/properties/ConvertEdit/convertThemes';
 
 interface PropertySettingsPanelProps {
 	property: UiPropertyData;
@@ -530,7 +531,41 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 					</JsonField>
 				)}
 
-			{property.controlType === 'link' && (
+			{property.controlType === 'convertSettings' && (
+					<>
+						<Box sx={{ borderTop: `1px solid ${gray40}`, mt: 0.5, pt: 0.5 }}>
+							<Box sx={{ px: 0.5, py: 0.25 }}>
+								<Box component='span' sx={{ color: greyColor(60), fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>
+									// convertSettings options
+								</Box>
+							</Box>
+						</Box>
+						<JsonField label='theme'>
+							<select
+								value={(cp.theme as string) ?? 'full'}
+								onChange={(e) => setCp('theme', e.target.value)}
+								style={{
+									background: 'transparent',
+									border: `1px solid ${gray40}`,
+									outline: 'none',
+									color: '#cdd6f4',
+									fontFamily: 'monospace',
+									fontSize: 13,
+									padding: '2px 4px',
+									borderRadius: 4,
+								}}
+							>
+								{CONVERT_THEMES.map((t) => (
+									<option key={t.id} value={t.id} style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+										{t.label}
+									</option>
+								))}
+							</select>
+						</JsonField>
+					</>
+				)}
+
+				{property.controlType === 'link' && (
 				<JsonField label='outputMarker'>
 					<Stack direction='row' alignItems='center' gap={0.5}>
 						<input

@@ -165,6 +165,56 @@ pub fn account_get_token(
         .ok_or_else(|| format!("no token for account '{}' on platform '{}'", name, platform))
 }
 
+/// Добавить/обновить канал в каталоге аккаунта (upsert по `id`, иначе по `username`).
+///
+/// Telegram: Bot API не умеет перечислять каналы бота, поэтому каждый канал добавляется
+/// вручную и хранится в `channels[]` аккаунта. Эта команда делает read-modify-write
+/// ТОЛЬКО поля `channels` — `accessToken` и прочие поля остаются нетронутыми (в отличие
+/// от `account_save`, который заменяет запись целиком). Возвращает обновлённый `channels`.
+#[tauri::command]
+#[specta::specta]
+pub fn account_add_channel(
+    app: tauri::AppHandle,
+    main_folder_name: String,
+    platform: String,
+    name: String,
+    channel: Value,
+) -> Result<Value, String> {
+    if !channel.is_object() {
+        return Err("channel must be a JSON object".into());
+    }
+    let new_id = channel.get("id").cloned();
+    let new_user = channel.get("username").and_then(|v| v.as_str()).map(str::to_string);
+
+    let path = platform_file(&app, &main_folder_name, &platform)?;
+    let mut accounts = read_accounts(&path);
+    let acc = accounts
+        .iter_mut()
+        .find(|a| account_name(a) == name.as_str())
+        .ok_or_else(|| format!("no account '{}' on platform '{}'", name, platform))?;
+
+    let obj = acc.as_object_mut().ok_or("account is not an object")?;
+    let channels = obj
+        .entry("channels")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let arr = channels.as_array_mut().ok_or("channels is not an array")?;
+
+    // upsert: совпадение по id (если задан) или по username
+    let pos = arr.iter().position(|c| {
+        let same_id = new_id.is_some() && c.get("id") == new_id.as_ref();
+        let same_user = new_user.is_some()
+            && c.get("username").and_then(|v| v.as_str()).map(str::to_string) == new_user;
+        same_id || same_user
+    });
+    match pos {
+        Some(i) => arr[i] = channel,
+        None => arr.push(channel),
+    }
+    let result = channels.clone();
+    write_accounts(&path, &accounts)?;
+    Ok(result)
+}
+
 /// Удалить аккаунт платформы (idempotent).
 #[tauri::command]
 #[specta::specta]

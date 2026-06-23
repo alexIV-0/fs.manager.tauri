@@ -12,6 +12,8 @@ export interface ModalShellConfig {
 	defaultSize?: { width: number; height: number };
 	minWidth?: number;
 	minHeight?: number;
+	maxWidth?: number;
+	maxHeight?: number;
 	defaultPanelWidth?: number;
 	minPanelWidth?: number;
 	maxPanelWidth?: number;
@@ -28,6 +30,8 @@ interface ModalShellProps {
 	headerCenter?: ReactNode;
 	/** Extra content between center and action buttons (e.g. eyedropper hint) */
 	headerExtra?: ReactNode;
+	/** Show the left canvas/preview column. false → panel fills the modal. Default true. */
+	showCanvas?: boolean;
 	/** Canvas / preview area that fills the left body column */
 	canvasSlot: ReactNode;
 	/** Settings panel — receives current panelWidth so it can set its own width prop */
@@ -44,6 +48,7 @@ export default function ModalShell({
 	headerExtra,
 	canvasSlot,
 	panelSlot,
+	showCanvas = true,
 }: ModalShellProps) {
 	const {
 		defaultSize = { width: 1060, height: 680 },
@@ -52,6 +57,8 @@ export default function ModalShell({
 		defaultPanelWidth = 300,
 		minPanelWidth = 240,
 		maxPanelWidth = 480,
+		maxWidth = Infinity,
+		maxHeight = Infinity,
 	} = config;
 
 	const [isFullscreen, setIsFullscreen] = useState(false);
@@ -77,6 +84,8 @@ export default function ModalShell({
 	const minHeightRef = useRef(minHeight);
 	const minPanelWidthRef = useRef(minPanelWidth);
 	const maxPanelWidthRef = useRef(maxPanelWidth);
+	const maxWidthRef = useRef(maxWidth);
+	const maxHeightRef = useRef(maxHeight);
 
 	useEffect(() => { modalSizeRef.current = modalSize; }, [modalSize]);
 	useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
@@ -117,7 +126,9 @@ export default function ModalShell({
 				if (dir === 'w' || dir === 'nw' || dir === 'sw') nw = Math.max(minWidthRef.current, startW - dx * 2);
 				if (dir === 's' || dir === 'se' || dir === 'sw') nh = Math.max(minHeightRef.current, startH + dy * 2);
 				if (dir === 'n' || dir === 'ne' || dir === 'nw') nh = Math.max(minHeightRef.current, startH - dy * 2);
-				setModalSize({ width: Math.round(nw), height: Math.round(nh) });
+					nw = Math.min(maxWidthRef.current, nw);
+					nh = Math.min(maxHeightRef.current, nh);
+					setModalSize({ width: Math.round(nw), height: Math.round(nh) });
 			}
 			if (resizingPanelRef.current) {
 				const delta = resizingPanelStartX.current - e.clientX;
@@ -240,7 +251,9 @@ export default function ModalShell({
 
 				{/* ── Body ───────────────────────────────────────────────── */}
 				<Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
-					{/* Canvas / preview (left) */}
+					{showCanvas ? (
+						<>
+						{/* Canvas / preview (left) */}
 					<Box sx={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
 						{canvasSlot}
 					</Box>
@@ -260,6 +273,10 @@ export default function ModalShell({
 
 					{/* Settings panel (right) */}
 					{panelSlot(panelWidth)}
+						</>
+						) : (
+						<Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>{panelSlot(modalSize.width)}</Box>
+						)}
 				</Box>
 			</Box>
 		</>,

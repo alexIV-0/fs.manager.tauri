@@ -73,6 +73,8 @@ export const HASH_OPTIONS = [
 	{ value: '#whisperModels', desc: 'Модели Whisper' },
 	{ value: '#vkAccounts', desc: 'Аккаунты VK для текущей главной папки' },
 	{ value: '#vkGroups', desc: 'Админ-сообщества VK выбранного аккаунта' },
+	{ value: '#tgAccounts', desc: 'Боты Telegram для текущей главной папки' },
+	{ value: '#tgChannels', desc: 'Каналы выбранного бота Telegram (каталог аккаунта)' },
 	{ value: '#recursiveFF', desc: 'Рекурсивный выбор файла/папки' },
 	{ value: '#historyValue', desc: 'История введённых значений (по id свойства)' },
 	{ value: '#historyValue(key)', desc: 'История введённых значений по произвольному ключу (shared между свойствами)' },

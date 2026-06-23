@@ -922,6 +922,14 @@ async previewRenderFrame(spec: PreviewRenderSpec) : Promise<Result<PreviewFrameR
     else return { status: "error", error: e  as any };
 }
 },
+async previewRenderAudio(spec: PreviewAudioSpec) : Promise<Result<PreviewAudioResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_render_audio", { spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Чистка кэша превью. namespace=None → весь preview-cache; Some(ns) → только раздел.
  */
@@ -965,6 +973,22 @@ async accountList(mainFolderName: string, platform: string) : Promise<Result<Jso
 async accountGetToken(mainFolderName: string, platform: string, name: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("account_get_token", { mainFolderName, platform, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Добавить/обновить канал в каталоге аккаунта (upsert по `id`, иначе по `username`).
+ * 
+ * Telegram: Bot API не умеет перечислять каналы бота, поэтому каждый канал добавляется
+ * вручную и хранится в `channels[]` аккаунта. Эта команда делает read-modify-write
+ * ТОЛЬКО поля `channels` — `accessToken` и прочие поля остаются нетронутыми (в отличие
+ * от `account_save`, который заменяет запись целиком). Возвращает обновлённый `channels`.
+ */
+async accountAddChannel(mainFolderName: string, platform: string, name: string, channel: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_add_channel", { mainFolderName, platform, name, channel }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1016,6 +1040,52 @@ async vkGroupsGet(token: string) : Promise<Result<JsonValue, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Проверка токена бота через `getMe`. Возвращает `{ id, is_bot, first_name, username }`
+ * или ошибку Telegram (невалидный/отозванный токен → `Unauthorized`).
+ */
+async tgValidateToken(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_validate_token", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Резолвит канал (`getChat`) и проверяет, что бот в нём может постить (`getChatMember`).
+ * `chat` — `@username` (публичный) или числовой id (`-100…`, приватный).
+ * Возвращает `{ id, title, username, type, canPost }`. Бот должен быть администратором
+ * канала с `can_post_messages` (или создателем).
+ */
+async tgGetChat(token: string, chat: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_get_chat", { token, chat }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Авто-обнаружение каналов бота через `getUpdates` (см. TELEGRAM_AUTOPOST_PLAN.md).
+ * 
+ * Когда бота добавляют администратором канала, Telegram шлёт событие `my_chat_member`
+ * с объектом канала; посты канала дают `channel_post`. Команда собирает уникальные
+ * каналы из буфера обновлений (~24ч хранения, short-poll), проверяет право постить
+ * и возвращает `[{ id, title, username, canPost }]`. Пользователю не нужно знать chat_id.
+ * 
+ * ⚠️ Модель «бот на пользователя»: `getUpdates` глобален для бота, поэтому общий на всех
+ * бот выдал бы чужие каналы — здесь у каждого свой бот (изоляция). 409 = у бота активен
+ * webhook (наш сценарий — без webhook).
+ */
+async tgDiscoverChannels(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_discover_channels", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1059,6 +1129,28 @@ export type FontInfo = { name: string; path: string; loadable: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type LogHistory = { items: JsonValue[] }
 export type MoveToErrorsResult = { success: boolean; moved_to: string | null; error: string | null }
+export type PreviewAudioResult = { 
+/**
+ * Абсолютный путь к WAV в кэше (фронт превращает в asset-URL через toFileUrl).
+ */
+path: string; cached: boolean }
+export type PreviewAudioSpec = { 
+/**
+ * Абсолютный путь к исходнику (видео/аудио).
+ */
+path: string; 
+/**
+ * Начало региона (сек).
+ */
+start: number; 
+/**
+ * Длительность региона (сек).
+ */
+duration: number; 
+/**
+ * `-af` цепочка аудио-фильтров (может быть пустой → просто вырезка региона).
+ */
+filter: string }
 export type PreviewFrameResult = { 
 /**
  * Абсолютный путь к PNG в кэше (фронт превращает в asset-URL через toFileUrl).

@@ -6,6 +6,7 @@ import { ConvertSettings, defaultConvertSettings } from './types';
 import ModalShell from '../ModalShell';
 import ConvertPanel from './ConvertPanel';
 import ConvertPreview from './ConvertPreview';
+import { getConvertTheme } from './convertThemes';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { toAbsolutePath, toStoredPath } from '@/Utils/projectPath';
 
@@ -18,13 +19,28 @@ const SHELL_CONFIG = {
 	maxPanelWidth: 480,
 };
 
+// Компактная модалка для тем без канваса (encode-only): только панель настроек,
+// с жёсткими min/max — НЕ растягиваем на всю ширину программы.
+const ENCODE_ONLY_CONFIG = {
+	defaultSize: { width: 460, height: 640 },
+	minWidth: 360,
+	minHeight: 420,
+	maxWidth: 620,
+	maxHeight: 1000,
+	defaultPanelWidth: 460,
+	minPanelWidth: 360,
+	maxPanelWidth: 620,
+};
+
 interface ConvertModalProps {
 	value: string;
 	onSave: (v: string) => void;
 	onClose: () => void;
+	theme?: string;
 }
 
-export default function ConvertModal({ value, onSave, onClose }: ConvertModalProps) {
+export default function ConvertModal({ value, onSave, onClose, theme }: ConvertModalProps) {
+	const activeTheme = getConvertTheme(theme);
 	const [settings, setSettings] = useState<ConvertSettings>(() => {
 		if (value) {
 			try {
@@ -67,7 +83,8 @@ export default function ConvertModal({ value, onSave, onClose }: ConvertModalPro
 			title='Convert Settings'
 			onClose={onClose}
 			onSave={handleSave}
-			config={SHELL_CONFIG}
+			config={activeTheme.showCanvas ? SHELL_CONFIG : ENCODE_ONLY_CONFIG}
+				showCanvas={activeTheme.showCanvas}
 			canvasSlot={
 				<ConvertPreview
 					filePath={effectiveFilePath}
@@ -83,6 +100,7 @@ export default function ConvertModal({ value, onSave, onClose }: ConvertModalPro
 					width={panelWidth}
 					filePath={effectiveFilePath}
 					onSelectFile={handleSelectFile}
+						theme={activeTheme}
 					sourceW={sourceSize?.w}
 					sourceH={sourceSize?.h}
 				/>

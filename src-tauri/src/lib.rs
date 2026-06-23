@@ -22,6 +22,7 @@ use commands::{
     preview_commands::*,
     account_commands::*,
     vk_auth_commands::*,
+    tg_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
@@ -158,16 +159,22 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             deps_download_whisper_model,
             // preview: точный ffmpeg-рендер кадра для редакторов фильтров
             preview_render_frame,
+            preview_render_audio,
             preview_clear_cache,
             // Autopost: хранилище аккаунтов (App Support, сегментация по главной папке + платформе)
             account_save,
             account_list,
             account_get_token,
+            account_add_channel,
             account_delete,
             // VK OAuth + валидация (vk_auth_capture — внутренняя, через raw invoke из init-скрипта)
             vk_auth_open,
             vk_validate_token,
             vk_groups_get,
+            // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
+            tg_validate_token,
+            tg_get_chat,
+            tg_discover_channels,
         ])
 }
 
@@ -561,17 +568,23 @@ pub fn run() {
             deps_download_whisper_model,
             // Preview render (ffmpeg-кадр для редакторов фильтров)
             preview_render_frame,
+            preview_render_audio,
             preview_clear_cache,
             // Autopost: хранилище аккаунтов (App Support)
             account_save,
             account_list,
             account_get_token,
+            account_add_channel,
             account_delete,
             // VK OAuth + валидация
             vk_auth_open,
             vk_auth_capture,
             vk_validate_token,
             vk_groups_get,
+            // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
+            tg_validate_token,
+            tg_get_chat,
+            tg_discover_channels,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

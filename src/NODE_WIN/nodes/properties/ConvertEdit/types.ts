@@ -54,7 +54,7 @@ export interface FilterCrop {
 	x: number; y: number; w: number; h: number;
 	unit: 'pct' | 'px';
 }
-export interface FilterBlur        { id: string; type: 'blur';        enabled?: boolean; radius: number; }
+export interface FilterBlur        { id: string; type: 'blur';        enabled?: boolean; sigma: number; }
 export interface FilterDeinterlace { id: string; type: 'deinterlace'; enabled?: boolean; mode: 'yadif' | 'bwdif'; }
 export interface FilterEq {
 	id: string; type: 'eq'; enabled?: boolean;
@@ -62,11 +62,19 @@ export interface FilterEq {
 }
 export interface FilterHFlip    { id: string; type: 'hflip';   enabled?: boolean; }
 export interface FilterVFlip    { id: string; type: 'vflip';   enabled?: boolean; }
-export interface FilterFps      { id: string; type: 'fps';     enabled?: boolean; value: number; }
-export interface FilterUnsharp  { id: string; type: 'unsharp'; enabled?: boolean; lumaAmount: number; lumaSize: number; }
-export interface FilterDenoise  { id: string; type: 'denoise'; enabled?: boolean; strength: number; }
+export interface FilterFps      { id: string; type: 'fps';     enabled?: boolean; value: number; smooth?: boolean; }
+export interface FilterUnsharp  { id: string; type: 'unsharp'; enabled?: boolean; method?: 'unsharp' | 'cas'; lumaAmount: number; lumaSize: number; strength?: number; }
+export interface FilterDenoise  { id: string; type: 'denoise'; enabled?: boolean; method?: 'hqdn3d' | 'fftdnoiz' | 'nlmeans' | 'atadenoise'; strength: number; }
 export interface FilterPixFmt   { id: string; type: 'pixfmt';  enabled?: boolean; value: PixelFormat; }
 export interface FilterRotate   { id: string; type: 'rotate';  enabled?: boolean; angle: 0 | 90 | 180 | 270; }
+export interface FilterDeband   { id: string; type: 'deband';  enabled?: boolean; strength: number; }
+export interface FilterCleanup  { id: string; type: 'cleanup'; enabled?: boolean; deblock: boolean; chromaNr: boolean; }
+export interface FilterHue        { id: string; type: 'hue';          enabled?: boolean; degrees: number; saturation: number; }
+export interface FilterCurves     { id: string; type: 'curves';       enabled?: boolean; preset: string; }
+export interface FilterColorMix   { id: string; type: 'colormix';     enabled?: boolean; preset: 'grayscale' | 'sepia' | 'swapRB'; }
+export interface FilterColorBal   { id: string; type: 'colorbalance'; enabled?: boolean; rs: number; gs: number; bs: number; rm: number; gm: number; bm: number; rh: number; gh: number; bh: number; }
+export interface FilterLut3d      { id: string; type: 'lut3d';        enabled?: boolean; file: string; }
+export interface FilterVignette   { id: string; type: 'vignette';     enabled?: boolean; amount: number; }
 
 /** Position — places the source image inside the Frame canvas at xPct/yPct.
  *  0 = left/top, 50 = centered, 100 = right/bottom. */
@@ -87,7 +95,9 @@ export type VideoFilterItem =
 	| FilterScale | FilterCrop | FilterBlur | FilterDeinterlace
 	| FilterEq    | FilterHFlip | FilterVFlip | FilterFps
 	| FilterUnsharp | FilterDenoise | FilterPixFmt | FilterRotate
-	| FilterPosition | FilterBgColor;
+	| FilterPosition | FilterBgColor
+	| FilterDeband | FilterCleanup
+	| FilterHue | FilterCurves | FilterColorMix | FilterColorBal | FilterLut3d | FilterVignette;
 
 /** Image filters = all video filters except deinterlace, fps, pixfmt */
 export type ImageFilterItem = Exclude<VideoFilterItem, FilterDeinterlace | FilterFps | FilterPixFmt>;
@@ -110,6 +120,14 @@ export const VIDEO_FILTER_LABELS: Record<VideoFilterType, string> = {
 	rotate:      'Rotate',
 	position:    'Position in Frame (X/Y)',
 	bgcolor:     'Background Color',
+	deband:      'Debanding (sky / gradients)',
+	cleanup:     'Compression Cleanup',
+	hue:         'Hue / Saturation',
+	curves:      'Curves (presets)',
+	colormix:    'Channel Mixer (b/w · sepia · swap)',
+	colorbalance:'Color Balance (shadows/mids/highs)',
+	lut3d:       'LUT (.cube)',
+	vignette:    'Vignette',
 };
 
 export const IMAGE_FILTER_LABELS: Partial<Record<VideoFilterType, string>> = {
@@ -123,6 +141,12 @@ export const IMAGE_FILTER_LABELS: Partial<Record<VideoFilterType, string>> = {
 	denoise:  'Denoise',
 	rotate:   'Rotate',
 	position: 'Position in Frame (X/Y)',
+	hue:      'Hue / Saturation',
+	curves:   'Curves (presets)',
+	colormix: 'Channel Mixer (b/w · sepia · swap)',
+	colorbalance: 'Color Balance',
+	lut3d:    'LUT (.cube)',
+	vignette: 'Vignette',
 	bgcolor:  'Background Color',
 };
 
@@ -136,8 +160,19 @@ export interface FilterVolume   { id: string; type: 'volume';   enabled?: boolea
 export interface FilterHighpass { id: string; type: 'highpass'; enabled?: boolean; freq:   number; }
 export interface FilterLowpass  { id: string; type: 'lowpass';  enabled?: boolean; freq:   number; }
 export interface FilterAtempo   { id: string; type: 'atempo';   enabled?: boolean; factor: number; }
+export interface FilterACompressor { id: string; type: 'acompressor'; enabled?: boolean; threshold: number; ratio: number; }
+export interface FilterALimiter    { id: string; type: 'alimiter';    enabled?: boolean; limitDb: number; }
+export interface FilterAGate       { id: string; type: 'agate';       enabled?: boolean; thresholdDb: number; }
+export interface FilterAfftdn      { id: string; type: 'afftdn';      enabled?: boolean; noiseFloor: number; }
+export interface FilterSpeechNorm  { id: string; type: 'speechnorm';  enabled?: boolean; peak: number; }
+export interface FilterDynAudNorm  { id: string; type: 'dynaudnorm';  enabled?: boolean; strength: number; }
+export interface FilterEqualizer   { id: string; type: 'equalizer';   enabled?: boolean; freq: number; gain: number; }
+export interface FilterRubberband  { id: string; type: 'rubberband';  enabled?: boolean; tempo: number; pitch: number; }
 
-export type AudioFilterItem = FilterLoudnorm | FilterVolume | FilterHighpass | FilterLowpass | FilterAtempo;
+export type AudioFilterItem =
+	| FilterLoudnorm | FilterVolume | FilterHighpass | FilterLowpass | FilterAtempo
+	| FilterACompressor | FilterALimiter | FilterAGate | FilterAfftdn
+	| FilterSpeechNorm | FilterDynAudNorm | FilterEqualizer | FilterRubberband;
 export type AudioFilterType = AudioFilterItem['type'];
 
 export const AUDIO_FILTER_LABELS: Record<AudioFilterType, string> = {
@@ -146,6 +181,14 @@ export const AUDIO_FILTER_LABELS: Record<AudioFilterType, string> = {
 	highpass: 'High-pass Filter',
 	lowpass:  'Low-pass Filter',
 	atempo:   'Tempo / Speed',
+	acompressor: 'Compressor',
+	alimiter:    'Limiter',
+	agate:       'Noise Gate',
+	afftdn:      'Denoise (FFT)',
+	speechnorm:  'Speech Normalize',
+	dynaudnorm:  'Dynamic Normalize',
+	equalizer:   'Equalizer (1-band)',
+	rubberband:  'Pitch / Tempo (rubberband)',
 };
 
 // ── Frame / Output Canvas ─────────────────────────────────────────────────
@@ -178,6 +221,8 @@ export interface VideoConvertSettings {
 	codec:   VideoCodec;
 	preset:  VideoPreset;
 	crf:     number; // 0–51
+	pixFmt?: string;   // encode-level -pix_fmt (из ffmpegCaps); undefined = дефолт кодека
+	alpha?:  boolean;  // сохранять альфу на выходе (только если кодек умеет — ffmpegCaps)
 	filters: VideoFilterItem[];
 }
 
@@ -225,18 +270,26 @@ export function defaultVideoFilter(type: VideoFilterType): VideoFilterItem {
 	switch (type) {
 		case 'scale':       return { id: uid(), type, enabled: true, mode: 'pct', widthPct: 100, heightPct: 100, fixedW: 1920, fixedH: 1080, lockAspect: true };
 		case 'crop':        return { id: uid(), type, enabled: true, x: 0, y: 0, w: 100, h: 100, unit: 'pct' };
-		case 'blur':        return { id: uid(), type, enabled: true, radius: 2 };
+		case 'blur':        return { id: uid(), type, enabled: true, sigma: 2 };
 		case 'deinterlace': return { id: uid(), type, enabled: true, mode: 'yadif' };
 		case 'eq':          return { id: uid(), type, enabled: true, brightness: 0, contrast: 1, saturation: 1, gamma: 1 };
 		case 'hflip':       return { id: uid(), type, enabled: true };
 		case 'vflip':       return { id: uid(), type, enabled: true };
-		case 'fps':         return { id: uid(), type, enabled: true, value: 25 };
-		case 'unsharp':     return { id: uid(), type, enabled: true, lumaAmount: 1.5, lumaSize: 5 };
-		case 'denoise':     return { id: uid(), type, enabled: true, strength: 3 };
+		case 'fps':         return { id: uid(), type, enabled: true, value: 25, smooth: false };
+		case 'unsharp':     return { id: uid(), type, enabled: true, method: 'cas', lumaAmount: 1.5, lumaSize: 5, strength: 0.4 };
+		case 'denoise':     return { id: uid(), type, enabled: true, method: 'hqdn3d', strength: 3 };
 		case 'pixfmt':      return { id: uid(), type, enabled: true, value: 'yuv420p' };
 		case 'rotate':      return { id: uid(), type, enabled: true, angle: 90 };
 		case 'position':    return { id: uid(), type, enabled: true, xPct: 50, yPct: 50 };
 		case 'bgcolor':     return { id: uid(), type, enabled: true, color: '#000000' };
+		case 'deband':      return { id: uid(), type, enabled: true, strength: 20 };
+		case 'cleanup':     return { id: uid(), type, enabled: true, deblock: true, chromaNr: false };
+		case 'hue':         return { id: uid(), type, enabled: true, degrees: 0, saturation: 1 };
+		case 'curves':      return { id: uid(), type, enabled: true, preset: 'increase_contrast' };
+		case 'colormix':    return { id: uid(), type, enabled: true, preset: 'grayscale' };
+		case 'colorbalance':return { id: uid(), type, enabled: true, rs: 0, gs: 0, bs: 0, rm: 0, gm: 0, bm: 0, rh: 0, gh: 0, bh: 0 };
+		case 'lut3d':       return { id: uid(), type, enabled: true, file: '' };
+		case 'vignette':    return { id: uid(), type, enabled: true, amount: 30 };
 	}
 }
 
@@ -247,6 +300,14 @@ export function defaultAudioFilter(type: AudioFilterType): AudioFilterItem {
 		case 'highpass': return { id: uid(), type, enabled: true, freq: 80 };
 		case 'lowpass':  return { id: uid(), type, enabled: true, freq: 16000 };
 		case 'atempo':   return { id: uid(), type, enabled: true, factor: 1.0 };
+		case 'acompressor': return { id: uid(), type, enabled: true, threshold: -18, ratio: 3 };
+		case 'alimiter':    return { id: uid(), type, enabled: true, limitDb: -1 };
+		case 'agate':       return { id: uid(), type, enabled: true, thresholdDb: -40 };
+		case 'afftdn':      return { id: uid(), type, enabled: true, noiseFloor: -25 };
+		case 'speechnorm':  return { id: uid(), type, enabled: true, peak: 0.95 };
+		case 'dynaudnorm':  return { id: uid(), type, enabled: true, strength: 50 };
+		case 'equalizer':   return { id: uid(), type, enabled: true, freq: 1000, gain: 0 };
+		case 'rubberband':  return { id: uid(), type, enabled: true, tempo: 1, pitch: 1 };
 	}
 }
 
@@ -289,7 +350,7 @@ function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings
 				break;
 			}
 			case 'blur':
-				if (f.radius > 0) parts.push(`boxblur=${f.radius}:${f.radius}`);
+				if (f.sigma > 0) parts.push(`gblur=sigma=${f.sigma}`);
 				break;
 			case 'deinterlace':
 				parts.push(f.mode === 'bwdif' ? 'bwdif=0' : 'yadif=0');
@@ -305,9 +366,19 @@ function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings
 			}
 			case 'hflip':   parts.push('hflip');                                        break;
 			case 'vflip':   parts.push('vflip');                                        break;
-			case 'fps':     if (f.value > 0) parts.push(`fps=${f.value}`);              break;
-			case 'unsharp': parts.push(`unsharp=${f.lumaSize}:${f.lumaSize}:${f.lumaAmount.toFixed(2)}`); break;
-			case 'denoise': parts.push(`hqdn3d=${f.strength}`);                         break;
+			case 'fps':     if (f.value > 0) parts.push(f.smooth ? `minterpolate=fps=${f.value}` : `fps=${f.value}`); break;
+			case 'unsharp':
+					if (f.method === 'cas') parts.push(`cas=${(f.strength ?? 0.4).toFixed(2)}`);
+					else parts.push(`unsharp=${f.lumaSize}:${f.lumaSize}:${f.lumaAmount.toFixed(2)}`);
+					break;
+			case 'denoise': {
+					const s = f.strength;
+					const m = f.method ?? 'hqdn3d';
+					if (m === 'fftdnoiz') parts.push(`fftdnoiz=sigma=${s}`);
+					else if (m === 'nlmeans') parts.push(`nlmeans=s=${s}`);
+					else if (m === 'atadenoise') parts.push('atadenoise');
+					else parts.push(`hqdn3d=${s}`);
+				}                         break;
 			case 'pixfmt':  parts.push(`format=${f.value}`);                            break;
 			case 'rotate':
 				if      (f.angle === 90)  parts.push('transpose=1');
@@ -338,6 +409,40 @@ function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings
 			}
 			case 'bgcolor':
 				// No-op as a filter line — its colour is consumed by Position / Frame.
+				break;
+			case 'deband': {
+				const t = (f.strength / 1000).toFixed(4);
+				parts.push(`deband=1thr=${t}:2thr=${t}:3thr=${t}:4thr=${t}`);
+				break;
+			}
+			case 'cleanup':
+				if (f.deblock) parts.push('deblock');
+				if (f.chromaNr) parts.push('chromanr');
+				break;
+			case 'hue':
+				parts.push(`hue=h=${f.degrees}:s=${f.saturation}`);
+				break;
+			case 'curves':
+				if (f.preset && f.preset !== 'none') parts.push(`curves=preset=${f.preset}`);
+				break;
+			case 'colormix': {
+				const mix = f.preset === 'sepia'
+					? '0.393:0.769:0.189:0:0.349:0.686:0.168:0:0.272:0.534:0.131'
+					: f.preset === 'swapRB'
+						? '0:0:1:0:0:1:0:0:1:0:0'
+						: '0.3:0.59:0.11:0:0.3:0.59:0.11:0:0.3:0.59:0.11';
+				parts.push(`colorchannelmixer=${mix}`);
+				break;
+			}
+			case 'colorbalance':
+				if ([f.rs, f.gs, f.bs, f.rm, f.gm, f.bm, f.rh, f.gh, f.bh].some((v) => v !== 0))
+					parts.push(`colorbalance=rs=${f.rs}:gs=${f.gs}:bs=${f.bs}:rm=${f.rm}:gm=${f.gm}:bm=${f.bm}:rh=${f.rh}:gh=${f.gh}:bh=${f.bh}`);
+				break;
+			case 'lut3d':
+				if (f.file) parts.push(`lut3d='${f.file.replace(/\\/g, '/')}'`);
+				break;
+			case 'vignette':
+				if (f.amount > 0) parts.push(`vignette=angle=${((f.amount / 100) * Math.PI / 2).toFixed(4)}`);
 				break;
 		}
 	}
@@ -416,6 +521,14 @@ export function buildAudioFilterString(audio: AudioConvertSettings): string {
 			case 'highpass': if (f.freq > 0) parts.push(`highpass=f=${f.freq}`);              break;
 			case 'lowpass':  if (f.freq > 0) parts.push(`lowpass=f=${f.freq}`);               break;
 			case 'atempo':   if (f.factor !== 1) parts.push(`atempo=${f.factor.toFixed(3)}`); break;
+			case 'acompressor': parts.push(`acompressor=threshold=${Math.pow(10, f.threshold / 20).toFixed(5)}:ratio=${f.ratio}`); break;
+			case 'alimiter':    parts.push(`alimiter=limit=${Math.pow(10, f.limitDb / 20).toFixed(4)}`); break;
+			case 'agate':       parts.push(`agate=threshold=${Math.pow(10, f.thresholdDb / 20).toFixed(5)}`); break;
+			case 'afftdn':      parts.push(`afftdn=nf=${f.noiseFloor}`); break;
+			case 'speechnorm':  parts.push(`speechnorm=p=${f.peak}`); break;
+			case 'dynaudnorm':  { const g = Math.max(3, Math.min(301, Math.round((f.strength / 100) * 150) * 2 + 1)); parts.push(`dynaudnorm=g=${g}`); break; }
+			case 'equalizer':   if (f.gain !== 0) parts.push(`equalizer=f=${f.freq}:t=o:w=1:g=${f.gain}`); break;
+			case 'rubberband':  if (f.tempo !== 1 || f.pitch !== 1) parts.push(`rubberband=tempo=${f.tempo}:pitch=${f.pitch}`); break;
 		}
 	}
 	return parts.join(',');

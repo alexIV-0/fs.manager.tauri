@@ -14,6 +14,8 @@ import TextEditPropertyComponent from '../properties/TextEditProperty';
 import AddNewPropertyButtom from '../properties/AddNewPropertyButtom';
 import SimpleDDMProperty from '../properties/SimpleDDM';
 import VkAccountDDM from '../properties/VkAccountDDM';
+import TgAccountDDM from '../properties/TgAccountDDM';
+import TgChannelsProperty from '../properties/TgChannelsProperty';
 import PathNavigator from '../properties/PathNavigator';
 import JsonNavigator from '../properties/JsonNavigator';
 import AddPathPropertyButton from '../properties/AddPathPropertyButton';
@@ -37,13 +39,17 @@ function GenericProperty({ property }: { property: Property }) {
 			case 'checkbox':
 				return <CheckboxProperty property={property} onChange={(_, checked) => handleChange(checked)} />;
 			case 'autocomplete':
-				return <ChipAutocompleteProperty property={property} onChange={handleChange} />;
-			case 'ddm':
-				return property.controlProps.options?.includes('#vkAccounts') ? (
-					<VkAccountDDM property={property} onChange={handleChange} />
+				return property.controlProps.options?.includes('#tgChannels') ? (
+					<TgChannelsProperty property={property} onChange={handleChange} />
 				) : (
-					<SimpleDDMProperty property={property} onChange={handleChange} />
+					<ChipAutocompleteProperty property={property} onChange={handleChange} />
 				);
+			case 'ddm':
+				if (property.controlProps.options?.includes('#vkAccounts'))
+					return <VkAccountDDM property={property} onChange={handleChange} />;
+				if (property.controlProps.options?.includes('#tgAccounts'))
+					return <TgAccountDDM property={property} onChange={handleChange} />;
+				return <SimpleDDMProperty property={property} onChange={handleChange} />;
 			case 'link':
 				return <TextProperty property={property} />;
 			case 'addLink':

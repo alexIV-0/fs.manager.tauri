@@ -73,25 +73,28 @@ export function usePreviewCache({
 	const cellCountRef = useRef(cellCount);
 	cellCountRef.current = cellCount;
 
-	const urlByCell = useRef<Map<number, string>>(new Map());
+	// Кадры кэшируем по ЯЧЕЙКЕ, но вместе с ТОЧНЫМ временем рендера: при том же положении
+	// плейхеда переиспользуем, при сдвиге в пределах ячейки перерендерим точный кадр
+	// (а не «соседний» центр ячейки).
+	const frameByCell = useRef<Map<number, { url: string; time: number }>>(new Map());
 	const inflight = useRef<Set<number>>(new Set());
-	const queue = useRef<number[]>([]);
+	const queue = useRef<Array<{ idx: number; time: number }>>([]);
 	const activeRef = useRef(0);
 	const currentCellRef = useRef(-1);
 	const genRef = useRef(0); // bumped on invalidation; guards stale async results
 	const debounceTimer = useRef<number | null>(null);
 
-	const cellCenterTime = (idx: number) => {
-		const cc = cellCountRef.current;
-		return cc > 0 ? ((idx + 0.5) * durationRef.current) / cc : 0;
-	};
+	// Допуск переиспользования кадра: запрошенное время в пределах ~1/50 c от кэшированного
+	// для этой ячейки → показываем кэш; иначе рендерим точный кадр запрошенного времени.
+	const FRAME_EPS = 1 / 50;
 
 	const pump = useCallback(() => {
 		while (activeRef.current < maxConcurrent && queue.current.length > 0) {
-			const idx = queue.current.shift()!;
-			if (inflight.current.has(idx) || urlByCell.current.has(idx)) continue;
+			const job = queue.current.shift()!;
+			const idx = job.idx;
+			if (inflight.current.has(idx)) continue;
 
-			const spec = buildSpecRef.current(cellCenterTime(idx));
+			const spec = buildSpecRef.current(job.time);
 			if (!spec) continue;
 
 			const gen = genRef.current;
@@ -105,7 +108,7 @@ export function usePreviewCache({
 					if (gen !== genRef.current) return; // graph changed mid-flight — drop
 					const res = unwrap(r);
 					const url = toFileUrl(res.path);
-					urlByCell.current.set(idx, url);
+					frameByCell.current.set(idx, { url, time: job.time });
 					setCellStates((prev) => ({ ...prev, [idx]: 'cached' }));
 					if (currentCellRef.current === idx) {
 						setFrameUrl(url);
@@ -139,10 +142,10 @@ export function usePreviewCache({
 			const idx = cellForTime(time, durationRef.current, cc);
 			currentCellRef.current = idx;
 
-			// Already have an accurate frame for this cell → swap instantly.
-			const cachedUrl = urlByCell.current.get(idx);
-			if (cachedUrl) {
-				setFrameUrl(cachedUrl);
+			// Уже есть точный кадр близко к этому времени → показываем мгновенно.
+			const cached = frameByCell.current.get(idx);
+			if (cached && Math.abs(cached.time - time) <= FRAME_EPS) {
+				setFrameUrl(cached.url);
 				setFrameState('cached');
 				return;
 			}
@@ -153,8 +156,8 @@ export function usePreviewCache({
 			if (debounceTimer.current !== null) window.clearTimeout(debounceTimer.current);
 			debounceTimer.current = window.setTimeout(() => {
 				debounceTimer.current = null;
-				if (!inflight.current.has(idx) && !urlByCell.current.has(idx)) {
-					queue.current.push(idx);
+				if (!inflight.current.has(idx)) {
+					queue.current.push({ idx, time });
 					pump();
 				}
 			}, debounceMs);
@@ -167,7 +170,7 @@ export function usePreviewCache({
 		genRef.current += 1;
 		queue.current = [];
 		inflight.current.clear();
-		urlByCell.current.clear();
+		frameByCell.current.clear();
 		activeRef.current = 0;
 		if (debounceTimer.current !== null) {
 			window.clearTimeout(debounceTimer.current);

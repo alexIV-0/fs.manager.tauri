@@ -204,6 +204,55 @@ export function useResolveOptions(propertyId?: string) {
 							}
 						}
 
+						case 'tgAccounts': {
+							if (!path) return [];
+							// path = "…/mainFolder/projectName" → mainFolderName = предпоследний сегмент
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							try {
+								const res = unwrap(await commands.accountList(mainFolderName, 'telegram')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								return arr
+									.map((a: any) => a?.name)
+									.filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+							} catch (e) {
+								console.warn('[#tgAccounts] не удалось получить список ботов:', e);
+								return [];
+							}
+						}
+
+						case 'tgChannels': {
+							if (!path) return [];
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							// выбранный бот — из соседнего поля 'account' этой же ноды
+							let accountName = '';
+							if (nodeId) {
+								const node = getNode(nodeId);
+								const nodeProps = (node?.data as any)?.properties ?? [];
+								const acc = nodeProps.find((pr: any) => pr.id === 'account');
+								accountName = acc?.controlProps?.value ?? '';
+							}
+							if (!accountName) return [];
+							try {
+								// account_list отдаёт channels[] (без токена) — каталог берём оттуда.
+								const res = unwrap(await commands.accountList(mainFolderName, 'telegram')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								const acc = arr.find((a: any) => a?.name === accountName);
+								const channels = Array.isArray(acc?.channels) ? acc.channels : [];
+								// value = ЧИТАЕМОЕ имя канала (title); chat_id плагин резолвит из каталога
+								// при постинге. Fallback на @username/id, если title пуст.
+								return channels
+									.map((c: any) => c?.title || (c?.username ? `@${c.username}` : c?.id != null ? String(c.id) : ''))
+									.filter((s: string) => s.length > 0);
+							} catch (e) {
+								console.warn('[#tgChannels] не удалось получить каналы:', e);
+								return [];
+							}
+						}
+
 						default:
 							console.warn('[useResolveOptions] Неизвестный тег:', tag);
 							return [];

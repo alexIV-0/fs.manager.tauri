@@ -275,6 +275,7 @@ export interface ConvertSettingsPropertyControlProps {
 	tooltip?: string;
 	value: string; // JSON string с настройками ConvertSettings
 	inheritedValue?: string[]; // file paths from upstream connection
+	theme?: string; // id темы модалки (convertThemes.ts); пусто → 'full'
 }
 
 export type ConvertSettingsProperty = PropertyBase<'convertSettings', ConvertSettingsPropertyControlProps>;
