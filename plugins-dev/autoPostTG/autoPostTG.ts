@@ -10,7 +10,7 @@
 import path from 'path';
 import { fs, sendToMW } from '../_template/tauri';
 import { videoCheck } from './_videoCheck';
-import { publishToChannels, SendAs } from './_publisher';
+import { publishToChannels, SendAs, PostTarget } from './_publisher';
 import { readAllRecords, lastPublishedAt, postedFileSet, appendRecord, PostRecord } from './_postLog';
 
 export { onLoad } from '../_template/tauri';
@@ -94,6 +94,7 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 
 	// ── Гейт расписания ──────────────────────────────────────────────────────
 	const records = await readAllRecords(projectPathGD);
+	const order = String(_item.order ?? 'by Time');
 	const now = new Date();
 	if (!dayAllowed(now, _item.daysOfWeek)) {
 		sendToMW('log', { level: 'info', text: '[autoPostTG] сегодня не постим (день недели)' });
@@ -113,7 +114,7 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 	// ── Выбор кандидата: дедуп + order ───────────────────────────────────────
 	const posted = postedFileSet(records);
 	let candidates = inputs.filter((f) => !posted.has(path.basename(f)));
-	candidates = await sortByOrder(candidates, String(_item.order ?? 'by Time'));
+	candidates = await sortByOrder(candidates, order);
 	if (candidates.length === 0) {
 		sendToMW('log', { level: 'info', text: '[autoPostTG] все файлы уже запощены' });
 		return [];
@@ -123,20 +124,26 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 	// В ноде хранятся ЧИТАЕМЫЕ имена каналов (title). Постить надо по chat_id
 	// (@username/числовой id) — берём из каталога account_list. Незнакомое имя
 	// трактуем как сырой chat_id (ручной ввод @username/-100… или сменившийся title).
-	let chatIds: string[] = channels;
+	// Имя может быть title канала ИЛИ имя темы форум-группы → цель {chatId, threadId}.
+	let targets: PostTarget[] = channels.map((c) => ({ chatId: c }));
 	try {
 		const accs = await api().invoke('account_list', { mainFolderName, platform: PLATFORM });
 		const acc = (Array.isArray(accs) ? accs : []).find((a: any) => a?.name === accountName);
 		const catalog: any[] = Array.isArray(acc?.channels) ? acc.channels : [];
-		const labelToChat = new Map<string, string>();
+		const labelToTarget = new Map<string, PostTarget>();
 		for (const c of catalog) {
-			const label = c?.title || (c?.username ? `@${c.username}` : c?.id != null ? String(c.id) : '');
 			const chatId = c?.username ? `@${c.username}` : c?.id != null ? String(c.id) : '';
-			if (label && chatId) labelToChat.set(label, chatId);
+			if (!chatId) continue;
+			const label = c?.title || (c?.username ? `@${c.username}` : String(c?.id ?? ''));
+			if (label) labelToTarget.set(label, { chatId, threadId: null });
+			for (const t of Array.isArray(c?.topics) ? c.topics : []) {
+				const tl = t?.name || (t?.threadId != null ? `Topic #${t.threadId}` : '');
+				if (tl && t?.threadId != null) labelToTarget.set(tl, { chatId, threadId: Number(t.threadId) });
+			}
 		}
-		chatIds = channels.map((lbl) => labelToChat.get(lbl) ?? lbl).filter(Boolean);
+		targets = channels.map((lbl) => labelToTarget.get(lbl) ?? { chatId: lbl });
 	} catch (e) {
-		sendToMW('log', { level: 'warn', text: '[autoPostTG] не удалось прочитать каталог каналов: ' + String(e) });
+		sendToMW('log', { level: 'warn', text: '[autoPostTG] не удалось прочитать каталог: ' + String(e) });
 	}
 
 	// ── Итерация до первого валидного → пост во все каналы ───────────────────
@@ -148,10 +155,12 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 		}
 
 		sendToMW('statusbar', { text: `Постинг в Telegram: ${path.basename(file)}…` });
+		const baseUrl = (await api().invoke('tg_base_url').catch(() => 'https://api.telegram.org')) as string;
 		const results = await publishToChannels(token, file, {
 			caption: captionText,
-			channels: chatIds,
+			targets,
 			sendAs,
+			baseUrl,
 			onStatus: (text) => sendToMW('statusbar', { text }),
 		});
 

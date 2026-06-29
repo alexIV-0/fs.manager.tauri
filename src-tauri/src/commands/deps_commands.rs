@@ -790,3 +790,50 @@ pub async fn deps_download_whisper_model(
     let _ = std::fs::remove_file(&part);
     Err(format!("не удалось скачать {}: {}", filename, last_err))
 }
+
+// ==================== Локальный telegram-bot-api server ====================
+
+/// Имя ассета бинаря под текущую ОС/арх (совпадает с именами в CI tg-bot-api-builds).
+fn tg_server_asset() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("telegram-bot-api-macos-arm64"),
+        ("macos", _) => Some("telegram-bot-api-macos-x86_64"),
+        ("windows", _) => Some("telegram-bot-api-windows-x86_64.exe"),
+        _ => None,
+    }
+}
+
+/// Релиз с собранными бинарями telegram-bot-api (CI-репо tg-bot-api-builds, тег latest).
+const TG_SERVER_RELEASE_BASE: &str = "https://github.com/alexIV-0/tg-bot-api-builds/releases/download/latest";
+
+/// Скачивает бинарь telegram-bot-api под текущую ОС из фиксированного релиза в app_data/bin,
+/// ставит +x и снимает карантин на macOS. Возвращает путь к бинарю.
+#[tauri::command]
+#[specta::specta]
+pub async fn deps_download_tg_server(app: tauri::AppHandle) -> Result<String, String> {
+    let asset = tg_server_asset().ok_or_else(|| {
+        format!(
+            "нет сборки telegram-bot-api под эту ОС ({}/{})",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
+    let url = format!("{}/{}", TG_SERVER_RELEASE_BASE, asset);
+    let dest = bin_dir(&app)?.join(asset);
+
+    download_to(&app, &url, &dest, "tgserver", "telegram-bot-api").await?;
+    set_executable(&dest)?;
+
+    // macOS: снять карантин, иначе Gatekeeper не даст запустить скачанный неподписанный бинарь.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("xattr")
+            .arg("-dr")
+            .arg("com.apple.quarantine")
+            .arg(&dest)
+            .status();
+    }
+
+    emit_progress(&app, "tgserver", "done", "готово", 1, Some(1));
+    Ok(dest.to_string_lossy().to_string())
+}

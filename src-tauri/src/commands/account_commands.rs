@@ -215,6 +215,56 @@ pub fn account_add_channel(
     Ok(result)
 }
 
+/// Удалить из каталога аккаунта канал/чат (по `chat_id`) ИЛИ тему форума
+/// (по `chat_id` + `thread_id`). `thread_id = None` → удаляем сам канал/чат целиком;
+/// `Some` → удаляем только тему из его `topics[]`. read-modify-write ТОЛЬКО поля
+/// `channels` (токен не трогаем). Возвращает обновлённый `channels`. Идемпотентна.
+#[tauri::command]
+#[specta::specta]
+pub fn account_remove_channel(
+    app: tauri::AppHandle,
+    main_folder_name: String,
+    platform: String,
+    name: String,
+    chat_id: i64,
+    thread_id: Option<i64>,
+) -> Result<Value, String> {
+    let path = platform_file(&app, &main_folder_name, &platform)?;
+    let mut accounts = read_accounts(&path);
+    let acc = accounts
+        .iter_mut()
+        .find(|a| account_name(a) == name.as_str())
+        .ok_or_else(|| format!("no account '{}' on platform '{}'", name, platform))?;
+
+    let obj = acc.as_object_mut().ok_or("account is not an object")?;
+    let channels = obj
+        .entry("channels")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let arr = channels.as_array_mut().ok_or("channels is not an array")?;
+
+    match thread_id {
+        None => {
+            // удалить канал/чат целиком по id
+            arr.retain(|c| c.get("id").and_then(|v| v.as_i64()) != Some(chat_id));
+        }
+        Some(tid) => {
+            // удалить тему из topics[] нужного чата
+            if let Some(c) = arr
+                .iter_mut()
+                .find(|c| c.get("id").and_then(|v| v.as_i64()) == Some(chat_id))
+            {
+                if let Some(topics) = c.get_mut("topics").and_then(|t| t.as_array_mut()) {
+                    topics.retain(|t| t.get("threadId").and_then(|v| v.as_i64()) != Some(tid));
+                }
+            }
+        }
+    }
+
+    let result = channels.clone();
+    write_accounts(&path, &accounts)?;
+    Ok(result)
+}
+
 /// Удалить аккаунт платформы (idempotent).
 #[tauri::command]
 #[specta::specta]

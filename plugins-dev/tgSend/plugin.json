@@ -1,0 +1,17 @@
+{
+	"id": "tgSend",
+	"name": "TG Send",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Мгновенная отправка файла в Telegram сразу после обработки — в выбранный канал, тему форум-группы или чат. В отличие от autoPostTG: без расписания (интервал/дни/окно), без дедупа, без order. Просто принимает файл на вход и отправляет. Метод определяется по типу файла (фото/аудио по типу, видео — по полю Video as: Video/Document). Бот — общий с постингом/сбором (#tgAccounts).",
+	"main": "tgSend.js",
+	"ui": "ui.json",
+	"external": [],
+	"resourcePool": "online",
+	"cost": "0",
+	"costUnit": "run"
+}

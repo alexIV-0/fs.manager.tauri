@@ -1,11 +1,12 @@
-// TgAccountDDM — обёртка над SimpleDDM для поля `account` ноды постинга в Telegram.
+// TgAccountDDM — обёртка над SimpleDDM для поля `account` Telegram-нод (постинг и сбор).
 //
-// Рендерится из GenericProperty для ddm, у которого options содержат '#tgAccounts'.
+// Рендерится из GenericProperty для ddm с '#tgAccounts'. Один бот на главную папку
+// (platform 'telegram') используется И для постинга (autoPostTG), И для сбора
+// (autoTGcollect) — разные роли одного бота, общий каталог accounts/<mainFolder>/telegram.json.
+//
 // «Аккаунт» в Telegram = бот с токеном @BotFather (см. TELEGRAM_AUTOPOST_PLAN.md).
-// Авторизация радикально проще VK: ни OAuth, ни WebView — токен вставляется строкой,
-// валидируется через getMe (Rust tg_validate_token), сохраняется в telegram.json.
-//
-// Каналы (channels[]) добавляются отдельно — в поле `channels` (TgChannelsProperty).
+// Авторизация проще VK: ни OAuth, ни WebView — токен вставляется строкой, валидируется
+// через getMe (Rust tg_validate_token), сохраняется в telegram.json.
 
 import { DDMProperty } from '@/NODE_WIN/definitions/types';
 import { commands, unwrap } from '@/Utils/specta';
@@ -15,7 +16,6 @@ import { useCallback, useState } from 'react';
 import SimpleDDMProperty from './SimpleDDM';
 
 const ADD_BOT = 'Add Bot'; // вставка токена бота @BotFather
-const PLATFORM = 'telegram';
 
 interface Props {
 	property: DDMProperty;
@@ -31,6 +31,10 @@ function mainFolderFromPath(path: string | undefined): string {
 
 export default function TgAccountDDM({ property, onChange }: Props) {
 	const path = usePathStore((s) => s.path);
+
+	// Один бот на главную папку (platform 'telegram') — общий для постинга и сбора.
+	const platform = 'telegram';
+
 	const [refreshKey, setRefreshKey] = useState(0);
 
 	const [open, setOpen] = useState(false);
@@ -58,14 +62,14 @@ export default function TgAccountDDM({ property, onChange }: Props) {
 
 			const account = {
 				name,
-				platform: PLATFORM,
+				platform,
 				tokenSource: 'botfather',
 				accessToken: token,
 				botId: me?.id ?? 0,
 				botUsername: username,
 				channels: [],
 			};
-			unwrap(await commands.accountSave(mainFolderName, PLATFORM, account as any));
+			unwrap(await commands.accountSave(mainFolderName, platform, account as any));
 			onChange(name);
 			setRefreshKey((k) => k + 1);
 			setOpen(false);
@@ -75,7 +79,7 @@ export default function TgAccountDDM({ property, onChange }: Props) {
 		} finally {
 			setBusy(false);
 		}
-	}, [path, tokenText, onChange]);
+	}, [path, platform, tokenText, onChange]);
 
 	const handleChange = useCallback(
 		(value: string) => {
@@ -96,14 +100,14 @@ export default function TgAccountDDM({ property, onChange }: Props) {
 			const mainFolderName = mainFolderFromPath(path);
 			if (!mainFolderName) return;
 			try {
-				unwrap(await commands.accountDelete(mainFolderName, PLATFORM, name));
+				unwrap(await commands.accountDelete(mainFolderName, platform, name));
 				if (property.controlProps.value === name) onChange('');
 				setRefreshKey((k) => k + 1);
 			} catch (e) {
 				console.error('[TgAccountDDM] не удалось удалить бота:', e);
 			}
 		},
-		[path, onChange, property.controlProps.value],
+		[path, platform, onChange, property.controlProps.value],
 	);
 
 	const isDeletable = useCallback((opt: string) => opt !== ADD_BOT, []);
@@ -127,7 +131,8 @@ export default function TgAccountDDM({ property, onChange }: Props) {
 							<br />
 							2. Скопируй токен вида <code>123456789:AA...</code> и вставь сюда.
 							<br />
-							3. Добавь бота <b>администратором</b> канала с правом «Публиковать сообщения».
+							3. Для <b>постинга</b> — добавь бота админом канала с правом «Публиковать сообщения».
+							Для <b>сбора</b> — админом супергруппы (или отключи privacy mode), чтобы он видел медиа.
 						</Typography>
 
 						<TextField

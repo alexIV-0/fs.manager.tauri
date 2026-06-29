@@ -12,7 +12,8 @@ import { commands } from '@/Utils/specta';
 import { findAllFilesForProcess } from './findAllFilesForProcess';
 import { finalyWating } from './utils/finalyWating';
 import { startProcessing } from './startProcessing';
-import { startProcessContext } from './utils/processingAbort';
+import { startProcessContext, getSignal } from './utils/processingAbort';
+import { runTgCollect } from './tgCollect';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
 
@@ -66,6 +67,12 @@ export async function runProcessing() {
 		while (isScanningStore.getState().isScanning) {
 			const cycleStart = Date.now();
 
+			// ТГ-сбор крутится параллельно обработке И ожиданию (скачивание сетевое, не мешает).
+			// Дожидаемся перед новым сканом (ниже) — докачанные файлы уже будут в IN.
+			// Безопасен во время обработки: только ДОБАВЛЯЕТ файлы атомарным move (в отличие от
+			// destructive-triggerCleanup, который потому и живёт только в окне ожидания).
+			const tgCollectPromise = runTgCollect(getSignal());
+
 			// Обрабатываем всё что есть в очереди.
 			// Возвращается, когда очередь пуста + ничего не запущено,
 			// либо при мягкой остановке (она внутри startProcessing ставит isScanning=false).
@@ -103,6 +110,7 @@ export async function runProcessing() {
 			// Дожидаемся завершения cleanup, если он вдруг затянулся дольше wait,
 			// чтобы новый скан не наступал на одновременно удаляющиеся папки.
 			await cleanupPromise;
+			await tgCollectPromise.catch(() => {}); // докачки доехали → новый скан их подхватит
 
 			// К этому моменту очередь гарантированно пуста (startProcessing всё обработал),
 			// поэтому сбрасываем registeredPaths чтобы повторно найти файлы в папках.

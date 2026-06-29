@@ -8,8 +8,10 @@ import { memo, useEffect, useRef, useState } from 'react';
 import InputHandle from '../components/InputHandle';
 import MyToolTip from './CustomTooltip';
 
-// Опция считается разделителем если начинается с одного или нескольких тире
-const isDivider = (opt: string): boolean => /^-+/.test(opt.trim());
+// Опция считается разделителем если начинается с ТРЁХ+ тире («---» = линия, «---текст» =
+// заголовок). Порог 3+, а не 1, чтобы реальные имена с одиночным «-» в начале
+// (напр. чат «-=archiv_m1=-») НЕ принимались за разделитель.
+const isDivider = (opt: string): boolean => /^-{3,}/.test(opt.trim());
 // Текст после тире (пустая строка → просто линия)
 const getDividerText = (opt: string): string =>
 	opt

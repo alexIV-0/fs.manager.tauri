@@ -16,6 +16,8 @@ import SimpleDDMProperty from '../properties/SimpleDDM';
 import VkAccountDDM from '../properties/VkAccountDDM';
 import TgAccountDDM from '../properties/TgAccountDDM';
 import TgChannelsProperty from '../properties/TgChannelsProperty';
+import TgSourceProperty from '../properties/TgSourceProperty';
+import CollectProperty from '../properties/CollectProperty';
 import PathNavigator from '../properties/PathNavigator';
 import JsonNavigator from '../properties/JsonNavigator';
 import AddPathPropertyButton from '../properties/AddPathPropertyButton';
@@ -49,6 +51,8 @@ function GenericProperty({ property }: { property: Property }) {
 					return <VkAccountDDM property={property} onChange={handleChange} />;
 				if (property.controlProps.options?.includes('#tgAccounts'))
 					return <TgAccountDDM property={property} onChange={handleChange} />;
+				if (property.controlProps.options?.includes('#tgSources'))
+					return <TgSourceProperty property={property} onChange={handleChange} />;
 				return <SimpleDDMProperty property={property} onChange={handleChange} />;
 			case 'link':
 				return <TextProperty property={property} />;
@@ -80,6 +84,8 @@ function GenericProperty({ property }: { property: Property }) {
 				return <KeyingPropertyComponent property={property as KeyingProperty} />;
 			case 'convertSettings':
 				return <ConvertPropertyComponent property={property as ConvertSettingsProperty} />;
+			case 'collectScheme':
+				return <CollectProperty property={property} />;
 			default:
 				return null;
 		}

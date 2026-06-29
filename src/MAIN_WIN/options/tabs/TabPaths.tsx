@@ -1,7 +1,7 @@
 import { filePathNamePattern } from '@/NODE_WIN/utils/searchTypes';
 import { pathPattern_store, programPathPattern_store, folderPath_store } from '@/Store/MainWin/pathPattern_store';
 import { CustomUserSettings } from '../CustomUserSettings';
-import { FfmpegDownloadSection, WhisperModelsSection } from './DepsDownloadPanel';
+import { FfmpegDownloadSection, WhisperModelsSection, TgServerSection } from './DepsDownloadPanel';
 
 export default function TabPaths() {
 	const pathPattern = pathPattern_store();
@@ -38,6 +38,7 @@ export default function TabPaths() {
 				options={['Custom Folder...']}
 			/>
 			<WhisperModelsSection />
+			<TgServerSection />
 		</>
 	);
 }

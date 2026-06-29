@@ -1,0 +1,16 @@
+{
+	"id": "autoTGcollect",
+	"name": "TG Collect",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Конфиг-нода сбора медиа из Telegram в папку IN проекта. Без входов/выходов: задаёт правила (бот сбора, чат-источник, что собираем, имя). Сам сбор выполняет core-раннер. При сохранении флоу нода пишет options/tgSearch.json (если включена) или удаляет его (если выключена/удалена).",
+	"main": "autoTGcollect.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

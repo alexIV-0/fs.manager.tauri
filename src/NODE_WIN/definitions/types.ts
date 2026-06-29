@@ -295,6 +295,14 @@ export interface ValueRangePropertyControlProps {
 
 export type ValueRangeProperty = PropertyBase<'valueRange', ValueRangePropertyControlProps>;
 
+export interface CollectSchemePropertyControlProps {
+	label?: string;
+	tooltip?: string;
+	value: { type?: string }; // MVP: { type }; фаза 2: + taskName/steps визарда
+}
+
+export type CollectSchemeProperty = PropertyBase<'collectScheme', CollectSchemePropertyControlProps>;
+
 export type Property =
 	| CheckboxProperty
 	| AutocompleteProperty
@@ -314,7 +322,8 @@ export type Property =
 	| VideoAdjustmentProperty
 	| KeyingProperty
 	| ConvertSettingsProperty
-	| ValueRangeProperty;
+	| ValueRangeProperty
+	| CollectSchemeProperty;
 
 // export enum SearchType {
 // 	IMAGE = 'image',

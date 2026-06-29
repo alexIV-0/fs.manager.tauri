@@ -1,6 +1,6 @@
 import { AutocompletePropertyControlProps, Property } from '@/NODE_WIN/definitions/types';
 import { commands, unwrap } from '@/Utils/specta';
-import { Box, IconButton, List, ListItem, ListItemButton, Paper, Popper, Stack, TextField, Typography } from '@mui/material';
+import { Box, Divider, IconButton, List, ListItem, ListItemButton, Paper, Popper, Stack, TextField, Typography } from '@mui/material';
 import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useResolveOptions } from '@/NODE_WIN/hooks/useResolveOptions';
@@ -17,6 +17,15 @@ const EMPTY_ARRAY: string[] = [];
 // Текст в "режиме пути": начинается с ./ ../ или содержит разделитель.
 // В этом режиме автокомплит показывает только папки (#folders) и навигирует по ним.
 const isPathLike = (t: string) => /[\\/]/.test(t) || /^\s*\.\.?/.test(t);
+
+// Опция-разделитель: «---текст» (3+ тире) → заголовок группы, невыбираемый. Порог 3+,
+// чтобы реальные значения с одиночным «-» (имена/история) не принимались за разделитель.
+const isDivider = (opt: string): boolean => /^-{3,}/.test(opt.trim());
+const getDividerText = (opt: string): string =>
+	opt
+		.trim()
+		.replace(/^-+\s*/, '')
+		.trim();
 
 function getActiveWord(value: string, cursor: number) {
 	let start = cursor;
@@ -172,6 +181,8 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 
 	/** Универсальная замена слова/значения */
 	const handleSelectOption = async (replacement: string, commit = false) => {
+		// Разделитель-заголовок — не выбирается.
+		if (isDivider(replacement)) return;
 		// Обработка специальных опций.
 		// Канонический формат из PluginBuilder (SPECIAL_OPTIONS) — без пробела: 'CustomFolder...'.
 		// Пробельную форму оставляем для совместимости со старыми конфигами.
@@ -472,47 +483,59 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 						}}
 					>
 						<List dense>
-							{filteredOptions.map((opt, i) => (
-								<ListItem key={opt} disablePadding>
-									<ListItemButton
-										ref={(el) => {
-											itemRefs.current[i] = el;
-										}}
-										selected={i === highlightedIndex}
-										onMouseDown={(e) => {
-											e.preventDefault();
-											handleSelectOption(opt, true);
-										}}
-										sx={{
-											pr: 0.5,
-											'& .history-delete': { opacity: 0, transition: 'opacity 0.15s' },
-											'&:hover .history-delete': { opacity: 1 },
-										}}
-									>
-										<Box sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{opt}</Box>
-										{deletableOptionsSet.has(opt) && (
-											<IconButton
-												className='history-delete'
-												size='small'
-												onMouseDown={(e) => {
-													e.preventDefault();
-													e.stopPropagation();
-													removeFromHistory(historyKey!, opt);
-													setFilteredOptions((prev) => prev.filter((o) => o !== opt));
-													setDeletableOptionsSet((prev) => {
-														const next = new Set(prev);
-														next.delete(opt);
-														return next;
-													});
-												}}
-												sx={{ p: 0.25, ml: 0.5, flexShrink: 0 }}
-											>
-												<X size={12} />
-											</IconButton>
-										)}
-									</ListItemButton>
-								</ListItem>
-							))}
+							{filteredOptions.map((opt, i) =>
+								isDivider(opt) ? (
+									<ListItem key={`div-${i}`} sx={{ px: 1.5, py: 0.25, pointerEvents: 'none', userSelect: 'none' }}>
+										<Divider textAlign='center' sx={{ width: '100%', my: 0.25, borderColor: 'rgba(255,255,255,0.12)' }}>
+											{getDividerText(opt) && (
+												<Typography sx={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', lineHeight: 1 }}>
+													{getDividerText(opt)}
+												</Typography>
+											)}
+										</Divider>
+									</ListItem>
+								) : (
+									<ListItem key={opt} disablePadding>
+										<ListItemButton
+											ref={(el) => {
+												itemRefs.current[i] = el;
+											}}
+											selected={i === highlightedIndex}
+											onMouseDown={(e) => {
+												e.preventDefault();
+												handleSelectOption(opt, true);
+											}}
+											sx={{
+												pr: 0.5,
+												'& .history-delete': { opacity: 0, transition: 'opacity 0.15s' },
+												'&:hover .history-delete': { opacity: 1 },
+											}}
+										>
+											<Box sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{opt}</Box>
+											{deletableOptionsSet.has(opt) && (
+												<IconButton
+													className='history-delete'
+													size='small'
+													onMouseDown={(e) => {
+														e.preventDefault();
+														e.stopPropagation();
+														removeFromHistory(historyKey!, opt);
+														setFilteredOptions((prev) => prev.filter((o) => o !== opt));
+														setDeletableOptionsSet((prev) => {
+															const next = new Set(prev);
+															next.delete(opt);
+															return next;
+														});
+													}}
+													sx={{ p: 0.25, ml: 0.5, flexShrink: 0 }}
+												>
+													<X size={12} />
+												</IconButton>
+											)}
+										</ListItemButton>
+									</ListItem>
+								),
+							)}
 						</List>
 					</Paper>
 				</Popper>

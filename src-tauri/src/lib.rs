@@ -157,6 +157,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             deps_whisper_models_dir,
             deps_list_whisper_models,
             deps_download_whisper_model,
+            deps_download_tg_server,
             // preview: точный ffmpeg-рендер кадра для редакторов фильтров
             preview_render_frame,
             preview_render_audio,
@@ -166,6 +167,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             account_list,
             account_get_token,
             account_add_channel,
+            account_remove_channel,
             account_delete,
             // VK OAuth + валидация (vk_auth_capture — внутренняя, через raw invoke из init-скрипта)
             vk_auth_open,
@@ -175,6 +177,17 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             tg_validate_token,
             tg_get_chat,
             tg_discover_channels,
+            tg_discover_sources,
+            tg_get_updates,
+            tg_fetch_file,
+            tg_delete_message,
+            tg_set_reaction,
+            tg_create_forum_topic,
+            tg_base_url,
+            tg_server_start,
+            tg_server_stop,
+            tg_server_status,
+            tg_cloud_log_out,
         ])
 }
 
@@ -566,6 +579,7 @@ pub fn run() {
             deps_whisper_models_dir,
             deps_list_whisper_models,
             deps_download_whisper_model,
+            deps_download_tg_server,
             // Preview render (ffmpeg-кадр для редакторов фильтров)
             preview_render_frame,
             preview_render_audio,
@@ -575,6 +589,7 @@ pub fn run() {
             account_list,
             account_get_token,
             account_add_channel,
+            account_remove_channel,
             account_delete,
             // VK OAuth + валидация
             vk_auth_open,
@@ -585,6 +600,17 @@ pub fn run() {
             tg_validate_token,
             tg_get_chat,
             tg_discover_channels,
+            tg_discover_sources,
+            tg_get_updates,
+            tg_fetch_file,
+            tg_delete_message,
+            tg_set_reaction,
+            tg_create_forum_topic,
+            tg_base_url,
+            tg_server_start,
+            tg_server_stop,
+            tg_server_status,
+            tg_cloud_log_out,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

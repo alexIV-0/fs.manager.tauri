@@ -1,0 +1,74 @@
+{
+	"type": "autoTGcollect",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 520,
+	"data": {
+		"label": "TG Collect",
+		"colorType": "posting",
+		"comment": "Конфиг-нода сбора медиа из Telegram в папку IN проекта.&nbsp;<div>Без входов/выходов: задаёт правила (бот сбора, чат-источник, что собираем, имя). Сам сбор делает core-раннер.</div><div>При сохранении флоу: включённая нода пишет options/tgSearch.json, выключенная/удалённая — удаляет его.</div>",
+		"properties": [
+			{
+				"id": "account",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Bot",
+					"tooltip": "Бот Telegram этой главной папки (тот же, что для постинга). «Add Bot» — вставить токен от @BotFather. Для сбора бот должен быть админом супергруппы (или privacy mode OFF), чтобы видеть медиа.",
+					"options": [
+						"#tgAccounts",
+						"---",
+						"Add Bot"
+					],
+					"freeInput": false,
+					"value": ""
+				},
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "target",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Source",
+					"tooltip": "Откуда собираем: канал, тема форум-группы или простой чат (сгруппированы в списке). «Найти чаты» — discover, можно ввести @username/id вручную. chatId/threadId резолвятся при сохранении.",
+					"options": [
+						"#tgSources"
+					],
+					"freeInput": true,
+					"value": ""
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "collect",
+				"controlType": "collectScheme",
+				"controlProps": {
+					"label": "Collect",
+					"tooltip": "Что собираем. MVP: один тип файла (video/photo/audio/document/text). folder → визард сбора нескольких файлов (фаза 2).",
+					"value": {
+						"type": "video"
+					}
+				},
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "deleteAfterDownload",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Delete source after download",
+					"tooltip": "Вкл — удалить исходное сообщение в Telegram после скачивания. Выкл — пометить ✅.",
+					"value": false
+				},
+				"required": false,
+				"outputType": "string"
+			}
+		],
+		"output": {},
+		"isValid": true
+	}
+}

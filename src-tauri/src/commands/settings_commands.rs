@@ -47,7 +47,14 @@ fn default_app_settings() -> Value {
         "cleanup": { "retentionDays": null, "autoDisableDays": null },
         "logs": { "retentionDays": 2 },
         "logging": { "bufferSize": 5000 },
-        "ui": { "showHints": false }
+        "ui": { "showHints": false },
+        "tgServer": {
+            "enabled": false,
+            "binPath": "",
+            "apiId": "",
+            "apiHash": "",
+            "port": 8081
+        }
     })
 }
 

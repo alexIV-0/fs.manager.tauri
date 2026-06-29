@@ -6,6 +6,7 @@ import { useEdges, useNodes, useReactFlow, type Edge, type Node } from '@xyflow/
 import { Save } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
+import { syncTgSearchSidecar } from '@/NODE_WIN/utils/syncTgSearchSidecar';
 
 type DirtyKind = 'saved' | 'layout' | 'structural';
 
@@ -103,6 +104,7 @@ function SaveButton() {
 		setIsSaving(true);
 		const flow = reactFlow.toObject();
 		unwrap(await commands.saveFlowToOptionsFolder(path, flow as any));
+		await syncTgSearchSidecar(path, flow);
 		setSavedSig({
 			struct: structSig(flow.nodes, flow.edges),
 			layout: layoutSig(flow.nodes),

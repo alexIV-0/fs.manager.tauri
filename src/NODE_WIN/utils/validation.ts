@@ -66,5 +66,10 @@ export const isValueValid = (property: Property): boolean => {
 		return typeof value === 'string' ? value !== '' : false;
 	}
 
+	// collectScheme (autoTGcollect) — value — объект { type, ... }; валиден если задан type.
+	if (property.controlType === 'collectScheme') {
+		return typeof value === 'object' && value !== null && typeof (value as any).type === 'string' && (value as any).type !== '';
+	}
+
 	return false;
 };

@@ -1,24 +1,23 @@
-// Telegram-публикатор (см. TELEGRAM_AUTOPOST_PLAN.md).
-//   sendVideo / sendDocument через Bot API.
-//   Мультиканал: ПЕРВЫЙ канал — реальная multipart-загрузка (http.upload) → берём file_id
-//   из ответа → ОСТАЛЬНЫЕ каналы постим по file_id (http.fetch, без повторной загрузки).
-// Все HTTP — через http.* (Rust/reqwest, без CORS).
+// Генерик-отправитель файла в Telegram (плагин tgSend).
+//   Метод по типу файла: видео → sendVideo|sendDocument (по sendAs), фото → sendPhoto,
+//   аудио → sendAudio, прочее → sendDocument. sendAs влияет ТОЛЬКО на видео.
+//   Мульти-цель: первая цель — реальная загрузка → file_id, остальные — по file_id (без загрузки).
+// Все HTTP — через http.* (Rust/reqwest, без CORS). Зеркалит _publisher.ts autoPostTG.
 
 import path from 'path';
 import { http } from '../_template/tauri';
 
 export type SendAs = 'video' | 'document';
 
-// Цель постинга: чат + опц. тема форум-группы (message_thread_id).
-export interface PostTarget {
+export interface SendTarget {
 	chatId: string;
 	threadId?: number | null;
 }
 
-export interface ChannelResult {
+export interface SendResult {
 	chatId: string;
 	threadId?: number | null;
-	channel?: string; // @username или title для лога
+	channel?: string;
 	messageId?: number;
 	permalink: string;
 	ok: boolean;
@@ -31,7 +30,6 @@ function apiUrl(base: string, token: string, method: string): string {
 	return `${base.replace(/\/+$/, '')}/bot${token}/${method}`;
 }
 
-/** Разбирает тело ответа Bot API. Бросает при ok:false / не-JSON. */
 function parseTgBody(method: string, status: number, body: string): any {
 	let json: any;
 	try {
@@ -45,34 +43,61 @@ function parseTgBody(method: string, status: number, body: string): any {
 	return json.result;
 }
 
-/** Постоянная ссылка на пост: публичный → t.me/<username>/[<thread>/]<id>,
- *  приватный → t.me/c/<internal>/[<thread>/]<id>. В теме форума путь включает threadId. */
 function permalinkFor(chatId: string, result: any, messageId: number, threadId?: number | null): string {
 	const thread = threadId != null ? `${threadId}/` : '';
 	const username: string | undefined = result?.chat?.username || (chatId.startsWith('@') ? chatId.slice(1) : undefined);
 	if (username) return `https://t.me/${username}/${thread}${messageId}`;
-	// приватный канал/группа: внутренний id = chat.id без префикса -100
 	const rawId = String(result?.chat?.id ?? chatId);
 	const internal = rawId.replace(/^-100/, '').replace(/^-/, '');
 	return `https://t.me/c/${internal}/${thread}${messageId}`;
 }
 
-/**
- * Публикует видео во все каналы. Файл грузится ОДИН раз (первый канал),
- * остальные — по полученному file_id. Возвращает результат по каждому каналу
- * (частичный провал не роняет остальные).
- */
-export async function publishToChannels(
+type Kind = 'video' | 'photo' | 'audio' | 'document';
+
+function kindByExt(file: string): Kind {
+	const e = path.extname(file).toLowerCase().replace(/^\./, '');
+	if (['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'].includes(e)) return 'video';
+	if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic'].includes(e)) return 'photo';
+	if (['mp3', 'ogg', 'oga', 'wav', 'm4a', 'aac', 'flac'].includes(e)) return 'audio';
+	return 'document';
+}
+
+// Метод/поле/mime по типу файла. sendAs='document' принудительно шлёт ВИДЕО документом.
+function pickMethod(file: string, sendAs: SendAs): { method: string; field: string; mime: string } {
+	const kind = kindByExt(file);
+	if (kind === 'video' && sendAs === 'document') return { method: 'sendDocument', field: 'document', mime: 'video/mp4' };
+	switch (kind) {
+		case 'video':
+			return { method: 'sendVideo', field: 'video', mime: 'video/mp4' };
+		case 'photo':
+			return { method: 'sendPhoto', field: 'photo', mime: 'image/jpeg' };
+		case 'audio':
+			return { method: 'sendAudio', field: 'audio', mime: 'audio/mpeg' };
+		default:
+			return { method: 'sendDocument', field: 'document', mime: 'application/octet-stream' };
+	}
+}
+
+function extractFileId(result: any): string | undefined {
+	return (
+		result?.video?.file_id ||
+		result?.document?.file_id ||
+		result?.audio?.file_id ||
+		result?.animation?.file_id ||
+		(Array.isArray(result?.photo) ? result.photo[result.photo.length - 1]?.file_id : undefined)
+	);
+}
+
+/** Отправляет ОДИН файл во все цели. Грузим один раз → file_id для остальных целей. */
+export async function sendFileToTargets(
 	token: string,
 	file: string,
-	opts: { caption: string; targets: PostTarget[]; sendAs: SendAs; baseUrl: string; onStatus?: (text: string) => void },
-): Promise<ChannelResult[]> {
+	opts: { caption: string; sendAs: SendAs; targets: SendTarget[]; baseUrl: string; onStatus?: (text: string) => void },
+): Promise<SendResult[]> {
 	const base = opts.baseUrl || 'https://api.telegram.org';
-	const method = opts.sendAs === 'document' ? 'sendDocument' : 'sendVideo';
-	const field = opts.sendAs === 'document' ? 'document' : 'video';
+	const { method, field, mime } = pickMethod(file, opts.sendAs);
 	const caption = (opts.caption ?? '').slice(0, CAPTION_MAX);
-	const results: ChannelResult[] = [];
-
+	const results: SendResult[] = [];
 	let fileId: string | undefined;
 
 	for (let i = 0; i < opts.targets.length; i++) {
@@ -82,7 +107,6 @@ export async function publishToChannels(
 		try {
 			let result: any;
 			if (fileId) {
-				// последующие цели — по file_id, без загрузки
 				const params: Record<string, string> = { chat_id: chatId, [field]: fileId };
 				if (threadId != null) params.message_thread_id = String(threadId);
 				if (caption) params.caption = caption;
@@ -97,19 +121,17 @@ export async function publishToChannels(
 				});
 				result = parseTgBody(method, res.status, res.body);
 			} else {
-				// первая цель — реальная multipart-загрузка
-				opts.onStatus?.(`Загрузка видео в Telegram (1/${opts.targets.length})…`);
+				opts.onStatus?.(`Отправка в Telegram (1/${opts.targets.length})…`);
 				const fields = [{ field: 'chat_id', value: chatId }];
 				if (threadId != null) fields.push({ field: 'message_thread_id', value: String(threadId) });
 				if (caption) fields.push({ field: 'caption', value: caption });
 				if (method === 'sendVideo') fields.push({ field: 'supports_streaming', value: 'true' });
 				const res = await http.upload(apiUrl(base, token, method), {
-					files: [{ field, path: file, filename: path.basename(file), mime: 'video/mp4' }],
+					files: [{ field, path: file, filename: path.basename(file), mime }],
 					fields,
 				});
 				result = parseTgBody(method, res.status, res.body);
-				// извлекаем file_id для остальных целей
-				fileId = result?.video?.file_id || result?.document?.file_id || result?.animation?.file_id;
+				fileId = extractFileId(result);
 			}
 
 			const messageId = Number(result?.message_id);

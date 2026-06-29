@@ -1,0 +1,103 @@
+{
+	"type": "tgSend",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 560,
+	"data": {
+		"label": "TG Send",
+		"colorType": "posting",
+		"comment": "Мгновенная отправка файла в Telegram сразу после обработки.&nbsp;<div>На вход — файл (видео/фото/аудио), на выход — он же. Уходит в выбранные каналы/темы/чаты.</div><div>Без расписания и дедупа. Метод — по типу файла; для видео выбор Video (плеер, возможно пережатие) / Document (оригинал).</div>",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input File",
+					"tooltip": "Файл для отправки (видео/фото/аудио) — приходит по связи. Метод отправки определяется по типу файла.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "account",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Bot",
+					"tooltip": "Бот Telegram этой главной папки (общий с постингом/сбором). «Add Bot» — токен от @BotFather. Для отправки бот должен иметь право слать в выбранный канал/чат/тему.",
+					"options": [
+						"#tgAccounts",
+						"---",
+						"Add Bot"
+					],
+					"freeInput": false,
+					"value": ""
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "channels",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target",
+					"tooltip": "Куда отправить: канал, тема форум-группы или чат (сгруппированы в списке). Мультивыбор. «Найти мои каналы» — авто-поиск, «Добавить вручную» — @username/id. Темы добавляются в ноде сбора (каталог общий).",
+					"options": [
+						"#tgChannels"
+					],
+					"multiSelect": true,
+					"optionsOnly": true,
+					"allowDuplicates": false,
+					"value": []
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "caption",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Caption",
+					"tooltip": "Необязательно. Подпись (хештеги/текст) приходит по связи. Пусто = без подписи. Лимит 1024 символа.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "accepted"
+			},
+			{
+				"id": "sendAs",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Video as",
+					"tooltip": "Только для ВИДЕО: Video — встроенный плеер/перемотка (Telegram может пережать под стриминг); Document — оригинал без пережатия, без плеера. Фото/аудио идут по своему типу независимо от этого поля.",
+					"options": [
+						"Video",
+						"Document"
+					],
+					"freeInput": false,
+					"value": "Video"
+				},
+				"required": false,
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}
