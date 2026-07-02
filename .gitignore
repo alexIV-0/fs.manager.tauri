@@ -17,7 +17,7 @@ release
 
 # Tauri
 src-tauri/target
-src-tauri/Cargo.lock
+# Cargo.lock коммитим: это приложение, нужны воспроизводимые сборки (CI/локально)
 src-tauri/gen/schemas/
 
 # IDE
