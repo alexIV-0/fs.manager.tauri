@@ -16,7 +16,23 @@ export interface PublishResult {
 	permalink: string;
 }
 
-/** Вызов VK API (POST form-urlencoded). Бросает при error в ответе. */
+/** Ошибка VK API — несёт error_code и captcha-поля (для логов/расшифровки). */
+export class VkApiError extends Error {
+	code: number;
+	method: string;
+	captchaSid?: string;
+	captchaImg?: string;
+	constructor(method: string, err: any) {
+		super(`VK ${method}: ${err?.error_msg ?? 'неизвестная ошибка'} [code ${err?.error_code}]`);
+		this.name = 'VkApiError';
+		this.method = method;
+		this.code = Number(err?.error_code);
+		if (err?.captcha_sid) this.captchaSid = String(err.captcha_sid);
+		if (err?.captcha_img) this.captchaImg = String(err.captcha_img);
+	}
+}
+
+/** Вызов VK API (POST form-urlencoded). Бросает VkApiError при error в ответе. */
 async function vkApi(method: string, params: Record<string, any>, version = V): Promise<any> {
 	const all: Record<string, any> = { v: version, ...params };
 	const body = Object.entries(all)
@@ -37,7 +53,7 @@ async function vkApi(method: string, params: Record<string, any>, version = V): 
 		throw new Error(`VK ${method}: не-JSON ответ (HTTP ${res.status}): ${res.body.slice(0, 200)}`);
 	}
 	if (json.error) {
-		throw new Error(`VK ${method}: ${json.error.error_msg} [code ${json.error.error_code}]`);
+		throw new VkApiError(method, json.error);
 	}
 	return json.response;
 }
@@ -46,8 +62,10 @@ async function vkApi(method: string, params: Record<string, any>, version = V): 
 export async function publishVideo(
 	token: string,
 	file: string,
-	opts: { name: string; description: string; groupId?: number },
+	opts: { name: string; description: string; groupId?: number; onLog?: (msg: string) => void },
 ): Promise<PublishResult> {
+	const log = opts.onLog ?? (() => {});
+
 	const saveParams: Record<string, any> = {
 		access_token: token,
 		name: opts.name,
@@ -55,14 +73,18 @@ export async function publishVideo(
 	};
 	if (opts.groupId) saveParams.group_id = opts.groupId;
 
+	log(`шаг 1/3 video.save (name="${opts.name}"${opts.groupId ? `, group_id=${opts.groupId}` : ''})…`);
 	const save = await vkApi('video.save', saveParams);
 	const ownerId = Number(save.owner_id);
 	const videoId = Number(save.video_id);
+	log(`шаг 1/3 ✓ owner_id=${ownerId}, video_id=${videoId}`);
 
+	log(`шаг 2/3 upload video_file (${path.basename(file)})…`);
 	const up = await http.upload(save.upload_url, {
 		files: [{ field: 'video_file', path: file, filename: path.basename(file), mime: 'video/mp4' }],
 	});
 	if (!up.ok) throw new Error(`upload video_file: HTTP ${up.status}`);
+	log(`шаг 2/3 ✓ файл залит (HTTP ${up.status})`);
 
 	const wallParams: Record<string, any> = {
 		access_token: token,
@@ -72,8 +94,10 @@ export async function publishVideo(
 	};
 	if (ownerId < 0) wallParams.from_group = 1;
 
+	log(`шаг 3/3 wall.post (owner_id=${ownerId}${ownerId < 0 ? ', from_group=1' : ''})…`);
 	const post = await vkApi('wall.post', wallParams);
 	const postId = Number(post.post_id);
+	log(`шаг 3/3 ✓ post_id=${postId}`);
 	return { ownerId, videoId, postId, permalink: `https://vk.com/wall${ownerId}_${postId}` };
 }
 

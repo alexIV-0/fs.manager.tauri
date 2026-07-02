@@ -51,6 +51,9 @@ export const mainSearch = {
 
 		isUnique: true,
 		required: true,
+		// Уникальную/неудаляемую ноду всё же можно ВЫКЛЮЧАТЬ (Power в шапке) — пауза обработки
+		// проекта без удаления корня. X (удалить) при этом не показывается (isUnique:true).
+		disablable: true,
 		isValid: false,
 	},
 	deletable: false,

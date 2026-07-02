@@ -105,7 +105,7 @@ function NodeHeader() {
 
 	return (
 		<Stack direction={'row'} alignItems={'center'} p={'6px 14px'} bgcolor={backgroundColor} borderRadius={'4px 4px 0 0'} color={textColor}>
-			{!node.data.isUnique && (
+			{(!node.data.isUnique || (node.data as any).disablable) && (
 				<IconButton
 					onClick={handleToggleDisabled}
 					size='small'

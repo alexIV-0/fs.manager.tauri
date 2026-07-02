@@ -32,11 +32,13 @@ export const getPropertyValueAndType = (property: Property, sourceValue?: any) =
 	}
 
 	if (property?.controlType === 'addLink' || property?.controlType === 'addPathLink') {
-		if (property.outputType === 'array') {
-			const val = Array.isArray(property.controlProps.value) ? property.controlProps.value[0] : property.controlProps.value;
-			value = val || '';
-			type = value as string;
-		}
+		// Тип исходящего массива = выбранный в выпадашке тип (controlProps.value[0]),
+		// а НЕ поле outputType. Раньше ветка срабатывала только при outputType === 'array',
+		// из-за чего mergeToArray (outputType: 'string') терял тип и отдавал пустой коннектор,
+		// хотя сам пин ноды рисовался цветным (OutputHandle читает value[0] напрямую).
+		const val = Array.isArray(property.controlProps.value) ? property.controlProps.value[0] : property.controlProps.value;
+		value = val || '';
+		type = value as string;
 	}
 	if (property?.controlType === 'ddm') {
 		const raw = Array.isArray(property.controlProps.value)

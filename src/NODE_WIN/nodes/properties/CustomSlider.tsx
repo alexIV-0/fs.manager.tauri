@@ -123,7 +123,7 @@ function CustomSlider({ property, onChange }: CustomSliderProps) {
 
 				<PropertyLabelEditor label={controlProps?.label ?? ''} editLabel={editLabel} onSave={handleSaveLabel} />
 
-				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} />
+				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 			</Stack>
 
 			<Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>

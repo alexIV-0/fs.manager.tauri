@@ -180,7 +180,7 @@ export default function TimeCode({ property, onChange }: TimeCodeProps) {
 
 				<PropertyLabelEditor label={controlProps?.label ?? ''} editLabel={editLabel} onSave={handleSaveLabel} />
 
-				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} />
+				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 			</Stack>
 
 			<TextField

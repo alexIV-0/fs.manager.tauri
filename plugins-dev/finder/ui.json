@@ -1,0 +1,137 @@
+{
+	"type": "finder",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 750,
+	"data": {
+		"label": "Finder (source)",
+		"colorType": "posting",
+		"comment": "Источник: следит за своей папкой и выбирает ОДИН файл за интервал (универсально, под любой сервис).&nbsp;<div>Выбор файла — по Order; темп — по Interval/дням/окну. Файл уходит на выход → в ноду постинга/обработки.</div><div>Исполняется отдельным процессом постинга (кнопка START POSTING), не обработкой.</div>",
+		"properties": [
+			{
+				"id": "autocomplete",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Source folder",
+					"tooltip": "Папка проекта, из которой берём файлы (создаётся автоматически при сохранении). Напр. VK_post.",
+					"options": [
+						"CustomFolder...",
+						"#folders"
+					],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": false,
+				"outputType": "path",
+				"required": false
+			},
+			{
+				"id": "searchType",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Search Type",
+					"tooltip": "Тип файлов для поиска. Только один тип. Он же — тип выхода ноды.",
+					"options": [
+						"#typeOfFile",
+						"folders"
+					],
+					"value": [
+						"video"
+					],
+					"optionsOnly": true
+				},
+				"isOutput": true,
+				"outputType": "array",
+				"required": true
+			},
+			{
+				"id": "order",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Order",
+					"tooltip": "Порядок выбора файла из папки.",
+					"options": [
+						"by Time (older)",
+						"by Time (yanger)",
+						"by Name",
+						"Random"
+					],
+					"freeInput": false,
+					"value": "by Time (older)"
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "interval",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Interval",
+					"tooltip": "Шаг между выдачами файла (капля). Число (90 = 00:01:30) или HH:MM:SS.",
+					"value": 3600
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "daysOfWeek",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Days of week",
+					"tooltip": "Дни, по которым выдаём файлы. Пусто = все дни.",
+					"options": [
+						"Mon",
+						"Tue",
+						"Wed",
+						"Thu",
+						"Fri",
+						"Sat",
+						"Sun"
+					],
+					"multiSelect": true,
+					"optionsOnly": true,
+					"allowDuplicates": false,
+					"value": [
+						"Mon",
+						"Tue",
+						"Wed",
+						"Thu",
+						"Fri",
+						"Sat",
+						"Sun"
+					]
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "window",
+				"controlType": "valueRange",
+				"controlProps": {
+					"label": "Time window",
+					"tooltip": "Окно времени суток. 00:00–24:00 = весь день.",
+					"value": [
+						0,
+						1440
+					]
+				},
+				"outputType": "string"
+			},
+			{
+				"id": "deleteAfter",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Delete after",
+					"tooltip": "Удалить исходный файл после успешного прохождения всего графа (постинг + downstream).",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"sourceProperty": "searchType"
+		},
+		"isValid": true
+	}
+}

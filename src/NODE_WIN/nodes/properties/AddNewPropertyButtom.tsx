@@ -87,8 +87,15 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 				}) as Property[];
 				return { ...node, data: { ...nodeData, properties: updatedProperties } };
 			});
+			// Пересчитать computedOutput этой ноды и протолкнуть новый тип вниз по цепочке.
+			// Без этого смена типа в выпадашке меняла только controlProps.value, а
+			// исходящий коннектор (и downstream-ноды) оставались со старым/пустым типом.
+			// ВАЖНО: через setTimeout(0), как handleAdd ниже. Синхронный вызов читает
+			// узел из стора ДО того как updateNode выше «осел», ловит старое value и
+			// откатывает выпадашку назад (баг «что ни выбери — всегда старый тип»).
+			setTimeout(() => handleNodePropertyChange(nodeId), 0);
 		},
-		[nodeId, property.id, reactFlow],
+		[nodeId, property.id, reactFlow, handleNodePropertyChange],
 	);
 
 	// ── Фабрика новых свойств ─────────────────────────────────────────────────

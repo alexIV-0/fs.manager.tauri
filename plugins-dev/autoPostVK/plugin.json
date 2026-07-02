@@ -1,13 +1,13 @@
 {
 	"id": "autoPostVK",
-	"name": "VK aPosting Video",
+	"name": "VK Post Video",
 	"version": "0.1",
 	"apiVersion": 1,
 	"type": [
 		"nodeui",
 		"processing"
 	],
-	"description": "Автопостинг видео в VK (Clips / Both / Video) по таймеру: интервал, дни недели, окно времени суток. App-timer — за слот постится один файл.",
+	"description": "Нода Poster: публикует один входной файл в VK (вход — видео, обычно от ноды Find; описание можно подать связью; куда — Profile/сообщество; выход — запощенный файл). Темп/папку/расписание задаёт нода Find + процесс постинга. Ресурс-пул online.",
 	"main": "autoPostVK.js",
 	"ui": "ui.json",
 	"external": [],

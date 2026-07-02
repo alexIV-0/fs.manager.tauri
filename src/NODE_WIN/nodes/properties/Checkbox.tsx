@@ -78,7 +78,7 @@ export default function CheckboxPropertyComponent({ property, onChange }: Checkb
 
 			<Checkbox sx={{ ml: isDynamic ? 0 : 'auto' }} onChange={handleChange} checked={checked} />
 
-			<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} />
+			<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 		</Stack>
 	);
 }

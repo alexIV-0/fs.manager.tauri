@@ -339,6 +339,19 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 				/>
 			</Section>
 
+			{/* ============ ПОСТИНГ ============ */}
+			<Section title='Постинг'>
+				<MySettingRow
+					label='Интервал обхода папок (постинг)'
+					tooltip='Как часто отдельный процесс автопостинга обходит папки в поисках материала. Это НЕ интервал самой публикации (тот задаётся в ноде постинга на каждую папку). Допустимо дробное (0.5 = 30 сек).'
+					type='number'
+					value={settings.posting?.scanWaitMin ?? 0.5}
+					onChange={(v) => patch({ posting: { scanWaitMin: v } })}
+					unit='мин'
+					min={0}
+				/>
+			</Section>
+
 			{/* ============ РЕСУРСНЫЕ ПУЛЫ ============ */}
 			<Section title='Ресурсные пулы'>
 				<Typography sx={{ color: greyColor(55), fontSize: '0.82rem', mb: 1 }}>

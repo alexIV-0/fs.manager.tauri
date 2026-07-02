@@ -264,7 +264,7 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 		<Stack direction='column' px='12px' className='nodrag' gap={0.5}>
 			<Stack direction='row' alignItems='center' position='relative' gap={1}>
 				<PropertyLabelEditor label={controlProps?.label ?? ''} editLabel={editLabel} onSave={handleSaveLabel} />
-				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} />
+				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 			</Stack>
 
 			<Stack direction='row' alignItems='center' gap={1}>

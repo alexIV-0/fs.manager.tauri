@@ -5,18 +5,18 @@
 		"y": 0
 	},
 	"width": 400,
-	"height": 780,
+	"height": 560,
 	"data": {
-		"label": "VK aPosting Video",
+		"label": "VK Post Video",
 		"colorType": "posting",
-		"comment": "Автопостинг видео в VK по таймеру (App-timer).&nbsp;<div>Видео — со входа, аккаунт — из главной папки,&nbsp;</div><div>режим Clips/Both/Video. При наступлении слота постится ОДИН файл; не прошедший проверку → errors, берём следующий. Описание (необязательно) приходит по связи.</div>",
+		"comment": "Нода Poster: публикует ОДИН входной файл в VK.&nbsp;<div>Вход — видео (обычно от ноды Find). Описание — текст поста (можно подать связью string/text — связь главнее поля). Куда — Profile или сообщество. Выход — запощенный файл (дальше можно перенести нодой Copy File).</div><div>Темп/папку/расписание задаёт нода Find + процесс постинга, не эта нода.</div>",
 		"properties": [
 			{
 				"id": "inputFile",
 				"controlType": "link",
 				"controlProps": {
 					"label": "Input Video",
-					"tooltip": "Видео для публикации (из папки IN или другой папки).",
+					"tooltip": "Видео для публикации (обычно с выхода ноды Find).",
 					"value": ""
 				},
 				"isInput": true,
@@ -25,6 +25,23 @@
 				],
 				"required": true,
 				"outputType": "accepted"
+			},
+			{
+				"id": "description",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Description",
+					"tooltip": "Текст поста (хештеги/упоминания). Можно напечатать здесь ИЛИ подать связью (string/text) — если связь подключена, она главнее напечатанного. Пусто = без описания.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "string"
 			},
 			{
 				"id": "account",
@@ -59,99 +76,6 @@
 					"value": "Profile"
 				},
 				"required": true,
-				"outputType": "string"
-			},
-			{
-				"id": "description",
-				"controlType": "link",
-				"controlProps": {
-					"label": "Description",
-					"tooltip": "Необязательно. Текст поста (хештеги/упоминания) приходит по связи. Пусто = без описания.",
-					"value": ""
-				},
-				"isInput": true,
-				"acceptedTypes": [
-					"text",
-					"string"
-				],
-				"required": false,
-				"outputType": "accepted"
-			},
-			{
-				"id": "interval",
-				"controlType": "timecode",
-				"controlProps": {
-					"label": "Interval",
-					"tooltip": "Шаг между постами. Можно ввести число (90 = 00:01:30) или HH:MM:SS.",
-					"value": 60
-				},
-				"isInput": false,
-				"acceptedTypes": [
-					"timecode"
-				],
-				"required": false,
-				"outputType": "string"
-			},
-			{
-				"id": "daysOfWeek",
-				"controlType": "autocomplete",
-				"controlProps": {
-					"label": "Days of week",
-					"tooltip": "Дни, по которым постим. Пусто = все дни.",
-					"options": [
-						"Mon",
-						"Tue",
-						"Wed",
-						"Thu",
-						"Fri",
-						"Sat",
-						"Sun"
-					],
-					"multiSelect": true,
-					"optionsOnly": true,
-					"allowDuplicates": false,
-					"value": [
-						"Mon",
-						"Tue",
-						"Wed",
-						"Thu",
-						"Fri",
-						"Sat",
-						"Sun"
-					]
-				},
-				"required": true,
-				"outputType": "string"
-			},
-			{
-				"id": "window",
-				"controlType": "valueRange",
-				"controlProps": {
-					"label": "Time window",
-					"tooltip": "Окно времени суток для постинга. 00:00–24:00 = весь день.",
-					"value": [
-						0,
-						1440
-					]
-				},
-				"required": false,
-				"outputType": "string"
-			},
-			{
-				"id": "order",
-				"controlType": "ddm",
-				"controlProps": {
-					"label": "Order",
-					"tooltip": "Порядок выбора файлов из очереди.",
-					"options": [
-						"by Time",
-						"by Name",
-						"Random"
-					],
-					"freeInput": false,
-					"value": "by Time"
-				},
-				"required": false,
 				"outputType": "string"
 			}
 		],

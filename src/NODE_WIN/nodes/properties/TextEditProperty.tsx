@@ -288,7 +288,7 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 				<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
 					{property.isInput && <InputHandle property={property} />}
 					<PropertyLabelEditor label={controlProps?.label ?? ''} editLabel={editLabel} onSave={handleSaveLabel} />
-					<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} />
+					<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 				</div>
 				<div
 					onClick={isConnected ? undefined : handleOpen}

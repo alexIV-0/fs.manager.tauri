@@ -107,6 +107,22 @@ export function useResolveOptions(propertyId?: string) {
 						case 'folders': {
 							if (!path) return [];
 
+							// Чип-навигация (multiSelect, напр. Finder): если уже выбраны папки-чипы —
+							// углубляемся в них и показываем ПОДпапки выбранной (drill-down). '..' поднимает.
+							const chips = (currentChips ?? []).filter((c) => c && c !== '../');
+							if (chips.length > 0) {
+								let dir = path;
+								for (const c of chips) dir = c === '..' ? resolveRelativePath(dir, '..') : joinPath(dir, c);
+								let sub: string[] = [];
+								try {
+									const r = unwrap(await commands.getSomeFromFolder(dir, [{ type: 'folders', ext: [] }])) as any;
+									sub = Array.isArray(r) ? r : (r?.folders ?? []);
+								} catch (e) {
+									console.warn('[#folders] chip-навигация, не удалось прочитать:', dir, e);
+								}
+								return ['../', ...sub];
+							}
+
 							// VSCode-подобная навигация: директорию берём из уже введённого текста
 							// (всё до последнего '/'), относительно папки проекта ($projectPathGD).
 							// '../' поднимает на уровень выше, '../../' — на два и т.д.
@@ -200,6 +216,23 @@ export function useResolveOptions(propertyId?: string) {
 									.filter((n: any): n is string => typeof n === 'string' && n.length > 0);
 							} catch (e) {
 								console.warn('[#vkAccounts] не удалось получить список аккаунтов:', e);
+								return [];
+							}
+						}
+
+						case 'youtubeAccounts': {
+							if (!path) return [];
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							try {
+								const res = unwrap(await commands.accountList(mainFolderName, 'youtube')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								return arr
+									.map((a: any) => a?.name)
+									.filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+							} catch (e) {
+								console.warn('[#youtubeAccounts] не удалось получить список каналов:', e);
 								return [];
 							}
 						}

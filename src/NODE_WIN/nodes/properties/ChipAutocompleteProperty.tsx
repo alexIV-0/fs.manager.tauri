@@ -9,7 +9,7 @@ import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import InputHandle from '../components/InputHandle';
 import ChipAutocompleteContainer from './ChipAutocompleteContainer';
 import ControlledChip from './ControlledChip';
-import MyToolTip from './CustomTooltip';
+import TooltipOrDelete from './TooltipOrDelete';
 
 const WORD_SPLIT_REGEX = /[\s\[\]\{\}\(\)"'`.,\-_/\\:;!?]+/;
 const EMPTY_ARRAY: string[] = [];
@@ -285,7 +285,13 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 		}
 
 		setDropdownType('chip');
-		filterOptions(value, cursor);
+		// Дропдаун у редактируемого чипа показываем только когда введён хотя бы один символ.
+		// На пустом значении список не открываем (в отличие от инпута по пустому месту).
+		if (value.trim()) {
+			filterOptions(value, cursor);
+		} else {
+			setShowDropdown(false);
+		}
 	};
 
 	/** Универсальная обработка клавиш */
@@ -384,11 +390,9 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 		setEditingChipIndex(index);
 		setEditingChipValue(chips[index]);
 		setDropdownType('chip');
-		setTimeout(() => {
-			const chipInput = editingChipRef.current?.querySelector('input');
-			const cursor = chipInput?.selectionStart ?? chips[index].length;
-			filterOptions(chips[index], cursor);
-		}, 0);
+		// Только входим в режим редактирования. Дропдаун появится лишь после того,
+		// как пользователь начнёт вводить (см. handleEditingChipChange).
+		setShowDropdown(false);
 	};
 
 	const handleChipBlur = () => {
@@ -430,13 +434,18 @@ function ChipAutocompleteProperty(props: ChipAutocompletePropertyProps) {
 				<Typography variant='subtitle2' noWrap>
 					{props.property?.controlProps?.label}
 				</Typography>
-				<MyToolTip tooltip={props.property?.controlProps?.tooltip || ''} ml='auto' />
+				<TooltipOrDelete isDynamic={false} tooltip={props.property?.controlProps?.tooltip || ''} onDelete={() => {}} property={props.property} />
 			</Stack>
 
 			<ChipAutocompleteContainer
 				boxRef={boxRef}
 				onClickAway={handleClickAway}
-				onClick={() => editingChipIndex === null && inputRef.current?.focus()}
+				onClick={(e) => {
+					// Реагируем только на клик по пустому месту контейнера, а не по чипам/инпуту.
+					// e.target === e.currentTarget => кликнули сам Box, а не его потомок (чип).
+					if (e.target !== e.currentTarget) return;
+					if (editingChipIndex === null) inputRef.current?.focus();
+				}}
 				isFocused={showDropdown}
 			>
 				{inheritedChips.map((c, i) => (

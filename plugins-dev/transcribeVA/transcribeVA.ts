@@ -148,6 +148,8 @@ function buildTranscribeArgs(
 	dtwPreset: string | null,
 	vadModel: string | null,
 	vadThreshold: number,
+	crossContext: boolean,
+	initialPrompt: string,
 ): string[] {
 	const args = [
 		'-m', modelPath,
@@ -163,13 +165,25 @@ function buildTranscribeArgs(
 		// финальный формат (srt/vtt/json/txt) собираем сами из слов. SRT-вывод
 		// самого whisper'а DTW игнорирует — берёт грубые «родные» таймкоды сегментов.
 		// max-len 1 + split-on-word — по одному слову на сегмент.
-		// max-context 0 — окна декодятся независимо, таймкоды не «дрейфуют» на длинных файлах.
 		'--output-json-full',
 		'--max-len', '1',
 		'--split-on-word',
-		'--max-context', '0',
+		// max-context: 0 — окна декодятся независимо, таймкоды не «дрейфуют» на длинных
+		// файлах, НО whisper теряет связь между окнами → хуже капитализация и точки на
+		// стыках предложений. crossContext=true переносит до 224 токенов прошлого текста
+		// в следующее окно: пунктуация/регистр становятся связнее (реже теряются точки в
+		// конце предложения) ценой риска дрейфа таймкодов и редких повторов на длинных
+		// файлах. Дефолт — выкл (0), как было.
+		'--max-context', crossContext ? '224' : '0',
 		'--output-file', outputFile,
 	];
+	// Initial prompt — биасит whisper к нужному стилю пунктуации/орфографии и доменным
+	// терминам. Язык промпта должен совпадать с языком записи (язык auto-определяется),
+	// иначе может навредить → поле опциональное, заполняется под конкретную задачу.
+	const prompt = (initialPrompt ?? '').trim();
+	if (prompt) {
+		args.push('--prompt', prompt);
+	}
 	// Token-level тайминги через DTW: whisper выравнивает токены по аудио через
 	// cross-attention веса, а не интерполирует таймкоды сегмента. Главный рычаг
 	// точности. Пресет берётся под конкретную модель.
@@ -293,6 +307,30 @@ function buildJson(lines: SubLine[]): string {
 	return JSON.stringify(lines.map(l => ({ from: l.from, to: l.to, text: l.text })), null, 2);
 }
 
+// Проза (формат "txt"): объединяем слова в предложения по знакам конца, БЕЗ субтитровых
+// лимитов длины/длительности — текст не дробится по 84 символам/6 сек, а следует
+// пунктуации whisper'а. Если предложение долго не заканчивается (точки нет), длинную
+// паузу используем как запасной разрыв строки. Одно предложение/реплика — одна строка.
+const PROSE_PARA_GAP_MS = 1500;
+function buildProse(words: WhisperWord[]): string {
+	const lines: string[] = [];
+	let cur: WhisperWord[] = [];
+	const flush = () => {
+		if (!cur.length) return;
+		const text = cur.map(w => w.text).join(' ').replace(/\s+([,.!?…:;])/g, '$1').trim();
+		if (text) lines.push(text);
+		cur = [];
+	};
+	for (let i = 0; i < words.length; i++) {
+		const w = words[i];
+		cur.push(w);
+		const next = words[i + 1];
+		const gapToNext = next ? next.from - w.to : Infinity;
+		if (!next || SENTENCE_END.test(w.text) || gapToNext > PROSE_PARA_GAP_MS) flush();
+	}
+	return lines.join('\n') + '\n';
+}
+
 // ── Основная функция плагина ───────────────────────────────────────────────────
 
 export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: any): Promise<string[]> {
@@ -327,6 +365,11 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 	if (useVad && !vadModel) {
 		sendToMW('log', { level: 'warn', text: `[whisper] VAD on, but no Silero model found in whisper/vad/ — running without VAD` });
 	}
+
+	// Перенос контекста между окнами (точность пунктуации/регистра ↔ стабильность таймкодов).
+	const crossContext = Boolean(_item.crossContext);
+	// Опциональная начальная подсказка (initial prompt) для whisper.
+	const initialPrompt = typeof _item.promptHint === 'string' ? _item.promptHint : '';
 
 	const modelsFolder = _description?.folderPath?.whisper?.[0];
 	if (!modelsFolder) {
@@ -440,8 +483,8 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 			// `${fileBaseName} (whisper)` в папке назначения (как было раньше).
 			const outputBase = path.join(workDir, 'out');
 			const finalNameBase = path.join(fileDir, `${fileBaseName} (whisper)`);
-			const transcribeArgs = buildTranscribeArgs(modelPath, pcmFile, 'auto', outputBase, threads, dtwPreset, vadModel, vadThreshold);
-			sendToMW('log', { text: `[whisper] transcribing, model: ${modelFile}, lang: auto, VAD: ${vadModel ? `on (thold ${vadThreshold})` : 'off'}` });
+			const transcribeArgs = buildTranscribeArgs(modelPath, pcmFile, 'auto', outputBase, threads, dtwPreset, vadModel, vadThreshold, crossContext, initialPrompt);
+			sendToMW('log', { text: `[whisper] transcribing, model: ${modelFile}, lang: auto, VAD: ${vadModel ? `on (thold ${vadThreshold})` : 'off'}, cross-context: ${crossContext ? 'on' : 'off'}${initialPrompt.trim() ? ', prompt: on' : ''}` });
 
 			const transcribeResult = await exec(bin, transcribeArgs, { nodeId });
 			if (transcribeResult.exit_code !== 0) {
@@ -470,7 +513,7 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 					const content =
 						outputFormat === 'vtt'  ? buildVtt(lines) :
 						outputFormat === 'json' ? buildJson(lines) :
-						outputFormat === 'txt'  ? lines.map(l => l.text).join('\n') + '\n' :
+						outputFormat === 'txt'  ? buildProse(words) :
 						buildSrt(lines);
 					await fs.write(finalPath, content);
 					sendToMW('log', { text: `[whisper] built ${outputFormat}: ${lines.length} lines from ${words.length} words` });

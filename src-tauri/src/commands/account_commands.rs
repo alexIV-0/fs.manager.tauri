@@ -39,7 +39,7 @@ fn sanitize_component(raw: &str) -> Result<String, String> {
 }
 
 /// Путь к `<platform>.json` для конкретной главной папки (каталог создаётся).
-fn platform_file(
+pub(crate) fn platform_file(
     app: &tauri::AppHandle,
     main_folder_name: &str,
     platform: &str,
@@ -58,7 +58,7 @@ fn platform_file(
 
 /// Читает массив аккаунтов из файла платформы (битый/отсутствующий → пустой).
 /// В выдачу попадают только объекты.
-fn read_accounts(path: &PathBuf) -> Vec<Value> {
+pub(crate) fn read_accounts(path: &PathBuf) -> Vec<Value> {
     match fs::read_to_string(path) {
         Ok(content) => match serde_json::from_str::<Value>(&content) {
             Ok(Value::Array(arr)) => arr.into_iter().filter(|v| v.is_object()).collect(),
@@ -68,7 +68,7 @@ fn read_accounts(path: &PathBuf) -> Vec<Value> {
     }
 }
 
-fn write_accounts(path: &PathBuf, accounts: &[Value]) -> Result<(), String> {
+pub(crate) fn write_accounts(path: &PathBuf, accounts: &[Value]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(&Value::Array(accounts.to_vec()))
         .map_err(|e| format!("to_string_pretty: {}", e))?;
     fs::write(path, content).map_err(|e| format!("write {}: {}", path.display(), e))

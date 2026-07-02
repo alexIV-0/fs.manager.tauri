@@ -78,7 +78,36 @@ export interface PropertyBase<CT extends string, CP> {
 	outputMarker?: string;
 	required?: boolean;
 	output?: OutputConfig;
+	/**
+	 * Пометка «показать этот параметр на сайте».
+	 * Сериализуется в options.json как есть (через reactFlow.toObject()).
+	 * Будущий сайт читает options.json и рендерит свойства с exposedToSite===true
+	 * теми же property-компонентами в виде стека настроек для пользователя.
+	 */
+	exposedToSite?: boolean;
 }
+
+/**
+ * controlType'ы «простых» контролов, которым в редакторе доступна галочка
+ * «показать на сайте» (рядом с tooltip/корзиной). Этот же набор переиспользует
+ * сайт, чтобы понять, какие свойства он умеет отрисовать.
+ */
+export const EXPOSABLE_CONTROL_TYPES: ReadonlySet<string> = new Set([
+	'checkbox',
+	'slider',
+	'timecode',
+	'ddm',
+	'autocomplete',
+	'textedit',
+	'valueRange',
+]);
+
+/**
+ * controlType'ы, у которых рядом с tooltip показывается шестерёнка «дефолтные
+ * настройки» — per-flow override настроек уровня pluginBuilder (имя/label не меняется).
+ * Пока только valueRange.
+ */
+export const GEAR_CONTROL_TYPES: ReadonlySet<string> = new Set(['valueRange']);
 
 export interface CheckboxPropertyControlProps extends CheckboxProps {
 	label?: string;

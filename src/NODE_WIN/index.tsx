@@ -13,7 +13,6 @@ import NodeView from './layout/FlowNodeView';
 import './index.css';
 import { loadAllUINodes, type CollectedUINode } from '@/Utils/loadAllUINodes';
 import { buildNodeDefinitions } from './definitions';
-import { joinPath } from '@/Utils/joinPath';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 
 import SaveButton from './layout/SaveButton';
@@ -118,10 +117,10 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 		setSavedState(null);
 
 		const init = async () => {
-			// Раньше: 3 sequential IPC по одной папке. Теперь: один батч-вызов,
-			// внутри nativeFs создаёт все три параллельно через tokio thread pool.
-			const folders = ['IN', 'options', 'OUT'].map((f) => joinPath(path, f));
-			unwrap(await commands.testAndCreateFolders(folders));
+			// Папки IN/OUT/options здесь БОЛЬШЕ НЕ создаём: незачем засорять диск у пустого,
+			// нетронутого проекта. options появится при первом сохранении (внутри
+			// save_flow_to_options_folder), IN/OUT — через ensureProjectFolders по составу
+			// флоу. Здесь только читаем options.json (если его нет — вернётся {}).
 			const newState = unwrap(await commands.getNodeObjFromFile(path));
 			if (cancelled) return;
 			setSavedState(newState as unknown as SavedState);

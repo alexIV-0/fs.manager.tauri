@@ -734,6 +734,20 @@ async writeFile(filePath: string, content: string) : Promise<Result<JsonValue, s
 }
 },
 /**
+ * Дописывает строку в конец файла настоящим append'ом (O_APPEND), не перезаписывая файл.
+ * Для append-only логов вроде _post/$MM.$YYYY.jsonl: краш посреди записи в худшем случае
+ * оставит оборванную последнюю строку (парсер её пропустит), а не потеряет весь файл.
+ * Создаёт файл и родительские директории при необходимости.
+ */
+async appendFile(filePath: string, content: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("append_file", { filePath, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Записывает бинарный файл из base64-строки.
  * Используется плагинами для сохранения скачанных через fetch результатов
  * (видео, аудио, изображения). Создаёт родительские директории при необходимости.
@@ -1062,6 +1076,57 @@ async vkValidateToken(token: string) : Promise<Result<JsonValue, string>> {
 async vkGroupsGet(token: string) : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("vk_groups_get", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Запустить OAuth-флоу для одного канала: открыть системный браузер на экране согласия
+ * Google, поймать редирект на loopback, обменять code на токены. Возвращает
+ * `{ refreshToken, accessToken, accessTokenExpiry, scope }`. TS сохраняет это как аккаунт.
+ */
+async youtubeAuthStart(clientId: string, clientSecret: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_auth_start", { clientId, clientSecret }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Обновить access_token по refresh_token (перед постингом). Возвращает
+ * `{ accessToken, accessTokenExpiry }`. refresh_token долгоживущий (Production).
+ */
+async youtubeRefreshToken(clientId: string, clientSecret: string, refreshToken: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_refresh_token", { clientId, clientSecret, refreshToken }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Свежий access_token для YouTube-аккаунта (для постинга). Читает запись из
+ * accounts/<mainFolder>/youtube.json: если accessToken ещё жив (>60с запаса) — отдаёт его,
+ * иначе обновляет по refresh_token (clientId/secret из записи), persist'ит новый
+ * accessToken+expiry и возвращает. Секреты не покидают Rust. Зеркало account_get_token, но
+ * с учётом протухания (у VK токен долгоживущий, там refresh не нужен).
+ */
+async youtubeGetAccessToken(mainFolderName: string, name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_get_access_token", { mainFolderName, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Загрузить видео на канал (resumable). Возвращает `{ videoId, url }`.
+ */
+async youtubeUploadVideo(accessToken: string, filePath: string, meta: YtVideoMeta) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_upload_video", { accessToken, filePath, meta }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1405,6 +1470,10 @@ export type SelectFoldersOptions = { multiSelect?: boolean }
 export type StatInfo = { size: number; mtimeMs: number; atimeMs: number; ctimeMs: number; birthtimeMs: number; isFile: boolean; isDir: boolean; isSymlink: boolean }
 export type WhisperModel = { name: string; filename: string; sizeBytes: number; sizeLabel: string; downloaded: boolean; recommended: boolean }
 export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
+/**
+ * Метаданные видео из ноды. camelCase — как в TS-биндингах.
+ */
+export type YtVideoMeta = { title: string; description: string | null; tags: string[] | null; categoryId: string | null; privacyStatus: string | null; madeForKids: boolean | null }
 
 /** tauri-specta globals **/
 

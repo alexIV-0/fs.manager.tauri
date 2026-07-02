@@ -73,15 +73,11 @@ export function postedFileSet(records: PostRecord[]): Set<string> {
 	return new Set(records.filter((r) => r.status === 'published').map((r) => r.file));
 }
 
-/** Дописать запись в файл текущего месяца (read-modify-write — объём мал). */
+/** Дописать запись в файл текущего месяца настоящим append'ом (O_APPEND).
+ *  Файл не перезаписывается: краш посреди записи оставит максимум оборванную последнюю
+ *  строку (парсер её пропустит), а не потеряет весь месячный файл. append_file на
+ *  Rust-стороне сам создаёт файл и родительские папки. */
 export async function appendRecord(projectPathGD: string, rec: PostRecord): Promise<void> {
-	const dir = postDir(projectPathGD);
-	await fs.mkdir(dir);
 	const file = monthFile(projectPathGD);
-	let existing = '';
-	if (await fs.existsFile(file)) {
-		existing = await fs.read(file);
-		if (existing && !existing.endsWith('\n')) existing += '\n';
-	}
-	await fs.write(file, existing + JSON.stringify(rec) + '\n');
+	await fs.append(file, JSON.stringify(rec) + '\n');
 }

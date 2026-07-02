@@ -22,6 +22,8 @@ use commands::{
     preview_commands::*,
     account_commands::*,
     vk_auth_commands::*,
+    youtube_auth_commands::*,
+    youtube_upload_commands::*,
     tg_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
@@ -138,6 +140,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             read_file_sync,
             read_media_preview,
             write_file,
+            append_file,
             write_binary_file,
             check_file_path,
             check_folder_path,
@@ -173,6 +176,11 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vk_auth_open,
             vk_validate_token,
             vk_groups_get,
+            // YouTube OAuth (Модель B / BYO credentials): PKCE-флоу + refresh + upload
+            youtube_auth_start,
+            youtube_refresh_token,
+            youtube_get_access_token,
+            youtube_upload_video,
             // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
             tg_validate_token,
             tg_get_chat,
@@ -425,6 +433,7 @@ pub fn run() {
             read_file_sync,
             read_media_preview,
             write_file,
+            append_file,
             write_binary_file,
             check_file_path,
             check_folder_path,
@@ -596,6 +605,10 @@ pub fn run() {
             vk_auth_capture,
             vk_validate_token,
             vk_groups_get,
+            youtube_auth_start,
+            youtube_refresh_token,
+            youtube_get_access_token,
+            youtube_upload_video,
             // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
             tg_validate_token,
             tg_get_chat,

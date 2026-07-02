@@ -15,6 +15,13 @@ export interface ScanScheduleSettings {
 	foldersDelayMs: number;
 }
 
+// Расписание ОТДЕЛЬНОГО процесса автопостинга (своя кнопка/часы, независим от обработки).
+// scanWaitMin — как часто драйвер постинга обходит папки в поисках материала (НЕ интервал
+// самого поста; тот задаётся пер-нодой/пер-папкой). По принципу scanSchedule обработки.
+export interface PostingSettings {
+	scanWaitMin: number;
+}
+
 export interface LocalArchiveEntry {
 	enabled: boolean;
 	// Сегменты пути: литеральные папки + $-маски, например
@@ -62,6 +69,8 @@ export interface AppSettings {
 	version: number;
 	processing: ProcessingSettings;
 	scanSchedule: ScanScheduleSettings;
+	// Может отсутствовать в старых сохранённых настройках — читать как `posting?.scanWaitMin ?? <деф>`.
+	posting?: PostingSettings;
 	resourcePools: Record<string, number>;
 	storage: StorageSettings;
 	cleanup: CleanupSettings;
@@ -154,6 +163,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 		minScanWaitMin: 3,
 		maxScanWaitMin: 15,
 		foldersDelayMs: 200,
+	},
+	posting: {
+		scanWaitMin: 0.5, // 30 c — как часто драйвер постинга обходит папки за материалом
 	},
 	resourcePools: {},
 	storage: {

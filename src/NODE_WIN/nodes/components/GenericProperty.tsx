@@ -14,6 +14,7 @@ import TextEditPropertyComponent from '../properties/TextEditProperty';
 import AddNewPropertyButtom from '../properties/AddNewPropertyButtom';
 import SimpleDDMProperty from '../properties/SimpleDDM';
 import VkAccountDDM from '../properties/VkAccountDDM';
+import YoutubeAccountDDM from '../properties/YoutubeAccountDDM';
 import TgAccountDDM from '../properties/TgAccountDDM';
 import TgChannelsProperty from '../properties/TgChannelsProperty';
 import TgSourceProperty from '../properties/TgSourceProperty';
@@ -49,6 +50,8 @@ function GenericProperty({ property }: { property: Property }) {
 			case 'ddm':
 				if (property.controlProps.options?.includes('#vkAccounts'))
 					return <VkAccountDDM property={property} onChange={handleChange} />;
+				if (property.controlProps.options?.includes('#youtubeAccounts'))
+					return <YoutubeAccountDDM property={property} onChange={handleChange} />;
 				if (property.controlProps.options?.includes('#tgAccounts'))
 					return <TgAccountDDM property={property} onChange={handleChange} />;
 				if (property.controlProps.options?.includes('#tgSources'))

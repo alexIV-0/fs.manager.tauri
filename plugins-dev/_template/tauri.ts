@@ -85,6 +85,12 @@ export const fs = {
 		return api().invoke('write_file', { filePath: p, content });
 	},
 
+	/** Настоящий append (O_APPEND): дописывает в конец, не перезаписывая файл. Создаёт файл и
+	 * родительские папки при необходимости. Для append-only логов (jsonl) — краш-безопасно. */
+	append(p: string, content: string): Promise<any> {
+		return api().invoke('append_file', { filePath: p, content });
+	},
+
 	copy(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
 		return api().invoke('copy_item', { sourcePath: src, destinationPath: dst, options: opts });
 	},
