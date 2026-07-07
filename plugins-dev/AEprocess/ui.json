@@ -79,6 +79,16 @@
 				],
 				"required": false,
 				"outputType": "string"
+			},
+			{
+				"id": "killPreviousAE",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Kill previous AE before run",
+					"tooltip": "AE не выполняет '-r', если уже открыт с прошлого айтема — поэтому по умолчанию мы убиваем предыдущий AfterFX.exe перед каждым запуском, чтобы гарантировать холодный старт. Выключи, если хочешь оставить AE открытым вручную (например, для отладки скрипта).",
+					"value": true
+				},
+				"outputType": "boolean"
 			}
 		],
 		"output": {

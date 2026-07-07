@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tauri::Emitter;
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -120,8 +120,8 @@ pub async fn youtube_auth_start(
     let auth_url = u.to_string();
 
     // Открыть в СИСТЕМНОМ браузере (не webview!).
-    app.shell()
-        .open(auth_url, None)
+    app.opener()
+        .open_url(auth_url, None::<String>)
         .map_err(|e| format!("открыть браузер: {}", e))?;
 
     // Ждём редирект (в цикле — игнорируем сторонние запросы вроде favicon).
