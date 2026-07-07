@@ -1,0 +1,13 @@
+{
+	"id": "jsCode",
+	"name": "JS Code",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": ["nodeui", "processing"],
+	"description": "Исполняет произвольный простой JS. Входы добавляются через «+» и доступны в коде по имени. Кнопка ▶ Run прогоняет код прямо в ноде.",
+	"main": "jsCode.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}

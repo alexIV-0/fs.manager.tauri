@@ -11,6 +11,10 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { NodeName } from './NodeName';
 import NodeCost from './NodeCost';
 
+// Нода переключаема, если не unique (или явно disablable) — та же логика,
+// что и для показа кнопки Power в шапке.
+const isToggleable = (n: { data: any }) => !n.data.isUnique || n.data.disablable;
+
 function NodeHeader() {
 	const nodeId = useNodeContext();
 	const node = useNodesData(nodeId) as any;
@@ -21,7 +25,7 @@ function NodeHeader() {
 
 	const textColor = complimentColor(backgroundColor);
 
-	const { deleteElements, updateNode } = useReactFlow();
+	const { deleteElements, getNodes, setNodes, setEdges } = useReactFlow();
 	const { handleNodePropertyChange } = useCascadeValidation();
 
 	const handleRemove = useCallback(() => {
@@ -30,26 +34,41 @@ function NodeHeader() {
 
 	const isDisabled = !!node.data.disabled;
 
-	const { setEdges } = useReactFlow();
-
 	const handleToggleDisabled = useCallback(
 		(e: React.MouseEvent) => {
 			// stopPropagation чтобы клик не доходил до react-flow и не селектил ноду
 			e.stopPropagation();
 			const newDisabled = !isDisabled;
-			updateNode(nodeId, (n) => ({
-				...n,
-				data: newDisabled
-					? { ...n.data, disabled: true, isValid: false, computedOutput: null }
-					: { ...n.data, disabled: false },
-			}));
 
-			// Флипаем active на всех edges, связанных с этой нодой.
+			// Если кликнутая нода входит в мультивыделение — применяем одно и то же
+			// целевое состояние (задаётся кликнутой нодой) ко ВСЕМ выделенным
+			// переключаемым нодам, даже если они уже в этом состоянии. Иначе —
+			// действуем только на кликнутую.
+			const selectedToggleable = getNodes().filter((n) => n.selected && isToggleable(n));
+			const clickedIsSelected = selectedToggleable.some((n) => n.id === nodeId);
+			const targetIds =
+				clickedIsSelected && selectedToggleable.length > 1 ? selectedToggleable.map((n) => n.id) : [nodeId];
+			const targetSet = new Set(targetIds);
+
+			setNodes((nodes) =>
+				nodes.map((n) =>
+					targetSet.has(n.id)
+						? {
+								...n,
+								data: newDisabled
+									? { ...n.data, disabled: true, isValid: false, computedOutput: null }
+									: { ...n.data, disabled: false },
+							}
+						: n,
+				),
+			);
+
+			// Флипаем active на всех edges, связанных с target-нодами.
 			setEdges((edges) => {
 				if (newDisabled) {
-					// Disable: все edges ноды → inactive.
+					// Disable: все edges target-нод → inactive.
 					return edges.map((edge) =>
-						edge.source === nodeId || edge.target === nodeId
+						targetSet.has(edge.source) || targetSet.has(edge.target)
 							? { ...edge, data: { ...(edge.data as any), active: false } }
 							: edge,
 					);
@@ -59,14 +78,14 @@ function NodeHeader() {
 				// Это conservative conflict avoidance; явный resolver — этап 4.
 				const occupiedSlots = new Set<string>();
 				for (const edge of edges) {
-					const isOurs = edge.source === nodeId || edge.target === nodeId;
+					const isOurs = targetSet.has(edge.source) || targetSet.has(edge.target);
 					const active = (edge.data as any)?.active !== false;
 					if (!isOurs && active) {
 						occupiedSlots.add(`${edge.target}::${edge.targetHandle ?? ''}`);
 					}
 				}
 				return edges.map((edge) => {
-					const isOurs = edge.source === nodeId || edge.target === nodeId;
+					const isOurs = targetSet.has(edge.source) || targetSet.has(edge.target);
 					if (!isOurs) return edge;
 					const slot = `${edge.target}::${edge.targetHandle ?? ''}`;
 					if (occupiedSlots.has(slot)) {
@@ -80,9 +99,11 @@ function NodeHeader() {
 			// setTimeout нужен чтобы zustand закоммитил state — иначе cascade прочитает
 			// stale node и normal-path validateAndUpdateNode перезатрёт disabled:true
 			// (он спредит nodeData, захваченный в начале функции, через ...nodeData).
-			setTimeout(() => handleNodePropertyChange(nodeId), 0);
+			setTimeout(() => {
+				for (const id of targetIds) handleNodePropertyChange(id);
+			}, 0);
 		},
-		[nodeId, isDisabled, updateNode, setEdges, handleNodePropertyChange],
+		[nodeId, isDisabled, getNodes, setNodes, setEdges, handleNodePropertyChange],
 	);
 
 	useEffect(() => {

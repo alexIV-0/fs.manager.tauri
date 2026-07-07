@@ -10,6 +10,7 @@ import type { PluginJsonData, UiJsonData } from './types';
 import { DEFAULT_PLUGIN_JSON, makeDefaultUiJson, generateScriptTemplate, normalizeUiJson } from './types';
 import { joinPath } from '@/Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
+import { emit } from '@tauri-apps/api/event';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main PluginBuilderModal
@@ -210,14 +211,24 @@ export function PluginBuilderModal({ open, onClose }: PluginBuilderModalProps) {
 				stdout?: string;
 				stderr?: string;
 				error?: string;
-			}>('plugin:build', pluginJson.id);
+			}>('plugin_build', pluginJson.id);
 			if (result.success) {
+				// Пере-собранную версию сначала выгружаем: load_plugin_internal при уже
+				// загруженном ключе молча выходит и не перечитывает свежий ui.json/manifest.
+				try {
+					await window.plugins.unloadPlugin(pluginJson.id, pluginJson.version);
+				} catch {
+					/* не был загружен — нормально */
+				}
 				try {
 					await window.plugins.loadPlugin(`${pluginJson.id}@${pluginJson.version}`);
-				} catch {
-					/* ignore */
+				} catch (e: any) {
+					setStatus({ type: 'error', msg: `Собрано, но не загрузилось: ${e?.message ?? e}` });
+					return;
 				}
-				setStatus({ type: 'success', msg: `Собрано: ${pluginJson.id}@${pluginJson.version}` });
+				// Просим все окна перечитать список плагинов (палитра нод + список в настройках).
+				await emit('plugins-changed', { id: pluginJson.id, version: pluginJson.version });
+				setStatus({ type: 'success', msg: `Собрано и загружено: ${pluginJson.id}@${pluginJson.version}` });
 			} else {
 				setStatus({ type: 'error', msg: result.error ?? result.stderr ?? 'Build failed' });
 			}

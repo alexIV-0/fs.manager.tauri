@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { X, Maximize2, Minimize2, BookmarkPlus, FolderOpen } from 'lucide-react';
+import { X, Maximize2, Minimize2, BookmarkPlus, FolderOpen, Play, Loader2 } from 'lucide-react';
 import { TextEditModalProps, ResizeDirection } from './types';
 import { LANGUAGES, PRESETS } from './constants';
 import { ResizeHandle } from './ResizeHandle';
@@ -24,11 +24,18 @@ function TextEditModal({
 	bgHeader,
 	borderColor,
 	defColor,
+	runnable,
+	running,
+	runResult,
+	onRun,
+	onClearRun,
 }: TextEditModalProps) {
+	const grey12 = greyColor(12);
 	const grey20 = greyColor(20);
 	const grey28 = greyColor(28);
 	const grey35 = greyColor(35);
 	const grey45 = greyColor(45);
+	const grey55 = greyColor(55);
 	const grey60 = greyColor(60);
 	const grey65 = greyColor(65);
 
@@ -73,6 +80,7 @@ function TextEditModal({
 
 	return (
 		<>
+			<style>{`@keyframes teSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 			<div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 9998, backgroundColor: 'rgba(0,0,0,0.45)' }} />
 			<div
 				style={{
@@ -192,6 +200,26 @@ function TextEditModal({
 
 					<div style={{ flex: 1 }} />
 
+					{runnable && onRun && (
+						<div
+							onClick={running ? undefined : onRun}
+							title='Выполнить код с текущими значениями входов'
+							style={{
+								...btnBase,
+								backgroundColor: '#1f3a24',
+								border: `1px solid #2e7d32`,
+								color: '#a5d6a7',
+								padding: '3px 12px',
+								fontSize: 12,
+								cursor: running ? 'default' : 'pointer',
+								opacity: running ? 0.6 : 1,
+							}}
+						>
+							{running ? <Loader2 size={12} style={{ animation: 'teSpin 0.8s linear infinite' }} /> : <Play size={12} />}
+							<span>Run</span>
+						</div>
+					)}
+
 					<div
 						onClick={onSave}
 						style={{
@@ -210,14 +238,96 @@ function TextEditModal({
 				{/* Editor */}
 				<div
 					ref={editorRef}
-					style={{ flex: 1, overflow: 'hidden' }}
+					style={{ flex: 1, overflow: 'hidden', minHeight: 80 }}
 					onKeyDown={(e) => e.stopPropagation()}
 					onKeyUp={(e) => e.stopPropagation()}
 					onKeyPress={(e) => e.stopPropagation()}
 				/>
+
+				{/* ── Панель результата (runnable-режим) ── */}
+				{runnable && runResult && (
+					<div
+						style={{
+							flexShrink: 0,
+							height: 150,
+							display: 'flex',
+							flexDirection: 'column',
+							borderTop: `1px solid ${borderColor}`,
+							backgroundColor: grey12,
+						}}
+					>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: 8,
+								padding: '0 12px',
+								height: 26,
+								flexShrink: 0,
+								backgroundColor: bgHeader,
+								borderBottom: `1px solid ${borderColor}`,
+							}}
+						>
+							<span style={{ fontSize: 11, fontWeight: 600, color: runResult.ok ? '#a5d6a7' : '#ef9a9a' }}>
+								{runResult.ok ? '● Результат' : '● Ошибка'}
+							</span>
+							<span style={{ fontSize: 10, color: grey55 }}>{runResult.durationMs} ms</span>
+							{runResult.unavailable.length > 0 && (
+								<span style={{ fontSize: 10, color: '#e6b422' }} title='Эти входы — коннекторы; их значение придёт из пайплайна, в тесте они undefined'>
+									⚠ входы недоступны в тесте: {runResult.unavailable.join(', ')}
+								</span>
+							)}
+							<div style={{ flex: 1 }} />
+							{onClearRun && (
+								<button onClick={onClearRun} style={{ ...btnBase, padding: '2px 6px' }} title='Скрыть'>
+									<X size={12} />
+								</button>
+							)}
+						</div>
+						<div
+							style={{
+								flex: 1,
+								overflow: 'auto',
+								padding: '6px 12px',
+								fontFamily: 'monospace',
+								fontSize: 11,
+								lineHeight: 1.5,
+								whiteSpace: 'pre-wrap',
+								wordBreak: 'break-word',
+							}}
+						>
+							{runResult.logs.length > 0 && (
+								<div style={{ color: grey60, marginBottom: 6 }}>
+									{runResult.logs.map((line, i) => (
+										<div key={i}>
+											<span style={{ color: grey45, userSelect: 'none' }}>› </span>
+											{line}
+										</div>
+									))}
+								</div>
+							)}
+							{runResult.ok ? (
+								<div style={{ color: '#c8e6c9' }}>{formatResult(runResult.result)}</div>
+							) : (
+								<div style={{ color: '#ef9a9a' }}>{runResult.error}</div>
+							)}
+						</div>
+					</div>
+				)}
 			</div>
 		</>
 	);
+}
+
+// Красивый вывод результата: строку — как есть, остальное — JSON с отступами.
+function formatResult(value: unknown): string {
+	if (typeof value === 'undefined') return 'undefined  (код ничего не вернул — используй return)';
+	if (typeof value === 'string') return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
 }
 
 export default memo(TextEditModal);

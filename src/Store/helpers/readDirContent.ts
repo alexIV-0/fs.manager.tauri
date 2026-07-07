@@ -91,7 +91,7 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
 			// Rust native addon — napi-rs конвертирует snake_case → camelCase,
 			// поэтому is_dir приходит как isDir
 			result = (raw as any[])
-				.filter((f) => f.name && !HIDDEN_FILES.includes(f.name))
+				.filter((f) => f.name && !isHiddenFile(f.name))
 				.map((f) => ({ name: f.name, path: f.path, isDir: f.isDir ?? f.is_dir ?? false }));
 		} else {
 			// Rust getSomeFromFolder / Node.js fallback — возвращают { folders: string[], files: string[] }.
@@ -107,7 +107,7 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
 				path: joinPath(folderPath, name),
 				isDir: false,
 			}));
-			result = [...folders, ...files].filter((f) => f.name && !HIDDEN_FILES.includes(f.name));
+			result = [...folders, ...files].filter((f) => f.name && !isHiddenFile(f.name));
 		}
 
 		result.sort((a, b) => {
@@ -129,7 +129,13 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
  * ⚙️ CONSTANTS
  * =========================================================== */
 
-export const HIDDEN_FILES = ['.DS_Store', 'Thumbs.db'];
+// Системные/служебные файлы ОС, которые прячем из листинга.
+// Сравнение регистронезависимое (Windows любит `Desktop.ini`/`desktop.ini`).
+export const HIDDEN_FILES = ['.ds_store', 'thumbs.db', 'desktop.ini'];
+
+/** true, если имя файла — служебный файл ОС (регистронезависимо). */
+export const isHiddenFile = (name?: string): boolean =>
+	!!name && HIDDEN_FILES.includes(name.toLowerCase());
 export const COLUMN_MIN_WIDTH = 150;
 export const COLUMN_MAX_WIDTH = 600;
 export const COLUMN_DEFAULT_WIDTH = 220;

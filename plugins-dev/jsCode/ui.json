@@ -1,0 +1,59 @@
+{
+	"type": "jsCodeNode",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 380,
+	"height": 340,
+	"data": {
+		"label": "JS Code",
+		"colorType": "helpers",
+		"comment": "Произвольный простой JS-код. Добавь входы через «+», используй их по имени в коде, верни результат через return. Кнопка ▶ Run в редакторе прогоняет код прямо в ноде.",
+		"properties": [
+			{
+				"id": "code",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Code",
+					"tooltip": "Пиши обычный JS. Доступен весь стандартный JS (Array/String/Object/Math/JSON/RegExp/Date). Каждый добавленный вход виден по своему имени как переменная (и в объекте inputs). Верни результат через return.&nbsp;<div>Хелперы: helpers.sample(arr,n) / helpers.shuffle(arr) / helpers.uniq(arr) / helpers.splitList(str) / helpers.range(a,b) / helpers.chunk(arr,n) / helpers.getRandomInt(min,max). console.log(...) печатает в панель результата.</div>",
+					"value": "// Входы добавляй кнопкой «+» (текстовое поле, слайдер или коннектор Link).\n// Каждый вход доступен по имени, которое ты ему дал.\n// Верни результат ноды через return. console.log(...) печатает в панель ниже.\n//\n// Пример: поле tags = \"a, b, c, d, e\", слайдер count = 3\n//   const arr = helpers.splitList(tags);\n//   return helpers.sample(arr, count);\n\nreturn \"Hello from JS node\";",
+					"language": "javascript",
+					"runnable": true
+				},
+				"isInput": false,
+				"isOutput": false,
+				"acceptedTypes": [],
+				"outputType": "string",
+				"required": false
+			},
+			{
+				"id": "inputs",
+				"controlType": "addLink",
+				"controlProps": {
+					"label": "Inputs / Output type",
+					"tooltip": "«+» добавляет вход: Link (коннектор из другой ноды), TextEdit (текстовое поле для ввода вручную), Slider или NumberRange (числа). Имя входа = имя переменной в коде. Выпадашка справа задаёт ТИП результата ноды (что уходит дальше по пайплайну).",
+					"value": [
+						"text"
+					],
+					"allowedTypes": [
+						"Link",
+						"TextEdit",
+						"Slider",
+						"NumberRange",
+						"Checkbox",
+						"TimeRange"
+					]
+				},
+				"isInput": false,
+				"isOutput": true,
+				"outputType": "array",
+				"required": false
+			}
+		],
+		"output": {
+			"sourceProperty": "inputs"
+		},
+		"isValid": true
+	}
+}

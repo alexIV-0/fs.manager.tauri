@@ -97,3 +97,39 @@ pub async fn youtube_upload_video(
     }
     Ok(json!({ "videoId": video_id, "url": format!("https://youtu.be/{}", video_id) }))
 }
+
+/// Поставить кастомную обложку на видео (`thumbnails.set`, scope youtube.upload). Вызывается
+/// ПОСЛЕ загрузки (нужен video_id). Требование YouTube: канал должен быть подтверждён по
+/// телефону, иначе метод вернёт ошибку (обложка не поставится, но само видео уже залито).
+#[tauri::command]
+#[specta::specta]
+pub async fn youtube_set_thumbnail(
+    access_token: String,
+    video_id: String,
+    image_path: String,
+) -> Result<Value, String> {
+    let bytes = tokio::fs::read(&image_path)
+        .await
+        .map_err(|e| format!("read image {}: {}", image_path, e))?;
+    let lower = image_path.to_lowercase();
+    let content_type = if lower.ends_with(".png") { "image/png" } else { "image/jpeg" };
+
+    let url = format!(
+        "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={}",
+        video_id
+    );
+    let res = reqwest::Client::new()
+        .post(&url)
+        .bearer_auth(&access_token)
+        .header("Content-Type", content_type)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("thumbnail request: {}", e))?;
+    let st = res.status();
+    let text = res.text().await.map_err(|e| format!("read thumbnail resp: {}", e))?;
+    if !st.is_success() {
+        return Err(format!("set thumbnail {}: {}", st, text));
+    }
+    Ok(json!({ "ok": true }))
+}
