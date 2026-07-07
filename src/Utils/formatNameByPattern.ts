@@ -1,79 +1,16 @@
-import path from 'path';
 import { nanoid } from 'nanoid';
 
-import { getFormattedDateTime } from './getFormattedDateTime';
-import { getIDandNameFile } from './getIDandNameFile';
-import { PatternKeys } from '../types/searchType';
+import { RESOLVERS } from './masks';
+import type { Description, ReplacerArgs } from './masks';
 
-export interface Description {
-	id?: string | number;
-	findTime?: string;
-	clearName?: string;
-	finalFile?: string[];
-	curItem?: string;
-	projectName?: string;
-	projectPathGD?: string;
-	mainFolderName?: string;
-	mainFolderPath?: string;
-	workFolder?: string;
-	localFolder: string;
-	pathAliases?: Record<string, string>;
-	loopIndex?: number; // выставляется в executeLoop на каждую итерацию (через spread, чтобы не мутировать родительский ctx).
-}
+// Ре-экспорт типов: плагины и createPathForFileByPattern импортируют Description отсюда.
+export type { Description, ReplacerArgs };
 
 interface FormatNameOptions {
 	string: string;
 	description?: Partial<Description>;
 	file?: string;
 }
-
-// Ленивая карта функций-генераторов
-type ReplacerArgs = {
-	description?: Partial<Description>;
-	file?: string;
-};
-
-const replacers: Record<PatternKeys, (args: ReplacerArgs) => any> = {
-	[PatternKeys.id]: ({ description }) => description?.id ?? nanoid(10),
-	[PatternKeys.findTime]: ({ description }) => description?.findTime ?? getFormattedDateTime('$DD.$MM-$HH.$mm'),
-	[PatternKeys.clearName]: ({ description }) => description?.clearName?.trim() ?? nanoid(10),
-	[PatternKeys.index]: ({ description, file }) =>
-		file && description?.finalFile ? description.finalFile.indexOf(file) + 1 : 1,
-	[PatternKeys.loopIndex]: ({ description }) => description?.loopIndex ?? '',
-	[PatternKeys.fileName]: ({ file }) => (file ? path.basename(file, path.extname(file)) : nanoid(10)),
-	[PatternKeys.clearFileName]: ({ file }) => (file ? getIDandNameFile(path.basename(file)).clearName : nanoid(10)),
-	[PatternKeys.curItemName]: ({ description }) =>
-		description?.curItem ? path.basename(description.curItem, path.extname(description.curItem)) : nanoid(10),
-	[PatternKeys.projectName]: ({ description }) => description?.projectName ?? 'default',
-	[PatternKeys.projectPathGD]: ({ description }) => description?.projectPathGD ?? '',
-	[PatternKeys.mainFolderName]: ({ description }) => description?.mainFolderName ?? '',
-	[PatternKeys.mainFolderPath]: ({ description }) => description?.mainFolderPath ?? '',
-	[PatternKeys.localFolder]: ({ description }) => description?.localFolder ?? '',
-	[PatternKeys.curMonthStr]: () => {
-		const months = [
-			'January',
-			'February',
-			'March',
-			'April',
-			'May',
-			'June',
-			'July',
-			'August',
-			'September',
-			'October',
-			'November',
-			'December',
-		];
-		return months[new Date().getMonth()];
-	},
-
-	[PatternKeys.YYYY]: () => getFormattedDateTime('$YYYY'),
-	[PatternKeys.MM]: () => getFormattedDateTime('$MM'),
-	[PatternKeys.DD]: () => getFormattedDateTime('$DD'),
-	[PatternKeys.HH]: () => getFormattedDateTime('$HH'),
-	[PatternKeys.mm]: () => getFormattedDateTime('$mm'),
-	[PatternKeys.ss]: () => getFormattedDateTime('$ss'),
-};
 
 export function formatNameByPattern({ string, description = {}, file }: FormatNameOptions): string {
 	let result = string;
@@ -92,22 +29,24 @@ export function formatNameByPattern({ string, description = {}, file }: FormatNa
 		}
 	}
 
-	// Обрабатываем random()
-	const randomRegex = /\$random(?:\((\d+)\))?/g;
+	// Обрабатываем random(): $random / $random() → 10 символов, $random(N) → N символов.
+	// \d* (а не \d+) — чтобы пустые скобки $random() тоже поглощались, а не оставляли "()".
+	const randomRegex = /\$random(?:\((\d*)\))?/g;
 	result = result.replace(randomRegex, (_, lenStr) => {
 		const length = lenStr ? parseInt(lenStr, 10) : 10;
 		return nanoid(length);
 	});
 
-	// Обрабатываем остальные ключи
-	const keys = Object.keys(replacers) as (keyof typeof replacers)[];
+	// Обрабатываем остальные ключи (источник — MASKS в masks.ts).
+	// Длинные ключи первыми, чтобы короткий не съел начало длинного в альтернации.
+	const keys = Object.keys(RESOLVERS).sort((a, b) => b.length - a.length);
 	const keysPattern = new RegExp(`\\$(${keys.map(escapeRegExp).join('|')})`, 'g');
 
-	result = result.replace(keysPattern, (_, key: PatternKeys) => {
-		const replacer = replacers[key];
+	result = result.replace(keysPattern, (_, key: string) => {
+		const replacer = RESOLVERS[key];
 		if (!replacer) return '';
 		try {
-			return String(replacer({ description, file }) ?? '');
+			return String(replacer({ description, file } as ReplacerArgs) ?? '');
 		} catch {
 			return '';
 		}

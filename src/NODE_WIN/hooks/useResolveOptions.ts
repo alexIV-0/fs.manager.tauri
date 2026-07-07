@@ -2,7 +2,7 @@ import { folderPath_store, pathPattern_store, typeOfFile_store } from '@/Store/M
 import { commands, unwrap } from '@/Utils/specta';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { userInputHistory_store } from '@/Store/Node/userInputHistory_store';
-import { PatternKeys } from '@/types/searchType';
+import { pathPatternTokens } from '@/Utils/masks';
 import { useCallback } from 'react';
 import { useNodeId, useReactFlow } from '@xyflow/react';
 import { joinPath } from '@/Utils/joinPath';
@@ -98,10 +98,8 @@ export function useResolveOptions(propertyId?: string) {
 							// $loopIndex показываем только если нода реально внутри луп-ноды
 							// (рантайм-значение есть только там; снаружи токен резолвится в '').
 							const insideLoop = isInsideLoop(nodeId, getNode);
-							const keys = Object.values(PatternKeys).filter(
-								(k) => k !== PatternKeys.loopIndex || insideLoop,
-							);
-							return [...keys.map((key) => `$${key}`), '$random(', ...customNames];
+							// Токены масок выводятся из единого источника (src/Utils/masks.ts).
+							return [...pathPatternTokens(insideLoop), ...customNames];
 						}
 
 						case 'folders': {

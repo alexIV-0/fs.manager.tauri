@@ -2,7 +2,7 @@
 // Types & Constants for PluginBuilder
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { PatternKeys } from '@/types/searchType';
+import { MASK_TOKENS, buildMasksTooltipHtml } from '@/Utils/masks';
 
 // ── Cost ─────────────────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ export const HASH_OPTIONS = [
 	{ value: '#historyValue(key)', desc: 'История введённых значений по произвольному ключу (shared между свойствами)' },
 ];
 
-export const PATTERN_OPTIONS = Object.values(PatternKeys).map((k) => `$${k}`);
+export const PATTERN_OPTIONS = MASK_TOKENS; // выводится из MASKS (src/Utils/masks.ts)
 export const SPECIAL_OPTIONS = ['CustomFolder...', 'CustomFile...'];
 
 // ── Control Type Registry ────────────────────────────────────────────────────
@@ -402,8 +402,7 @@ export function makeDefaultUiJson(): UiJsonData {
 					controlType: 'autocomplete',
 					controlProps: {
 						label: 'Target Path',
-						tooltip:
-							'Папка для сохранения. Указывается в виде маски. все маски начинаются с $.<br><div><font color="#ffff00">$clearName</font> - чистое имя найденного элемента в папке IN на GD без <font color="#ffff00">эмоджиков</font> и кавычек () []</div><div><font color="#ffff00">$findTime</font> - время когда был найден элемент в папке IN</div><div><font color="#ffff00">$curItemName</font> - текущий элемент в папке IN (с эмоджиками и кавычками). это может быть папка. но без расширения</div><div><font color="#ffff00">$id</font> - уникальный id для каждого элемента если он есть в имени найденного элемента в папке IN</div><div><font color="#ffff00">$projectName</font> - название проекта (имя папки в которой находится папка IN)</div><div><font color="#ffff00">$projectPathGD</font> - полный путь до папки проекта на GD</div><div><font color="#ffff00">$mainFolderName</font> - название папки, в которой находится проект на GD</div><div><font color="#ffff00">$mainFolderPath</font> - название папки, в которой находится проект на GD</div><div><br></div><div><span style="font-family: Montserrat, Roboto, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;;"><font color="#ffff00">$index</font> - индекс элемента если файл не единственный</span></div><div><font color="#ffff00">$fileName</font> - имя текущего файла без расширения как есть</div><div><font color="#ffff00">$clearFileName</font> - чистое имя текущего файла без расширения без кавычек, эмоджи и текста в круглых и квадратных скобках</div><div><br></div><div><font color="#ffff00">$curMonthStr</font> - текущий месяц в виде строки (January, February, ...)</div><div><font color="#ffff00">$localFolder</font> - рабочая папка на локальном дике (указывается в настройках)</div><div><br></div><div><font color="#ffff00">$YYYY</font> - год (4 цифры)</div><div><font color="#ffff00">$MM</font> - месяц (2 цифры)</div><div><font color="#ffff00">$DD - день (2 цифры)</font></div><div><font color="#ffff00">$HH</font> - часы (2 цифры)</div><div><font color="#ffff00">$mm</font> - минуты (2 цифры)</div><div><font color="#ffff00">$ss</font> - секунды (2 цифры)</div>',
+						tooltip: buildMasksTooltipHtml(), // выводится из MASKS (src/Utils/masks.ts)
 						options: ['#pathPattern', 'CustomFolder...'],
 						multiSelect: true,
 						allowDuplicates: true,
