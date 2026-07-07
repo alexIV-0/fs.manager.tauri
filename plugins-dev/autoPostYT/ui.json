@@ -78,6 +78,22 @@
 				"outputType": "string"
 			},
 			{
+				"id": "thumbnail",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Thumbnail (обложка)",
+					"tooltip": "Путь к картинке-обложке ИЛИ связь с нодой-картинкой. Пусто = без кастомной обложки (авто-кадр YouTube). Требует канал с подтверждённым телефоном.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"image"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
 				"id": "account",
 				"controlType": "ddm",
 				"controlProps": {

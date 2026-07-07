@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import { pathPattern_store, typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
+import { usePostingAvailable } from '@/PROCESSING/autoPost/usePostingAvailable';
 import MySettingRow from './settings/MySettingRow';
 import MyTooltip from '@/MAIN_WIN/Universal/MyTooltip';
 import MyAutocomplete from '@/MAIN_WIN/Universal/MyAutocomplete';
@@ -76,6 +77,9 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 	// ColorTypes остаются через стор напрямую — отдельный файл, отдельная логика,
 	// клик-действия (добавить/удалить тип) применяются сразу.
 	const { colorTypes, loaded, load, rescanColorTypes, setColorTypes, removeColorType } = appSettings_client();
+
+	// Секцию «Постинг» показываем только когда есть плагин-источник finder + хотя бы один постер.
+	const postingReady = usePostingAvailable();
 
 	const nodeTypes = typeOfNodes_store((s) => s.patternStore);
 	const nodeTypesAdd = typeOfNodes_store((s) => s.addPatternElement);
@@ -340,17 +344,19 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 			</Section>
 
 			{/* ============ ПОСТИНГ ============ */}
-			<Section title='Постинг'>
-				<MySettingRow
-					label='Интервал обхода папок (постинг)'
-					tooltip='Как часто отдельный процесс автопостинга обходит папки в поисках материала. Это НЕ интервал самой публикации (тот задаётся в ноде постинга на каждую папку). Допустимо дробное (0.5 = 30 сек).'
-					type='number'
-					value={settings.posting?.scanWaitMin ?? 0.5}
-					onChange={(v) => patch({ posting: { scanWaitMin: v } })}
-					unit='мин'
-					min={0}
-				/>
-			</Section>
+			{postingReady && (
+				<Section title='Постинг'>
+					<MySettingRow
+						label='Интервал обхода папок (постинг)'
+						tooltip='Как часто отдельный процесс автопостинга обходит папки в поисках материала. Это НЕ интервал самой публикации (тот задаётся в ноде постинга на каждую папку). Допустимо дробное (0.5 = 30 сек).'
+						type='number'
+						value={settings.posting?.scanWaitMin ?? 0.5}
+						onChange={(v) => patch({ posting: { scanWaitMin: v } })}
+						unit='мин'
+						min={0}
+					/>
+				</Section>
+			)}
 
 			{/* ============ РЕСУРСНЫЕ ПУЛЫ ============ */}
 			<Section title='Ресурсные пулы'>

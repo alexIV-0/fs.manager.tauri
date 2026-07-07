@@ -14,6 +14,7 @@ import './index.css';
 import { loadAllUINodes, type CollectedUINode } from '@/Utils/loadAllUINodes';
 import { buildNodeDefinitions } from './definitions';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
+import { listen } from '@tauri-apps/api/event';
 
 import SaveButton from './layout/SaveButton';
 import TopPanel from './layout/TopPanel';
@@ -61,6 +62,24 @@ function NodeApp() {
 
 		return () => {
 			isMounted = false;
+		};
+	}, []);
+
+	// Живое обновление палитры при сборке/загрузке плагина из PluginBuilder
+	// (событие 'plugins-changed' эмитится после plugin_build + load). Без этого
+	// новый плагин появлялся только после перезапуска окна.
+	useEffect(() => {
+		const unlistenP = listen('plugins-changed', async () => {
+			try {
+				const nodes = await loadAllUINodes();
+				setPluginUINodes(nodes);
+				buildNodeDefinitions(nodes);
+			} catch (err) {
+				console.error('[NodeApp] plugins-changed reload failed:', err);
+			}
+		});
+		return () => {
+			unlistenP.then((un) => un());
 		};
 	}, []);
 

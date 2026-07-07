@@ -16,6 +16,8 @@ import { PRESETS, MIN_WIDTH, MIN_HEIGHT } from './TextEdit/constants';
 import { ResizeDirection } from './TextEdit/types';
 import InputHandle from '../components/InputHandle';
 import { registerMonacoClipboard } from '@/Utils/monacoClipboard';
+import { runUserCode } from '@/Utils/runUserCode';
+import { RunPanelState } from './TextEdit/types';
 
 function TextEditPropertyComponent({ property }: { property: TextEditProperty }) {
 	const nodeId = useNodeContext();
@@ -41,6 +43,7 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
 	const isDynamic = editLabel && !tooltip;
+	const runnable = controlProps?.runnable ?? false;
 
 	const [isOpen, setIsOpen] = useState(false);
 	const [value, setValue] = useState<string>(controlProps.value ?? '');
@@ -50,6 +53,8 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 	const [anchorPos, setAnchorPos] = useState<{ x: number; y: number } | null>(null);
 	const [showSavePreset, setShowSavePreset] = useState(false);
 	const [showLoadPreset, setShowLoadPreset] = useState(false);
+	const [running, setRunning] = useState(false);
+	const [runResult, setRunResult] = useState<RunPanelState | null>(null);
 
 	const buttonRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<HTMLDivElement>(null);
@@ -198,6 +203,42 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 	const getCurrentEditorValue = useCallback((): string => {
 		return editorInst.current ? editorInst.current.getValue() : value;
 	}, [value]);
+
+	// ── Run (тест кода прямо в ноде) ────────────────────────────────────────────
+	// Собираем scope из соседних добавленных входов ТАК ЖЕ, как рантайм плагина:
+	// динамические свойства (editLabel) — по лейблу. Литеральные поля (TextEdit/Slider/…)
+	// берут своё текущее значение; коннектор-входы (link) в дизайн-тайме недоступны → undefined.
+	const handleRun = useCallback(async () => {
+		const node = reactFlow.getNode(nodeId);
+		if (!node) return;
+		const props = (node.data as CustomNodeData).properties;
+
+		const scope: Record<string, unknown> = {};
+		const unavailable: string[] = [];
+		for (const p of props) {
+			if (p.id === property.id) continue; // само поле кода
+			const dyn = (p.controlProps as any)?.editLabel === true;
+			if (!dyn) continue; // берём только пользовательские входы, добавленные через «+»
+			const name = (p.controlProps as any)?.label;
+			if (!name) continue;
+			if (p.controlType === 'link') {
+				scope[name] = undefined; // значение придёт из пайплайна
+				unavailable.push(name);
+			} else {
+				scope[name] = (p.controlProps as any)?.value;
+			}
+		}
+
+		setRunning(true);
+		try {
+			const res = await runUserCode(getCurrentEditorValue(), scope);
+			setRunResult({ ...res, unavailable });
+		} finally {
+			setRunning(false);
+		}
+	}, [reactFlow, nodeId, property.id, getCurrentEditorValue]);
+
+	const handleClearRun = useCallback(() => setRunResult(null), []);
 
 	const handlePresetLoaded = useCallback((text: string) => {
 		if (editorInst.current) {
@@ -355,6 +396,11 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 							onResizeMouseDown={handleResizeMouseDown}
 							onSavePreset={() => setShowSavePreset(true)}
 							onLoadPreset={() => setShowLoadPreset(true)}
+							runnable={runnable}
+							running={running}
+							runResult={runResult}
+							onRun={handleRun}
+							onClearRun={handleClearRun}
 						/>
 
 						{showSavePreset && (

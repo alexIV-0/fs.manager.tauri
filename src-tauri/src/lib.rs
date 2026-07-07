@@ -181,6 +181,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             youtube_refresh_token,
             youtube_get_access_token,
             youtube_upload_video,
+            youtube_set_thumbnail,
             // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
             tg_validate_token,
             tg_get_chat,
@@ -226,6 +227,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -582,6 +584,7 @@ pub fn run() {
             plugin_manager_install,
             plugin_manager_delete,
             plugin_manager_destroy,
+            plugin_build,
             // Deps: авто-загрузка ffmpeg/ffprobe + whisper-моделей
             deps_ffmpeg_status,
             deps_download_ffmpeg,
@@ -609,6 +612,7 @@ pub fn run() {
             youtube_refresh_token,
             youtube_get_access_token,
             youtube_upload_video,
+            youtube_set_thumbnail,
             // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
             tg_validate_token,
             tg_get_chat,

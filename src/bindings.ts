@@ -1133,6 +1133,19 @@ async youtubeUploadVideo(accessToken: string, filePath: string, meta: YtVideoMet
 }
 },
 /**
+ * Поставить кастомную обложку на видео (`thumbnails.set`, scope youtube.upload). Вызывается
+ * ПОСЛЕ загрузки (нужен video_id). Требование YouTube: канал должен быть подтверждён по
+ * телефону, иначе метод вернёт ошибку (обложка не поставится, но само видео уже залито).
+ */
+async youtubeSetThumbnail(accessToken: string, videoId: string, imagePath: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_set_thumbnail", { accessToken, videoId, imagePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Проверка токена бота через `getMe`. Возвращает `{ id, is_bot, first_name, username }`
  * или ошибку Telegram (невалидный/отозванный токен → `Unauthorized`).
  */

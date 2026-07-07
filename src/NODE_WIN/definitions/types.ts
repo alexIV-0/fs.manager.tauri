@@ -174,6 +174,7 @@ export interface TextEditPropertyControlProps {
 	inheritedValue?: string;
 	language?: TextEditLanguage;
 	editLabel?: boolean; // если true — двойной клик по label позволяет его редактировать
+	runnable?: boolean; // если true — в модалке редактора появляется ▶ Run + панель результата (нода jsCode)
 }
 
 export type AddableType = 'Link' | 'TextEdit' | 'Timecode' | 'Slider' | 'Checkbox' | 'TimeRange' | 'NumberRange';

@@ -10,6 +10,7 @@ export const searchTypes = [...mediaTypes, ...containerTypes, ...specialTypes];
 
 export const filePathNamePattern = [
 	'$projectName',
+	'$projectPathGD',
 	'$mainFolderName',
 	'$mainFolderPath',
 	'$curItem',

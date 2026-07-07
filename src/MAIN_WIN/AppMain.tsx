@@ -1,6 +1,7 @@
 import { runProcessing } from '@/PROCESSING/runProcessing';
 import { abortNow } from '@/PROCESSING/utils/processingAbort';
 import { startPostScheduler, stopPostScheduler } from '@/PROCESSING/autoPost/scheduler';
+import { usePostingAvailable } from '@/PROCESSING/autoPost/usePostingAvailable';
 import { usePosting_store } from '@/Store/Processing/usePosting_store';
 import { commands } from '@/Utils/specta';
 import { greenColor, greyColor, steelColor } from '@/Store/Color/grayColor';
@@ -13,6 +14,7 @@ import ThemeWrapper from '@/theme/ThemeWrapper';
 import { Box, IconButton, Typography } from '@mui/material';
 import { RotateCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { CurentProjectFolder } from './ProjectFolderColumn/CurentProjectFolder';
 
 import { MainTopPanel } from './MainTopPanel';
@@ -45,6 +47,9 @@ export default function AppMain() {
 	const { mainFolderArr } = mainFolders_stor();
 	const { isScanning, isScanningProcess, mainFolderIndex, setIsScanning, setIsScanningProcess, setMainFolderIndex } = isScanningStore();
 	const { isPosting } = usePosting_store();
+	// Постинг показываем/разрешаем только когда есть чем собрать пайплайн finder → poster
+	// (плагин-источник `finder` + хотя бы один постер). Иначе прячем весь UI постинга.
+	const postingReady = usePostingAvailable();
 
 	const bgLoading = greyColor(15);
 	const bgLoadingBar = greyColor(30);
@@ -88,6 +93,16 @@ export default function AppMain() {
 		loadAllPlugins();
 	}, []);
 
+	// Живое обновление списка плагинов после сборки/загрузки из PluginBuilder.
+	useEffect(() => {
+		const unlistenP = listen('plugins-changed', () => {
+			initializePlugins().catch((err) => console.error('plugins-changed reinit failed:', err));
+		});
+		return () => {
+			unlistenP.then((un) => un());
+		};
+	}, []);
+
 	// ========================
 	// ЗАПУСКАЕТСЯ ОСНОВНОЙ ПРОЦЕСС ОБРАБОТКИ
 	// ========================
@@ -126,6 +141,12 @@ export default function AppMain() {
 	// ========================
 	const startPostingClick = () => startPostScheduler();
 	const stopPostingClick = () => stopPostScheduler();
+
+	// Если постинг крутится, а нужный плагин (finder или все постеры) выключили/удалили
+	// на лету — гасим раннер: без finder → poster он всё равно не соберёт маршрут.
+	useEffect(() => {
+		if (!postingReady && isPosting) stopPostScheduler();
+	}, [postingReady, isPosting]);
 
 	const reLoadExtension = () => {
 		window.location.reload();
@@ -258,23 +279,27 @@ export default function AppMain() {
 						</IconButton>
 					</Box>
 					<MyDivider disablePadding />
-					{/* ── Статусбар ПОСТИНГА (нижний, всегда виден) ── */}
-					<Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', p: '2px 10px', minWidth: 0 }}>
-						<Typography
-							sx={{
-								fontSize: '0.7rem',
-								fontWeight: 700,
-								letterSpacing: '0.5px',
-								textTransform: 'uppercase',
-								color: greyColor(48),
-								flexShrink: 0,
-							}}
-						>
-							постинг
-						</Typography>
-						<PostingStatusLine />
-					</Box>
-					<MyDivider disablePadding />
+					{/* ── Статусбар ПОСТИНГА (виден только когда есть finder + постер) ── */}
+					{postingReady && (
+						<>
+							<Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', p: '2px 10px', minWidth: 0 }}>
+								<Typography
+									sx={{
+										fontSize: '0.7rem',
+										fontWeight: 700,
+										letterSpacing: '0.5px',
+										textTransform: 'uppercase',
+										color: greyColor(48),
+										flexShrink: 0,
+									}}
+								>
+									постинг
+								</Typography>
+								<PostingStatusLine />
+							</Box>
+							<MyDivider disablePadding />
+						</>
+					)}
 					<Box
 						sx={{
 							display: 'flex',
@@ -304,28 +329,30 @@ export default function AppMain() {
 							</Box>
 						)}
 					</Box>
-					<Box
-						sx={{
-							display: 'flex',
-							gap: '5px',
-							p: '0 5px 5px 5px',
-							overflow: 'hidden',
-						}}
-					>
-						{!isPosting ? (
-							<MyButton
-								// sx={{ backgroundColor: colorSteel50, '&:hover': { bgcolor: colorSteel70 } }}
-								onClick={startPostingClick}
-								innerText={'START POSTING'}
-							/>
-						) : (
-							<MyButton
-								sx={{ backgroundColor: colorGreen70, '&:hover': { bgcolor: colorGreen95 } }}
-								onClick={stopPostingClick}
-								innerText={'Stop posting'}
-							/>
-						)}
-					</Box>
+					{postingReady && (
+						<Box
+							sx={{
+								display: 'flex',
+								gap: '5px',
+								p: '0 5px 5px 5px',
+								overflow: 'hidden',
+							}}
+						>
+							{!isPosting ? (
+								<MyButton
+									// sx={{ backgroundColor: colorSteel50, '&:hover': { bgcolor: colorSteel70 } }}
+									onClick={startPostingClick}
+									innerText={'START POSTING'}
+								/>
+							) : (
+								<MyButton
+									sx={{ backgroundColor: colorGreen70, '&:hover': { bgcolor: colorGreen95 } }}
+									onClick={stopPostingClick}
+									innerText={'Stop posting'}
+								/>
+							)}
+						</Box>
+					)}
 				</Box>
 			</Box>
 		</ThemeWrapper>

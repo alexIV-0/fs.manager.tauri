@@ -88,6 +88,18 @@ export async function autoPostYTFunc(_item: any, _description: any): Promise<str
 			meta: { title, description, tags, categoryId, privacyStatus: 'public', madeForKids },
 		});
 
+		// Обложка (thumbnails.set) — отдельный вызов после загрузки, нужен videoId. НЕ фатально:
+		// требует канал с подтверждённым телефоном; при ошибке видео уже залито — просто логируем.
+		const thumb = toArr(_item?.import?.thumbnail)[0] || String(_item?.thumbnail ?? '').trim();
+		if (thumb && res?.videoId) {
+			try {
+				await api().invoke('youtube_set_thumbnail', { accessToken, videoId: res.videoId, imagePath: thumb });
+				sendToMW('log', { level: 'info', text: '[autoPostYT] обложка установлена' });
+			} catch (e) {
+				sendToMW('log', { level: 'warn', text: `[autoPostYT] обложка не поставилась (нужен канал с подтв. телефоном?): ${String(e)}` });
+			}
+		}
+
 		// Запись в _post-лог (дедуп + тайминг интервала драйвера).
 		const ts = Math.floor(Date.now() / 1000);
 		const rec: PostRecord = {
