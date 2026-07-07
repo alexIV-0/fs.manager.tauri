@@ -24,7 +24,7 @@
 		"fs:scope-appdata",
 		"fs:scope-home",
 		"dialog:default",
-		"shell:default",
+		"opener:default",
 		"clipboard-manager:allow-read-text",
 		"clipboard-manager:allow-write-text",
 		"clipboard:allow-read-files",

@@ -403,6 +403,7 @@ export const tauriAPI = {
 		tempDir?: string;
 		keepTempFiles?: boolean;
 		timeoutSec?: number;
+		killPreviousInstance?: boolean;
 	}) => tauriInvoke<{ success: boolean; data?: any; error?: string }>('run_script_in_ae', args),
 	launchAEWithScript: (aePath: string, scriptPath: string) => tauriInvoke<void>('launch_ae_with_script', aePath, scriptPath),
 

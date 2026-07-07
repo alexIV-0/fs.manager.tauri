@@ -129,6 +129,9 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 		text: `[aeProcess] запуск AE\n  скрипт: ${aeScript}\n  temp/output dir: ${tempScriptDir}\n  таймаут: ${Math.round(maxWaitSec / 60)} мин (${Math.round(maxWaitSec)} c)`,
 	});
 
+	// Дефолт true, если галку не трогали (в старых сохранённых пайплайнах поля не будет).
+	const killPreviousAE = _item.killPreviousAE !== false;
+
 	const result = await ae.runScript({
 		aePath,
 		scriptPath: aeScript,
@@ -136,6 +139,7 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 		tempDir: tempScriptDir,
 		keepTempFiles: true,
 		timeoutSec: Math.round(maxWaitSec),
+		killPreviousInstance: killPreviousAE,
 	});
 
 	if (result.success) {

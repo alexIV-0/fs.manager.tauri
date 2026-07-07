@@ -587,6 +587,9 @@ export interface RunScriptInAEArgs {
 	tempDir?: string;
 	keepTempFiles?: boolean;
 	timeoutSec?: number;
+	/** Убивать предыдущий AfterFX.exe перед запуском (Windows). По умолчанию true —
+	 * AE не подхватывает "-r", если уже открыт с прошлого айтема пайплайна. */
+	killPreviousInstance?: boolean;
 }
 
 export const ae = {
@@ -604,6 +607,7 @@ export const ae = {
 				temp_dir: args.tempDir,
 				keep_temp_files: args.keepTempFiles,
 				timeout_sec: args.timeoutSec,
+				kill_previous_instance: args.killPreviousInstance,
 			},
 		});
 	},

@@ -121,7 +121,7 @@ pub async fn youtube_auth_start(
 
     // Открыть в СИСТЕМНОМ браузере (не webview!).
     app.opener()
-        .open_url(auth_url, None::<&str>)
+        .open_url(auth_url, None::<String>)
         .map_err(|e| format!("открыть браузер: {}", e))?;
 
     // Ждём редирект (в цикле — игнорируем сторонние запросы вроде favicon).
