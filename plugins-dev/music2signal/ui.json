@@ -5,7 +5,7 @@
 		"y": 0
 	},
 	"width": 400,
-	"height": 460,
+	"height": 520,
 	"data": {
 		"label": "Music to signal",
 		"colorType": "helpers",
@@ -20,9 +20,7 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": [
-					"audio"
-				],
+				"acceptedTypes": ["audio"],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -31,21 +29,15 @@
 				"controlType": "autocomplete",
 				"controlProps": {
 					"label": "Target Path",
-					"tooltip": "Путь до сигнального JSON. Если пустой — рядом с исходником.",
-					"options": [
-						"#pathPattern",
-						"Custom Folder...",
-						"#historyValue(targetPath)"
-					],
+					"tooltip": "Путь до сигнального JSON (при Save to file). Если пустой — рядом с исходником.",
+					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
-				"outputType": "typeByExtension",
-				"acceptedTypes": [
-					"path"
-				],
+				"outputType": "path",
+				"acceptedTypes": ["path"],
 				"required": false
 			},
 			{
@@ -62,11 +54,26 @@
 					"minMaxValueVisible": true
 				},
 				"outputType": "number"
+			},
+			{
+				"id": "saveToFile",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Save to file",
+					"tooltip": "<b>Вкл</b> — сохранить сигнальный JSON в файл, на выход идёт путь (тип text).<div><b>Выкл</b> — отдать JSON дальше строкой (тип string): удобно инжектить содержимым в promptUpdater.</div>",
+					"value": true
+				},
+				"outputType": "boolean",
+				"required": false,
+				"outputTypeMap": {
+					"true": "text",
+					"false": "string"
+				}
 			}
 		],
 		"output": {
-			"sourceProperty": "targetPath"
+			"sourceProperty": "saveToFile"
 		},
-		"isValid": true
+		"isValid": false
 	}
 }

@@ -18,6 +18,7 @@ function clampWindow(v: number): number {
 export async function music2signalFunc(_item: any, _description: any, _ctx?: any): Promise<string[]> {
 	const finalFiles: string[] = [];
 	const windowMs = clampWindow(Number(_item.windowMs));
+	const saveToFile = !(_item.saveToFile === false || _item.saveToFile === 'false');
 
 	const inputFiles: string[] = _item.import?.inputFile ?? [];
 	if (!inputFiles.length) {
@@ -74,12 +75,19 @@ export async function music2signalFunc(_item: any, _description: any, _ctx?: any
 		const out = {
 			dur: env.dur,
 			hopMs: env.hopMs,
-			rms: env.rms,
 			present,
 			musicRatio: coverageRatio(present, env.dur),
 			energyPeak: energyPeak(env),
 			events: detectEvents(env),
 		};
+
+		const jsonStr = JSON.stringify(out, null, 2);
+		if (!saveToFile) {
+			// Режим строки: отдаём JSON дальше как есть (для инжекта содержимым в promptUpdater).
+			finalFiles.push(jsonStr);
+			sendToMW('log', { text: `[music2signal] ${path.basename(fileFrom)} → строка, без файла (${env.rms.length} окон, ${out.events.length} событий)` });
+			continue;
+		}
 
 		const nameSrc = path.join(path.dirname(fileFrom), `${path.basename(fileFrom, path.extname(fileFrom))}.json`);
 		let fileTo: string;
@@ -96,7 +104,7 @@ export async function music2signalFunc(_item: any, _description: any, _ctx?: any
 
 		try {
 			await fs.mkdir(path.dirname(fileTo));
-			await fs.write(fileTo, JSON.stringify(out, null, 2));
+			await fs.write(fileTo, jsonStr);
 			sendToMW('log', {
 				text: `[music2signal] ${path.basename(fileFrom)} → ${env.rms.length} окон, ${present.length} интервалов, ${out.events.length} событий → ${fileTo}`,
 			});
