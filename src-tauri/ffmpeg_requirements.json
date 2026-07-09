@@ -12,7 +12,8 @@
       "overlay", "scale", "crop", "pad", "format", "setpts", "settb", "setsar", "setparams",
       "select", "metadata", "blackframe", "thumbnail",
       "eq", "hflip", "geq", "boxblur",
-      "amix", "atempo", "apad", "tpad", "split", "color", "xfade"
+      "amix", "atempo", "apad", "tpad", "split", "color", "xfade",
+      "astats", "ametadata", "asetnsamples"
     ],
     "demuxers": ["concat"],
     "where": {
@@ -21,7 +22,8 @@
       "aac": "merge2files.ts, ffSwitch.ts, convertFile_v2",
       "ass": "addTitle.ts (libass — субтитры)",
       "chromakey/colorkey/lumakey/despill": "keyingFFmpeg.ts (кеинг)",
-      "concat": "join.ts (-f concat демуксер)"
+      "concat": "join.ts (-f concat демуксер)",
+      "astats+ametadata+asetnsamples": "music2signal.ts / speach2signal.ts — RMS-огибающая аудио-стема равными окнами (asetnsamples) → метаданные в stdout"
     }
   },
 
@@ -31,6 +33,8 @@
       "libx265", "libvpx-vp9", "libsvtav1", "prores_ks", "dnxhd",
       "libopus", "libmp3lame", "flac", "pcm_s16le"
     ],
-    "where": "convertFile_v2/convertFileV2.ts VIDEO_CODEC_MAP / AUDIO_CODEC_MAP"
+    "filters": ["rubberband"],
+    "build_flags": { "rubberband": "--enable-librubberband" },
+    "where": "convertFile_v2/convertFileV2.ts VIDEO_CODEC_MAP / AUDIO_CODEC_MAP; rubberband — независимое изменение темпа/питча аудио (audio convert), нужен билд с librubberband (BtbN gpl обычно содержит, martin-riedl проверить)"
   }
 }

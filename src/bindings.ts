@@ -734,6 +734,20 @@ async writeFile(filePath: string, content: string) : Promise<Result<JsonValue, s
 }
 },
 /**
+ * Дописывает строку в конец файла настоящим append'ом (O_APPEND), не перезаписывая файл.
+ * Для append-only логов вроде _post/$MM.$YYYY.jsonl: краш посреди записи в худшем случае
+ * оставит оборванную последнюю строку (парсер её пропустит), а не потеряет весь файл.
+ * Создаёт файл и родительские директории при необходимости.
+ */
+async appendFile(filePath: string, content: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("append_file", { filePath, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Записывает бинарный файл из base64-строки.
  * Используется плагинами для сохранения скачанных через fetch результатов
  * (видео, аудио, изображения). Создаёт родительские директории при необходимости.
@@ -914,9 +928,29 @@ async depsDownloadWhisperModel(filename: string) : Promise<Result<string, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Скачивает бинарь telegram-bot-api под текущую ОС из фиксированного релиза в app_data/bin,
+ * ставит +x и снимает карантин на macOS. Возвращает путь к бинарю.
+ */
+async depsDownloadTgServer() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_download_tg_server") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewRenderFrame(spec: PreviewRenderSpec) : Promise<Result<PreviewFrameResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_render_frame", { spec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewRenderAudio(spec: PreviewAudioSpec) : Promise<Result<PreviewAudioResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_render_audio", { spec }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -971,6 +1005,36 @@ async accountGetToken(mainFolderName: string, platform: string, name: string) : 
 }
 },
 /**
+ * Добавить/обновить канал в каталоге аккаунта (upsert по `id`, иначе по `username`).
+ * 
+ * Telegram: Bot API не умеет перечислять каналы бота, поэтому каждый канал добавляется
+ * вручную и хранится в `channels[]` аккаунта. Эта команда делает read-modify-write
+ * ТОЛЬКО поля `channels` — `accessToken` и прочие поля остаются нетронутыми (в отличие
+ * от `account_save`, который заменяет запись целиком). Возвращает обновлённый `channels`.
+ */
+async accountAddChannel(mainFolderName: string, platform: string, name: string, channel: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_add_channel", { mainFolderName, platform, name, channel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить из каталога аккаунта канал/чат (по `chat_id`) ИЛИ тему форума
+ * (по `chat_id` + `thread_id`). `thread_id = None` → удаляем сам канал/чат целиком;
+ * `Some` → удаляем только тему из его `topics[]`. read-modify-write ТОЛЬКО поля
+ * `channels` (токен не трогаем). Возвращает обновлённый `channels`. Идемпотентна.
+ */
+async accountRemoveChannel(mainFolderName: string, platform: string, name: string, chatId: number, threadId: number | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("account_remove_channel", { mainFolderName, platform, name, chatId, threadId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Удалить аккаунт платформы (idempotent).
  */
 async accountDelete(mainFolderName: string, platform: string, name: string) : Promise<Result<null, string>> {
@@ -1012,6 +1076,255 @@ async vkValidateToken(token: string) : Promise<Result<JsonValue, string>> {
 async vkGroupsGet(token: string) : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("vk_groups_get", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Запустить OAuth-флоу для одного канала: открыть системный браузер на экране согласия
+ * Google, поймать редирект на loopback, обменять code на токены. Возвращает
+ * `{ refreshToken, accessToken, accessTokenExpiry, scope }`. TS сохраняет это как аккаунт.
+ */
+async youtubeAuthStart(clientId: string, clientSecret: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_auth_start", { clientId, clientSecret }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Обновить access_token по refresh_token (перед постингом). Возвращает
+ * `{ accessToken, accessTokenExpiry }`. refresh_token долгоживущий (Production).
+ */
+async youtubeRefreshToken(clientId: string, clientSecret: string, refreshToken: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_refresh_token", { clientId, clientSecret, refreshToken }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Свежий access_token для YouTube-аккаунта (для постинга). Читает запись из
+ * accounts/<mainFolder>/youtube.json: если accessToken ещё жив (>60с запаса) — отдаёт его,
+ * иначе обновляет по refresh_token (clientId/secret из записи), persist'ит новый
+ * accessToken+expiry и возвращает. Секреты не покидают Rust. Зеркало account_get_token, но
+ * с учётом протухания (у VK токен долгоживущий, там refresh не нужен).
+ */
+async youtubeGetAccessToken(mainFolderName: string, name: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_get_access_token", { mainFolderName, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Загрузить видео на канал (resumable). Возвращает `{ videoId, url }`.
+ */
+async youtubeUploadVideo(accessToken: string, filePath: string, meta: YtVideoMeta) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_upload_video", { accessToken, filePath, meta }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Поставить кастомную обложку на видео (`thumbnails.set`, scope youtube.upload). Вызывается
+ * ПОСЛЕ загрузки (нужен video_id). Требование YouTube: канал должен быть подтверждён по
+ * телефону, иначе метод вернёт ошибку (обложка не поставится, но само видео уже залито).
+ */
+async youtubeSetThumbnail(accessToken: string, videoId: string, imagePath: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("youtube_set_thumbnail", { accessToken, videoId, imagePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Проверка токена бота через `getMe`. Возвращает `{ id, is_bot, first_name, username }`
+ * или ошибку Telegram (невалидный/отозванный токен → `Unauthorized`).
+ */
+async tgValidateToken(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_validate_token", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Резолвит канал (`getChat`) и проверяет, что бот в нём может постить (`getChatMember`).
+ * `chat` — `@username` (публичный) или числовой id (`-100…`, приватный).
+ * Возвращает `{ id, title, username, type, canPost }`. Бот должен быть администратором
+ * канала с `can_post_messages` (или создателем).
+ */
+async tgGetChat(token: string, chat: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_get_chat", { token, chat }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Авто-обнаружение каналов бота через `getUpdates` (см. TELEGRAM_AUTOPOST_PLAN.md).
+ * 
+ * Когда бота добавляют администратором канала, Telegram шлёт событие `my_chat_member`
+ * с объектом канала; посты канала дают `channel_post`. Команда собирает уникальные
+ * каналы из буфера обновлений (~24ч хранения, short-poll), проверяет право постить
+ * и возвращает `[{ id, title, username, canPost }]`. Пользователю не нужно знать chat_id.
+ * 
+ * ⚠️ Модель «бот на пользователя»: `getUpdates` глобален для бота, поэтому общий на всех
+ * бот выдал бы чужие каналы — здесь у каждого свой бот (изоляция). 409 = у бота активен
+ * webhook (наш сценарий — без webhook).
+ */
+async tgDiscoverChannels(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_discover_channels", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Авто-обнаружение чатов-источников для СБОРА (плагин autoTGcollect) через `getUpdates`.
+ * 
+ * В отличие от `tg_discover_channels` (постинг): НЕ проверяет право постить — для сбора
+ * достаточно, чтобы бот видел чат (он должен быть админом супергруппы или с выключенным
+ * privacy mode). Включает группы/супергруппы/каналы. Возвращает
+ * `[{ id, title, username, type, isForum, topics: [{ threadId, name }] }]`, уникальные по id.
+ * Темы (форум-супергруппы) собираются из `message_thread_id` апдейтов; имя — из
+ * `forum_topic_created` (Bot API не умеет перечислять темы, только ловить из апдейтов).
+ */
+async tgDiscoverSources(token: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_discover_sources", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `getUpdates` для раннера сбора. `offset` (Some) подтверждает на сервере апдейты < offset
+ * и возвращает >= offset; None → все непрочитанные. Хранение апдейтов Telegram ~24ч.
+ */
+async tgGetUpdates(token: string, offset: number | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_get_updates", { token, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Скачивает файл Telegram в `dest_path`. `getFile` → `file_path`:
+ * - облако: качаем `<tg_base()>/file/bot<token>/<file_path>` (лимит 20 МБ);
+ * - локальный server (`--local`): `file_path` абсолютный → move/copy без скачивания.
+ * Возвращает `dest_path`. >20МБ на облаке → getFile вернёт ошибку «file is too big».
+ */
+async tgFetchFile(token: string, fileId: string, destPath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_fetch_file", { token, fileId, destPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удаляет сообщение в Telegram (`deleteMessage`). Бот-админ может удалять чужие сообщения
+ * в окне ~48ч (мы удаляем сразу после скачивания). Best-effort на стороне вызывающего.
+ */
+async tgDeleteMessage(token: string, chatId: number, messageId: number) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_delete_message", { token, chatId, messageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ставит реакцию-эмодзи на сообщение (`setMessageReaction`, POST с JSON). Пометка «забрано».
+ * `emoji` должен быть из стандартного набора реакций Telegram (напр. 👍).
+ */
+async tgSetReaction(token: string, chatId: number, messageId: number, emoji: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_set_reaction", { token, chatId, messageId, emoji }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Создаёт тему форума (`createForumTopic`, POST). Бот должен быть админом супергруппы-форума
+ * с правом `can_manage_topics`. Возвращает `{ threadId, name }`. Имя темы по конвенции = имя
+ * папки проекта. Дубли по имени Telegram НЕ предотвращает — вызывающий сам проверяет каталог.
+ */
+async tgCreateForumTopic(token: string, chatId: number, name: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_create_forum_topic", { token, chatId, name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Текущая база Bot API (для плагинов-публикаторов, которые строят URL в TS).
+ */
+async tgBaseUrl() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_base_url") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Запускает локальный telegram-bot-api server и переключает базу на localhost.
+ * `bin_path` — путь к скомпилированному бинарю; `work_dir` — рабочая папка для скачанных файлов
+ * (желательно на том же томе, что GDrive-папки, чтобы move в IN был атомарным).
+ */
+async tgServerStart(binPath: string, apiId: string, apiHash: string, port: number, workDir: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_server_start", { binPath, apiId, apiHash, port, workDir }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Останавливает локальный сервер и возвращает базу на облако.
+ */
+async tgServerStop() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_server_stop") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Статус сервера: `{ running, base }`.
+ */
+async tgServerStatus() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_server_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * logOut на ОБЛАЧНОМ сервере — освобождает бота для перевода на локальный сервер.
+ * Вызывается один раз при миграции бота. Идемпотентно-терпимо: уже разлогиненный → Err (ловим выше).
+ */
+async tgCloudLogOut(token: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tg_cloud_log_out", { token }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1059,6 +1372,28 @@ export type FontInfo = { name: string; path: string; loadable: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type LogHistory = { items: JsonValue[] }
 export type MoveToErrorsResult = { success: boolean; moved_to: string | null; error: string | null }
+export type PreviewAudioResult = { 
+/**
+ * Абсолютный путь к WAV в кэше (фронт превращает в asset-URL через toFileUrl).
+ */
+path: string; cached: boolean }
+export type PreviewAudioSpec = { 
+/**
+ * Абсолютный путь к исходнику (видео/аудио).
+ */
+path: string; 
+/**
+ * Начало региона (сек).
+ */
+start: number; 
+/**
+ * Длительность региона (сек).
+ */
+duration: number; 
+/**
+ * `-af` цепочка аудио-фильтров (может быть пустой → просто вырезка региона).
+ */
+filter: string }
 export type PreviewFrameResult = { 
 /**
  * Абсолютный путь к PNG в кэше (фронт превращает в asset-URL через toFileUrl).
@@ -1133,7 +1468,13 @@ keep_temp_files: boolean | null;
 /**
  * Таймаут ожидания результата в секундах (по умолчанию 120)
  */
-timeout_sec: number | null }
+timeout_sec: number | null; 
+/**
+ * Убивать предыдущий процесс AE перед запуском (Windows), чтобы "-r" гарантированно
+ * попал в холодный старт — AE не подхватывает "-r", если уже открыт. По умолчанию true;
+ * выключается галкой в ноде, если вдруг понадобится оставить AE открытым вручную.
+ */
+kill_previous_instance: boolean | null }
 /**
  * Один элемент паттерна поиска. Формат совместим с Electron:
  * `{ type: 'files'|'folders', ext: string[] }`.
@@ -1148,6 +1489,10 @@ export type SelectFoldersOptions = { multiSelect?: boolean }
 export type StatInfo = { size: number; mtimeMs: number; atimeMs: number; ctimeMs: number; birthtimeMs: number; isFile: boolean; isDir: boolean; isSymlink: boolean }
 export type WhisperModel = { name: string; filename: string; sizeBytes: number; sizeLabel: string; downloaded: boolean; recommended: boolean }
 export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
+/**
+ * Метаданные видео из ноды. camelCase — как в TS-биндингах.
+ */
+export type YtVideoMeta = { title: string; description: string | null; tags: string[] | null; categoryId: string | null; privacyStatus: string | null; madeForKids: boolean | null }
 
 /** tauri-specta globals **/
 

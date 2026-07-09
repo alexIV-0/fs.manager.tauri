@@ -7,6 +7,8 @@ import {
 	Scissors,
 	Clipboard,
 	FilePlus,
+	Workflow,
+	BarChart3,
 	LucideIcon,
 } from 'lucide-react';
 import { ContextMenuItem } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
@@ -51,7 +53,29 @@ interface UseEmptyMenuItemsProps {
 	hasClipboard?: boolean;
 }
 
-type UseMenuItemsProps = UseFileMenuItemsProps | UseFolderMenuItemsProps | UseEmptyMenuItemsProps;
+// ─── Пункты для проектной папки (2-я колонка) ───────────────────────────────
+interface UseProjectMenuItemsProps {
+	type: 'project';
+	// Специфичные для 2-й колонки
+	onOpenNodes: () => void;
+	onOpenStats: () => void;
+	// Зеркало пунктов папки из 3-й колонки
+	onRename: () => void;
+	onCopyPath: () => void;
+	onShowInFinder: () => void;
+	onDelete: () => void;
+	onCreateFolder: () => void;
+	onCopy: () => void;
+	onCut: () => void;
+	onPaste: () => void;
+	hasClipboard?: boolean;
+}
+
+type UseMenuItemsProps =
+	| UseFileMenuItemsProps
+	| UseFolderMenuItemsProps
+	| UseEmptyMenuItemsProps
+	| UseProjectMenuItemsProps;
 
 export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 	if (props.type === 'file') {
@@ -127,6 +151,99 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 				label: 'Переименовать',
 				icon: Pencil,
 				onClick: onRename,
+			},
+			{
+				id: 'copy-path',
+				label: 'Копировать путь',
+				icon: Copy,
+				onClick: onCopyPath,
+			},
+			{
+				id: 'show-in-finder',
+				label: showInSystemLabel,
+				icon: FolderOpenDot,
+				onClick: onShowInFinder,
+			},
+			{
+				id: 'copy',
+				label: 'Копировать',
+				icon: Copy,
+				onClick: onCopy,
+				dividerBefore: true,
+			},
+			{
+				id: 'cut',
+				label: 'Вырезать',
+				icon: Scissors,
+				onClick: onCut,
+			},
+			{
+				id: 'paste',
+				label: 'Вставить',
+				icon: Clipboard,
+				onClick: onPaste,
+				disabled: !hasClipboard,
+			},
+			{
+				id: 'create-folder',
+				label: 'Создать папку',
+				icon: FolderPlus,
+				onClick: onCreateFolder,
+				dividerBefore: true,
+			},
+			{
+				id: 'delete',
+				label: 'Удалить папку',
+				icon: Trash2,
+				onClick: onDelete,
+				dividerBefore: true,
+				color: '#f56565',
+			},
+		];
+
+		return items;
+	}
+
+	if (props.type === 'project') {
+		const {
+			onOpenNodes,
+			onOpenStats,
+			onRename,
+			onCopyPath,
+			onShowInFinder,
+			onDelete,
+			onCreateFolder,
+			onCopy,
+			onCut,
+			onPaste,
+			hasClipboard,
+		} = props;
+
+		// ⚙️ ЕДИНОЕ МЕСТО настройки пунктов меню проектной папки.
+		//    • добавить пункт   → дописать объект в массив;
+		//    • убрать пункт     → удалить/закомментировать строку;
+		//    • отключить пункт  → поставить `disabled: true` (станет серым, некликабельным).
+		const items: ContextMenuItem[] = [
+			// ── Специфичные для 2-й колонки ─────────────────────────────
+			{
+				id: 'open-nodes',
+				label: 'Настройка нод',
+				icon: Workflow,
+				onClick: onOpenNodes,
+			},
+			{
+				id: 'stats',
+				label: 'Статистика',
+				icon: BarChart3,
+				onClick: onOpenStats,
+			},
+			// ── Зеркало пунктов папки из 3-й колонки ────────────────────
+			{
+				id: 'rename',
+				label: 'Переименовать',
+				icon: Pencil,
+				onClick: onRename,
+				dividerBefore: true,
 			},
 			{
 				id: 'copy-path',

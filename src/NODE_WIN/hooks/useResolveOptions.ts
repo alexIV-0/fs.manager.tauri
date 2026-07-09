@@ -2,7 +2,7 @@ import { folderPath_store, pathPattern_store, typeOfFile_store } from '@/Store/M
 import { commands, unwrap } from '@/Utils/specta';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { userInputHistory_store } from '@/Store/Node/userInputHistory_store';
-import { PatternKeys } from '@/types/searchType';
+import { pathPatternTokens } from '@/Utils/masks';
 import { useCallback } from 'react';
 import { useNodeId, useReactFlow } from '@xyflow/react';
 import { joinPath } from '@/Utils/joinPath';
@@ -34,6 +34,31 @@ function resolveRelativePath(base: string, rel: string): string {
 		}
 	}
 	return baseParts.join(sep) || sep;
+}
+
+// Группирует каталог чатов бота (channels[] аккаунта telegram) в опции выпадающего списка
+// с разделителями-заголовками: ---каналы / ---темы / ---чаты (SimpleDDM/ChipAutocomplete
+// рисуют «---текст» как заголовок). Значение пункта — читаемое имя (title / @username / id /
+// имя темы / Topic #N); chatId/threadId плагин резолвит из каталога. Общий для #tgSources
+// (сбор) и #tgChannels (постинг) — каталог один на пользователя.
+function buildTgGroupedList(sources: any[]): string[] {
+	const lbl = (c: any): string => c?.title || (c?.username ? `@${c.username}` : c?.id != null ? String(c.id) : '');
+	const channels: string[] = [];
+	const chats: string[] = [];
+	const topics: string[] = [];
+	for (const c of Array.isArray(sources) ? sources : []) {
+		const label = lbl(c);
+		if (label) (c?.type === 'channel' ? channels : chats).push(label);
+		for (const t of Array.isArray(c?.topics) ? c.topics : []) {
+			const tl = t?.name || (t?.threadId != null ? `Topic #${t.threadId}` : '');
+			if (tl) topics.push(tl);
+		}
+	}
+	const out: string[] = [];
+	if (channels.length) out.push('---каналы', ...channels);
+	if (topics.length) out.push('---темы', ...topics);
+	if (chats.length) out.push('---чаты', ...chats);
+	return out;
 }
 
 export function useResolveOptions(propertyId?: string) {
@@ -73,14 +98,28 @@ export function useResolveOptions(propertyId?: string) {
 							// $loopIndex показываем только если нода реально внутри луп-ноды
 							// (рантайм-значение есть только там; снаружи токен резолвится в '').
 							const insideLoop = isInsideLoop(nodeId, getNode);
-							const keys = Object.values(PatternKeys).filter(
-								(k) => k !== PatternKeys.loopIndex || insideLoop,
-							);
-							return [...keys.map((key) => `$${key}`), '$random(', ...customNames];
+							// Токены масок выводятся из единого источника (src/Utils/masks.ts).
+							return [...pathPatternTokens(insideLoop), ...customNames];
 						}
 
 						case 'folders': {
 							if (!path) return [];
+
+							// Чип-навигация (multiSelect, напр. Finder): если уже выбраны папки-чипы —
+							// углубляемся в них и показываем ПОДпапки выбранной (drill-down). '..' поднимает.
+							const chips = (currentChips ?? []).filter((c) => c && c !== '../');
+							if (chips.length > 0) {
+								let dir = path;
+								for (const c of chips) dir = c === '..' ? resolveRelativePath(dir, '..') : joinPath(dir, c);
+								let sub: string[] = [];
+								try {
+									const r = unwrap(await commands.getSomeFromFolder(dir, [{ type: 'folders', ext: [] }])) as any;
+									sub = Array.isArray(r) ? r : (r?.folders ?? []);
+								} catch (e) {
+									console.warn('[#folders] chip-навигация, не удалось прочитать:', dir, e);
+								}
+								return ['../', ...sub];
+							}
 
 							// VSCode-подобная навигация: директорию берём из уже введённого текста
 							// (всё до последнего '/'), относительно папки проекта ($projectPathGD).
@@ -179,6 +218,23 @@ export function useResolveOptions(propertyId?: string) {
 							}
 						}
 
+						case 'youtubeAccounts': {
+							if (!path) return [];
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							try {
+								const res = unwrap(await commands.accountList(mainFolderName, 'youtube')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								return arr
+									.map((a: any) => a?.name)
+									.filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+							} catch (e) {
+								console.warn('[#youtubeAccounts] не удалось получить список каналов:', e);
+								return [];
+							}
+						}
+
 						case 'vkGroups': {
 							if (!path) return [];
 							const parts = path.split(/[\\/]+/).filter(Boolean);
@@ -200,6 +256,77 @@ export function useResolveOptions(propertyId?: string) {
 								return arr.map((g: any) => String(g?.name)).filter((n: string) => n && n !== 'null');
 							} catch (e) {
 								console.warn('[#vkGroups] не удалось получить группы:', e);
+								return [];
+							}
+						}
+
+						case 'tgAccounts': {
+							if (!path) return [];
+							// path = "…/mainFolder/projectName" → mainFolderName = предпоследний сегмент
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							try {
+								const res = unwrap(await commands.accountList(mainFolderName, 'telegram')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								return arr
+									.map((a: any) => a?.name)
+									.filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+							} catch (e) {
+								console.warn('[#tgAccounts] не удалось получить список ботов:', e);
+								return [];
+							}
+						}
+
+						case 'tgChannels': {
+							if (!path) return [];
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							// выбранный бот — из соседнего поля 'account' этой же ноды
+							let accountName = '';
+							if (nodeId) {
+								const node = getNode(nodeId);
+								const nodeProps = (node?.data as any)?.properties ?? [];
+								const acc = nodeProps.find((pr: any) => pr.id === 'account');
+								accountName = acc?.controlProps?.value ?? '';
+							}
+							if (!accountName) return [];
+							try {
+								// account_list отдаёт channels[] (без токена) — каталог берём оттуда.
+								// Группируем как в сборе: ---каналы / ---темы / ---чаты (каталог один на
+								// пользователя, постить можно в канал, тему форума или чат).
+								const res = unwrap(await commands.accountList(mainFolderName, 'telegram')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								const acc = arr.find((a: any) => a?.name === accountName);
+								return buildTgGroupedList(Array.isArray(acc?.channels) ? acc.channels : []);
+							} catch (e) {
+								console.warn('[#tgChannels] не удалось получить каналы:', e);
+								return [];
+							}
+						}
+
+						case 'tgSources': {
+							if (!path) return [];
+							const parts = path.split(/[\\/]+/).filter(Boolean);
+							const mainFolderName = parts.length >= 2 ? parts[parts.length - 2] : '';
+							if (!mainFolderName) return [];
+							// выбранный бот — из соседнего поля 'account' этой же ноды (один бот на главную папку)
+							let accountName = '';
+							if (nodeId) {
+								const node = getNode(nodeId);
+								const nodeProps = (node?.data as any)?.properties ?? [];
+								const acc = nodeProps.find((pr: any) => pr.id === 'account');
+								accountName = acc?.controlProps?.value ?? '';
+							}
+							if (!accountName) return [];
+							try {
+								const res = unwrap(await commands.accountList(mainFolderName, 'telegram')) as any;
+								const arr = Array.isArray(res) ? res : [];
+								const acc = arr.find((a: any) => a?.name === accountName);
+								return buildTgGroupedList(Array.isArray(acc?.channels) ? acc.channels : []);
+							} catch (e) {
+								console.warn('[#tgSources] не удалось получить источники:', e);
 								return [];
 							}
 						}

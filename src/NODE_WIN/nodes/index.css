@@ -45,3 +45,10 @@
 	outline-offset: 0px;
 	border-radius: 6px;
 }
+
+/* Spy — пилюля скруглена под свой радиус, дефолтный прямоугольный outline обёртки
+   не совпадает с формой. Подсветку рисуем кольцом на самой пилюле (см. SpyNode.tsx). */
+.react-flow__node-spy.selected {
+	outline: none !important;
+	border-radius: 14px;
+}

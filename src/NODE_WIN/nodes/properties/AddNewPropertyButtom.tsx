@@ -87,8 +87,15 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 				}) as Property[];
 				return { ...node, data: { ...nodeData, properties: updatedProperties } };
 			});
+			// Пересчитать computedOutput этой ноды и протолкнуть новый тип вниз по цепочке.
+			// Без этого смена типа в выпадашке меняла только controlProps.value, а
+			// исходящий коннектор (и downstream-ноды) оставались со старым/пустым типом.
+			// ВАЖНО: через setTimeout(0), как handleAdd ниже. Синхронный вызов читает
+			// узел из стора ДО того как updateNode выше «осел», ловит старое value и
+			// откатывает выпадашку назад (баг «что ни выбери — всегда старый тип»).
+			setTimeout(() => handleNodePropertyChange(nodeId), 0);
 		},
-		[nodeId, property.id, reactFlow],
+		[nodeId, property.id, reactFlow, handleNodePropertyChange],
 	);
 
 	// ── Фабрика новых свойств ─────────────────────────────────────────────────
@@ -187,6 +194,51 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isOutput: false,
 						acceptedTypes: [],
 						outputType: 'boolean',
+						required: false,
+					} satisfies Property;
+
+				// Диапазон-таймкод: MM:SS, 0..10:00. Слайдер хранит секунды → на выходе [секунды, секунды].
+				case 'TimeRange':
+					return {
+						id: `dynValueRange_${nanoid(5)}`,
+						controlType: 'valueRange',
+						controlProps: {
+							label: baseLabel,
+							tooltip: '',
+							value: [0, 600],
+							format: 'timecode',
+							unit: 'seconds',
+							range: [0, 600],
+							step: 5,
+							allowManualOverride: true,
+							editLabel: true,
+						},
+						isInput: false,
+						isOutput: false,
+						acceptedTypes: [],
+						outputType: 'timecode',
+						required: false,
+					} satisfies Property;
+
+				// Диапазон-число: целые 0..10. На выходе [число, число].
+				case 'NumberRange':
+					return {
+						id: `dynValueRange_${nanoid(5)}`,
+						controlType: 'valueRange',
+						controlProps: {
+							label: baseLabel,
+							tooltip: '',
+							value: [0, 10],
+							format: 'integer',
+							range: [0, 10],
+							step: 1,
+							allowManualOverride: true,
+							editLabel: true,
+						},
+						isInput: false,
+						isOutput: false,
+						acceptedTypes: [],
+						outputType: 'string',
 						required: false,
 					} satisfies Property;
 			}

@@ -799,3 +799,111 @@ pub fn plugin_manager_destroy(
     println!("[PluginManager] Destroyed");
     Ok(())
 }
+
+// ==================== BUILD PLUGIN (dev only) ====================
+
+/// Результат сборки плагина. Форма совпадает с тем, что ждёт фронтовый handleBuild
+/// (success/stdout/stderr/error).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginBuildResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Собирает один плагин из `plugins-dev/<id>` в `distr-plugins/` через
+/// `plugins-dev/_packScripts/build-plugin.js` (esbuild). Доступно только в dev —
+/// в собранном приложении нет ни исходников, ни node.
+///
+/// GUI-процесс на macOS не наследует PATH из шелла, поэтому node запускается через
+/// login-shell (`$SHELL -lc`), который подтягивает PATH из профиля (homebrew/nvm).
+#[tauri::command]
+pub fn plugin_build(plugin_id: String) -> Result<PluginBuildResult, String> {
+    // id уходит в shell-строку — пускаем только безопасные символы.
+    if plugin_id.is_empty()
+        || !plugin_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(format!("Invalid plugin id: {:?}", plugin_id));
+    }
+
+    // В dev current_dir() = src-tauri/, корень репо — на уровень выше.
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let repo_root = cwd.parent().map(|p| p.to_path_buf()).unwrap_or(cwd.clone());
+    let build_script = repo_root
+        .join("plugins-dev")
+        .join("_packScripts")
+        .join("build-plugin.js");
+
+    if !build_script.exists() {
+        return Err(format!(
+            "Build script not found: {} — сборка плагинов доступна только в dev-окружении с исходниками репозитория.",
+            build_script.display()
+        ));
+    }
+
+    let output = run_plugin_build(&repo_root, &build_script, &plugin_id)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let success = output.status.success();
+
+    Ok(PluginBuildResult {
+        success,
+        stdout,
+        stderr,
+        error: if success {
+            None
+        } else {
+            Some(format!(
+                "build-plugin.js завершился с кодом {:?}. Проверь, что установлен node (см. stderr).",
+                output.status.code()
+            ))
+        },
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_plugin_build(
+    repo_root: &Path,
+    build_script: &Path,
+    plugin_id: &str,
+) -> Result<std::process::Output, String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // cd в корень репо (build-plugin.js читает process.cwd()) + node <script> <id>.
+    let cmd = format!(
+        "cd {} && node {} {}",
+        sh_single_quote(&repo_root.to_string_lossy()),
+        sh_single_quote(&build_script.to_string_lossy()),
+        sh_single_quote(plugin_id),
+    );
+    std::process::Command::new(&shell)
+        .arg("-lc")
+        .arg(&cmd)
+        .output()
+        .map_err(|e| format!("Не удалось запустить shell '{}': {}", shell, e))
+}
+
+#[cfg(target_os = "windows")]
+fn run_plugin_build(
+    repo_root: &Path,
+    build_script: &Path,
+    plugin_id: &str,
+) -> Result<std::process::Output, String> {
+    std::process::Command::new("node")
+        .current_dir(repo_root)
+        .arg(build_script)
+        .arg(plugin_id)
+        .output()
+        .map_err(|e| format!("Не удалось запустить node: {}. Убедись, что node в PATH.", e))
+}
+
+/// Экранирование строки для помещения в одиночные кавычки POSIX-shell.
+#[cfg(not(target_os = "windows"))]
+fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}

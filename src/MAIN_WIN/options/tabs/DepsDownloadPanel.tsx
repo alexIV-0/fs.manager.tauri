@@ -9,7 +9,7 @@
 import { greenColor, greyColor, redColor, cyanColor, yellowColor } from '@/Store/Color/grayColor';
 import { folderPath_store, programPathPattern_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
-import { Box, Button, CircularProgress, LinearProgress, Tooltip, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, FormControlLabel, LinearProgress, Switch, TextField, Tooltip, Typography } from '@mui/material';
 import { listen } from '@tauri-apps/api/event';
 import { CheckCircle2, Download, FolderInput } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -336,6 +336,161 @@ export function WhisperModelsSection() {
 					);
 				})}
 			</Box>
+		</Box>
+	);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Локальный telegram-bot-api server (большие файлы Telegram >20МБ)
+// ════════════════════════════════════════════════════════════════════════════════
+
+type TgServerCfg = {
+	enabled: boolean;
+	binPath: string;
+	apiId: string;
+	apiHash: string;
+	port: number;
+};
+
+const TG_DEFAULT: TgServerCfg = { enabled: false, binPath: '', apiId: '', apiHash: '', port: 8081 };
+
+export function TgServerSection() {
+	const [cfg, setCfg] = useState<TgServerCfg>(TG_DEFAULT);
+	const [busy, setBusy] = useState(false);
+	const [progress, setProgress] = useState<DepsProgress | null>(null);
+	const [msg, setMsg] = useState<string>('');
+
+	useEffect(() => {
+		commands
+			.appSettingsGet()
+			.then((r) => {
+				const t = ((unwrap(r) as any)?.tgServer ?? {}) as Partial<TgServerCfg>;
+				setCfg({ ...TG_DEFAULT, ...t });
+			})
+			.catch(() => {});
+		const un = listen<DepsProgress>('deps-progress', (e) => {
+			if (e.payload.id === 'tgserver') setProgress(e.payload);
+		});
+		return () => {
+			un.then((f) => f()).catch(() => {});
+		};
+	}, []);
+
+	// Сохраняем секцию tgServer целиком (patch мержит по верхнему ключу).
+	const save = (patch: Partial<TgServerCfg>) => {
+		setCfg((prev) => {
+			const next = { ...prev, ...patch };
+			commands.appSettingsPatch({ tgServer: next } as any).catch(() => {});
+			return next;
+		});
+	};
+
+	const handleDownload = async () => {
+		setBusy(true);
+		setMsg('');
+		setProgress(null);
+		try {
+			const path = unwrap(await commands.depsDownloadTgServer());
+			save({ binPath: path });
+			setMsg('✅ скачано: ' + path);
+		} catch (e) {
+			setMsg('❌ ' + String(e));
+		} finally {
+			setBusy(false);
+			setProgress(null);
+		}
+	};
+
+	const field = (label: string, key: keyof TgServerCfg, placeholder = '', width = 180) => (
+		<TextField
+			label={label}
+			value={String((cfg as any)[key] ?? '')}
+			placeholder={placeholder}
+			size='small'
+			onChange={(e) => save({ [key]: key === 'port' ? Number(e.target.value) || 0 : e.target.value } as any)}
+			sx={{ width, '& .MuiInputBase-input': { fontSize: 12 }, '& label': { fontSize: 12 } }}
+		/>
+	);
+
+	return (
+		<Box sx={{ px: 1, pb: 1 }}>
+			<Typography variant='caption' sx={{ color: greyColor(60), display: 'block', mb: 1 }}>
+				Локальный Bot API server — снимает лимит Telegram 20/50 МБ → до 2 ГБ. Нужен бинарь (скачать ниже или
+				указать путь), <code>api_id</code>/<code>api_hash</code> с my.telegram.org и форум-группы с ботом-админом.
+			</Typography>
+
+			<FormControlLabel
+				control={<Switch size='small' checked={cfg.enabled} onChange={(e) => save({ enabled: e.target.checked })} />}
+				label={<Typography variant='caption' sx={{ color: greyColor(85) }}>Включить (стартовать при обработке)</Typography>}
+				sx={{ mb: 0.5 }}
+			/>
+
+			<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+				{field('api_id', 'apiId', '1234567', 130)}
+				{field('api_hash', 'apiHash', 'a1b2c3…', 240)}
+				{field('Порт', 'port', '8081', 90)}
+			</Box>
+
+			<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 1 }}>
+				<Button
+					variant='outlined'
+					size='small'
+					disabled={busy}
+					onClick={handleDownload}
+					startIcon={busy ? <CircularProgress size={16} /> : <Download size={16} />}
+					sx={{ textTransform: 'none', borderColor: cyanColor(60), color: greyColor(90) }}
+				>
+					{busy ? 'Скачивание…' : 'Скачать бинарь (под мою ОС)'}
+				</Button>
+				<Typography variant='caption' sx={{ color: greyColor(55) }}>
+					из релиза tg-bot-api-builds
+				</Typography>
+			</Box>
+
+			<Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 0.5 }}>
+				{field('Путь к telegram-bot-api', 'binPath', '/…/telegram-bot-api', 420)}
+				<Button
+					variant='text'
+					size='small'
+					startIcon={<FolderInput size={14} />}
+					onClick={async () => {
+						try {
+							const picked = unwrap(await commands.selectFiles({ multiSelect: false } as any));
+							if (Array.isArray(picked) && picked[0]) save({ binPath: picked[0] });
+						} catch {
+							/* отмена выбора — ок */
+						}
+					}}
+					sx={{ textTransform: 'none', color: cyanColor(70) }}
+				>
+					Указать файл
+				</Button>
+				{cfg.binPath && (
+					<Typography variant='caption' sx={{ color: greenColor(75), display: 'flex', alignItems: 'center', gap: 0.5 }}>
+						<CheckCircle2 size={14} /> путь задан
+					</Typography>
+				)}
+			</Box>
+
+			{busy && progress && (
+				<Box sx={{ mt: 1 }}>
+					<Typography variant='caption' sx={{ color: greyColor(70) }}>{progress.text}</Typography>
+					<LinearProgress
+						variant={progress.percent > 0 ? 'determinate' : 'indeterminate'}
+						value={progress.percent}
+						sx={{ mt: 0.5, height: 4, borderRadius: 2 }}
+					/>
+				</Box>
+			)}
+
+			{msg && (
+				<Typography
+					variant='caption'
+					sx={{ display: 'block', mt: 0.5, color: msg.startsWith('✅') ? greenColor(75) : redColor(75), wordBreak: 'break-all' }}
+				>
+					{msg}
+				</Typography>
+			)}
 		</Box>
 	);
 }

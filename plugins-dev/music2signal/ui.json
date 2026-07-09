@@ -1,0 +1,79 @@
+{
+	"type": "music2signal",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 520,
+	"data": {
+		"label": "Music to signal",
+		"colorType": "helpers",
+		"comment": "Из музыкального стема (ffmpeg astats) считает огибающую громкости, интервалы «звучит», пик энергии и события динамики (buildup / drop / dropout). Выход — сигнальный JSON для скорера и точек реза.",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Music stem",
+					"tooltip": "Музыкальная дорожка (стем после разделения в ComfyUI).",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": ["audio"],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до сигнального JSON (при Save to file). Если пустой — рядом с исходником.",
+					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": ["path"],
+				"required": false
+			},
+			{
+				"id": "windowMs",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Окно анализа, мс",
+					"tooltip": "Шаг огибающей громкости. Меньше — точнее по времени, но больше точек. 100 мс — разумный дефолт.",
+					"value": 100,
+					"minValue": 20,
+					"maxValue": 500,
+					"step": 10,
+					"useValuesAsLabels": true,
+					"minMaxValueVisible": true
+				},
+				"outputType": "number"
+			},
+			{
+				"id": "saveToFile",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Save to file",
+					"tooltip": "<b>Вкл</b> — сохранить сигнальный JSON в файл, на выход идёт путь (тип text).<div><b>Выкл</b> — отдать JSON дальше строкой (тип string): удобно инжектить содержимым в promptUpdater.</div>",
+					"value": true
+				},
+				"outputType": "boolean",
+				"required": false,
+				"outputTypeMap": {
+					"true": "text",
+					"false": "string"
+				}
+			}
+		],
+		"output": {
+			"sourceProperty": "saveToFile"
+		},
+		"isValid": false
+	}
+}

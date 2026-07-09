@@ -30,6 +30,16 @@ export interface LoadPresetModalProps extends ModalTheme {
 	onLoad: (text: string) => void;
 }
 
+export interface RunPanelState {
+	ok: boolean;
+	result?: unknown;
+	error?: string;
+	logs: string[];
+	durationMs: number;
+	/** Имена входов-коннекторов, значение которых недоступно во время теста. */
+	unavailable: string[];
+}
+
 export interface TextEditModalProps extends ModalTheme {
 	label: string;
 	value: string;
@@ -46,4 +56,10 @@ export interface TextEditModalProps extends ModalTheme {
 	onResizeMouseDown: (e: React.MouseEvent, dir: ResizeDirection) => void;
 	onSavePreset: () => void;
 	onLoadPreset: () => void;
+	// ── Runnable-режим (нода jsCode) ──
+	runnable?: boolean;
+	running?: boolean;
+	runResult?: RunPanelState | null;
+	onRun?: () => void;
+	onClearRun?: () => void;
 }

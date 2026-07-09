@@ -80,6 +80,7 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	launch_ae_with_script: (aePath: string, scriptPath: string) => ({ aePath, scriptPath }),
 	// Plugins
 	plugin_manager_init: () => ({}),
+	plugin_build: (pluginId) => ({ pluginId }),
 	plugin_manager_load_plugin: (folderName) => ({ folderName }),
 	plugin_manager_unload_plugin: (pluginId, version) => ({ pluginId, version }),
 	plugin_manager_get_all_plugins: () => ({}),
@@ -402,6 +403,7 @@ export const tauriAPI = {
 		tempDir?: string;
 		keepTempFiles?: boolean;
 		timeoutSec?: number;
+		killPreviousInstance?: boolean;
 	}) => tauriInvoke<{ success: boolean; data?: any; error?: string }>('run_script_in_ae', args),
 	launchAEWithScript: (aePath: string, scriptPath: string) => tauriInvoke<void>('launch_ae_with_script', aePath, scriptPath),
 

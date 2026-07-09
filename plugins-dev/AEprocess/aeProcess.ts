@@ -6,6 +6,9 @@
 import path from 'path';
 import { fs, ae, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+// Дефолтный (встроенный) набор свойств ноды. esbuild инлайнит этот json в бандл.
+// Всё, что юзер добавил через «+», в этом наборе отсутствует → это его параметры.
+import defaultUi from './ui.json';
 
 export { onLoad } from '../_template/tauri';
 
@@ -26,19 +29,55 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 
 	sendToMW('statusbar', { text: `${_description.infoText}: [AE process]\n ${_description.curItem}` });
 
-	const aeScript: string = _item.import.aeScript[0];
+	// Источник скрипта. Импорт перебивает ручной выбор в ноде:
+	//   • _item.import.aeScript — путь, пришедший по соединению (массив);
+	//   • _item.aeScript        — выбранный прямо в ноде pathNavigator'ом.
+	const importedScript: string | undefined = _item.import?.aeScript?.[0];
+	const pickedScript: string = typeof _item.aeScript === 'string' ? _item.aeScript : '';
+	const rawScript = (importedScript || pickedScript || '').trim();
+	if (!rawScript) {
+		throw new Error('[aeProcess] AE-скрипт не задан — выбери файл в ноде или подай его на вход «AE script»');
+	}
+	// Абсолютный путь («Custom File...» / импорт) берём как есть; относительный
+	// (листание папок в навигаторе) — от корня проекта на GD: pathNavigator листает
+	// именно projectPathGD.
+	const aeScript: string = path.isAbsolute(rawScript) ? rawScript : path.join(_description.projectPathGD, rawScript);
+	if (!(await fs.existsFile(aeScript))) {
+		throw new Error(`[aeProcess] AE-скрипт не найден: "${aeScript}"`);
+	}
+
 	const aePath: string = _description.programmPath?.afterEffect?.[0];
 	if (!aePath) {
 		throw new Error('[aeProcess] description.programmPath.afterEffect не указан — пропиши путь до After Effects в настройках');
 	}
 
-	// Входы, добавленные через `operation` (Input files). Их имена-лейблы лежат в
-	// _item.operation, а пришедшие значения — в _item.import[label] (массив, как в import:
-	// файл → массив путей, значение → массив значений). Собираем их в отдельный aeInput.
-	const inputNames: string[] = Array.isArray(_item.operation) ? _item.operation : [];
+	// aeInput — все ПОЛЬЗОВАТЕЛЬСКИЕ входы/параметры ноды, по их лейблам. Юзер добавляет
+	// их через «+» (Input files): файловые входы (Link) и значения (valueRange/timecode/
+	// slider). В `_item` они лежат так:
+	//   • прямое значение свойства   → _item[label]        (valueRange = [min,max] и т.п.);
+	//   • пришедшее по коннектору     → _item.import[label] (массив путей).
+	//
+	// Что НЕ пускаем в aeInput:
+	//   • дефолтные свойства ноды — берём их id прямо из ui.json (aeScript/targetPath/
+	//     operation/maxWaitTime); они обрабатываются отдельно. Добавишь встроенное свойство
+	//     в ui.json — оно исключится автоматически, править этот список не нужно;
+	//   • служебные поля execObj/ноды (их кладёт processing-слой, не плагин).
+	const DEFAULT_PROP_IDS = new Set<string>(((defaultUi as any)?.data?.properties ?? []).map((p: any) => p.id));
+	const AE_SYSTEM_KEYS = new Set<string>([
+		'id', 'nodeType', 'import', 'isTerminal', 'functionName',
+		'nodeLabel', 'pluginId', 'pluginVersion', 'colorType', 'cost', 'costUnit',
+	]);
+	const isUserParam = (key: string) => !DEFAULT_PROP_IDS.has(key) && !AE_SYSTEM_KEYS.has(key);
+
 	const aeInput: Record<string, any> = {};
-	for (const name of inputNames) {
-		aeInput[name] = _item.import?.[name];
+	// 1) Прямые значения, заданные прямо в ноде (valueRange, timecode, slider, …).
+	for (const key of Object.keys(_item)) {
+		if (isUserParam(key)) aeInput[key] = _item[key];
+	}
+	// 2) Файловые входы по коннекторам перебивают прямое значение: в _item[label] лежит
+	//    accepted-тип (напр. ["video"]), а реальный путь приходит в _item.import[label].
+	for (const key of Object.keys(_item.import ?? {})) {
+		if (isUserParam(key)) aeInput[key] = _item.import[key];
 	}
 
 	// inObj — что попадёт в JSX как `var inObj = {...}`. Берём ТОЛЬКО нужные поля
@@ -90,6 +129,9 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 		text: `[aeProcess] запуск AE\n  скрипт: ${aeScript}\n  temp/output dir: ${tempScriptDir}\n  таймаут: ${Math.round(maxWaitSec / 60)} мин (${Math.round(maxWaitSec)} c)`,
 	});
 
+	// Дефолт true, если галку не трогали (в старых сохранённых пайплайнах поля не будет).
+	const killPreviousAE = _item.killPreviousAE !== false;
+
 	const result = await ae.runScript({
 		aePath,
 		scriptPath: aeScript,
@@ -97,6 +139,7 @@ export async function aeProcess(_item: any, _description: any): Promise<any[]> {
 		tempDir: tempScriptDir,
 		keepTempFiles: true,
 		timeoutSec: Math.round(maxWaitSec),
+		killPreviousInstance: killPreviousAE,
 	});
 
 	if (result.success) {

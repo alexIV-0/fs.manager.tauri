@@ -43,7 +43,7 @@
 			},
 			{
 				"id": "splitBy",
-				"controlType": "timeRange",
+				"controlType": "valueRange",
 				"controlProps": {
 					"label": "Duration (in sec.)",
 					"tooltip": "Диапазон длительности для нарезки файла (в секундах, MM:SS). Если оба значения одинаковые, файл режется строго по этой длительности. Если это диапазон, то для каждого сегмента случайно выбирается значение из этого диапазона. Оставить оба значения на 0 — режим разделения по сценам/чёрным кадрам.",
@@ -55,7 +55,7 @@
 					"value": [0, 0]
 				},
 				"isInput": true,
-				"acceptedTypes": ["timeRange"],
+				"acceptedTypes": ["valueRange"],
 				"required": false,
 				"outputType": "array"
 			},

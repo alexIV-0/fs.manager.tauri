@@ -436,7 +436,7 @@ function JsonNavigator({ property, onChange }: JsonNavigatorProps) {
 			<Stack direction='row' alignItems='center' gap={1}>
 				{property.isInput && <InputHandle property={property} />}
 				<PropertyLabelEditor label={controlProps?.label ?? ''} editLabel={editLabel} onSave={handleSaveLabel} />
-				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} />
+				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 			</Stack>
 
 			{jsonLoadError && (

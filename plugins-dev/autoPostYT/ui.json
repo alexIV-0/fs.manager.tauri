@@ -1,0 +1,158 @@
+{
+	"type": "autoPostYT",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 640,
+	"data": {
+		"label": "YouTube Post Video",
+		"colorType": "posting",
+		"comment": "Нода Poster: публикует ОДИН входной файл на YouTube-канал.&nbsp;<div>Вход — видео (обычно от ноды Find). Title/Description/Tags можно напечатать (с паттернами вроде $clearName) ИЛИ подать связью (связь главнее). Канал выбирается из подключённых. Выход — запощенный файл.</div><div>Публикуется как public; до прохождения аудита проекта Google залочит видео в private.</div>",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Video",
+					"tooltip": "Видео для публикации (обычно с выхода ноды Find).",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "title",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Title",
+					"tooltip": "Заголовок ролика (≤100 символов). Поддерживает паттерны ($clearName, $fileName, $projectName, $findTime…). Можно подать связью (string/text) — связь главнее. Пусто = имя файла.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "description",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Description",
+					"tooltip": "Описание (≤5000 символов). Поддерживает паттерны. Можно подать связью — связь главнее. Пусто = без описания.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "tags",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Tags",
+					"tooltip": "Теги через запятую (суммарно ≤500 символов). Поддерживает паттерны. Можно подать связью — связь главнее.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "thumbnail",
+				"controlType": "textedit",
+				"controlProps": {
+					"label": "Thumbnail (обложка)",
+					"tooltip": "Путь к картинке-обложке ИЛИ связь с нодой-картинкой. Пусто = без кастомной обложки (авто-кадр YouTube). Требует канал с подтверждённым телефоном.",
+					"value": "",
+					"language": "plaintext"
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"image"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "account",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Channel",
+					"tooltip": "YouTube-канал этой главной папки. «Добавить канал» — вход через Google (свой client_id/secret) и сохранение refresh-токена канала.",
+					"options": [
+						"#youtubeAccounts",
+						"---",
+						"Добавить канал"
+					],
+					"freeInput": false,
+					"value": ""
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "categoryId",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Category",
+					"tooltip": "Категория ролика на YouTube.",
+					"options": [
+						"1 — Film & Animation",
+						"2 — Autos & Vehicles",
+						"10 — Music",
+						"15 — Pets & Animals",
+						"17 — Sports",
+						"19 — Travel & Events",
+						"20 — Gaming",
+						"22 — People & Blogs",
+						"23 — Comedy",
+						"24 — Entertainment",
+						"25 — News & Politics",
+						"26 — Howto & Style",
+						"27 — Education",
+						"28 — Science & Technology",
+						"29 — Nonprofits & Activism"
+					],
+					"freeInput": false,
+					"value": "22 — People & Blogs"
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "madeForKids",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Made for kids",
+					"tooltip": "Контент для детей (COPPA). Обязательная декларация YouTube. Влияет на комментарии/уведомления. По умолчанию — выкл.",
+					"value": false
+				},
+				"outputType": "boolean"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

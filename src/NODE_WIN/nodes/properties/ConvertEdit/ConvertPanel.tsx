@@ -35,6 +35,8 @@ import {
 	defaultVideoFilter,
 	defaultAudioFilter,
 } from './types';
+import { alphaAvailable, pixFmtsFor, type VideoCodecId } from '@/Utils/ffmpegCaps';
+import { CONVERT_THEME_FULL, type ConvertTheme } from './convertThemes';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Codec capability maps
@@ -110,6 +112,16 @@ function codecLabel(c: string): string {
 
 function fileBasename(p: string): string {
 	return p.split(/[/\\]/).pop() ?? p;
+}
+
+/** Возвращает подмножество labels, разрешённое темой (allowed=undefined → все). */
+function pickLabels<T extends string>(labels: Record<T, string>, allowed?: readonly string[]): Record<T, string> {
+	if (!allowed) return labels;
+	const out = {} as Record<T, string>;
+	(Object.keys(labels) as T[]).forEach((k) => {
+		if (allowed.includes(k)) out[k] = labels[k];
+	});
+	return out;
 }
 
 function ParamRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -244,20 +256,17 @@ function FrameBlock({
 	const label = greyColor(50);
 	const defC = greyColor(80);
 
-	const lockAspect = frame.lockAspect;
+	// "Preserve proportions" is expressed as a 0 (auto) dimension: the non-zero field sets
+	// that side and the other is derived from the source aspect ratio at conversion time.
+	const autoAspect = frame.width === 0 || frame.height === 0;
 
-	const setW = (v: number) =>
-		onChange({
-			...frame,
-			width: v,
-			height: lockAspect && frame.width > 0 ? Math.round((v / frame.width) * frame.height) : frame.height,
-		});
-	const setH = (v: number) =>
-		onChange({
-			...frame,
-			height: v,
-			width: lockAspect && frame.height > 0 ? Math.round((v / frame.height) * frame.width) : frame.width,
-		});
+	const setW = (v: number) => onChange({ ...frame, width: v });
+	const setH = (v: number) => onChange({ ...frame, height: v });
+
+	const toggleAuto = () =>
+		autoAspect
+			? onChange({ ...frame, width: frame.width || 1920, height: frame.height || 1080 }) // exit auto → fill defaults
+			: onChange({ ...frame, width: 0, height: 0 }); // enter auto → clear both, user types one side
 
 	return (
 		<Box sx={{ mb: 1.25, border: `1px solid ${border}`, borderRadius: '4px', backgroundColor: bg, overflow: 'hidden' }}>
@@ -335,30 +344,40 @@ function FrameBlock({
 							'& input[type=number]': { MozAppearance: 'textfield' },
 						}}
 					>
-						<Typography sx={{ fontSize: 11, color: label, flexShrink: 0 }}>W</Typography>
-						<Box sx={{ flex: 1 }}>
-							<NumberInput value={frame.width} min={2} max={9999} onChange={setW} />
+						<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+							<Typography sx={{ fontSize: 11, color: label }}>W</Typography>
+							<Box sx={{ width: 64 }}>
+								<NumberInput value={frame.width} min={0} max={9999} onChange={setW} />
+							</Box>
+							<Typography sx={{ fontSize: 11, color: frame.width === 0 ? defC : label }}>
+								{frame.width === 0 ? 'auto' : 'px'}
+							</Typography>
 						</Box>
-						<Typography sx={{ fontSize: 11, color: label, flexShrink: 0 }}>px</Typography>
-						<Typography sx={{ fontSize: 11, color: label, flexShrink: 0 }}>H</Typography>
-						<Box sx={{ flex: 1 }}>
-							<NumberInput value={frame.height} min={2} max={9999} onChange={setH} />
+						<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0, ml: 1.5 }}>
+							<Typography sx={{ fontSize: 11, color: label }}>H</Typography>
+							<Box sx={{ width: 64 }}>
+								<NumberInput value={frame.height} min={0} max={9999} onChange={setH} />
+							</Box>
+							<Typography sx={{ fontSize: 11, color: frame.height === 0 ? defC : label }}>
+								{frame.height === 0 ? 'auto' : 'px'}
+							</Typography>
 						</Box>
-						<Typography sx={{ fontSize: 11, color: label, flexShrink: 0 }}>px</Typography>
 					</Box>
 
-					{/* Lock aspect */}
+					{/* Preserve proportions — sets both sides to 0 (auto); type one side, the other follows the source aspect */}
 					<Box
 						sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
-						onClick={() => onChange({ ...frame, lockAspect: !lockAspect })}
+						onClick={toggleAuto}
 					>
 						<Checkbox
 							size='small'
-							checked={lockAspect}
+							checked={autoAspect}
 							onChange={() => {}}
 							sx={{ p: 0, mr: 0.5, color: label, '&.Mui-checked': { color: defC } }}
 						/>
-						<Typography sx={{ fontSize: 11, color: label }}>Lock aspect ratio</Typography>
+						<Typography sx={{ fontSize: 11, color: label }}>
+							Preserve proportions <span style={{ color: greyColor(38) }}>(0 = auto side)</span>
+						</Typography>
 					</Box>
 				</Box>
 			)}
@@ -418,7 +437,9 @@ function VideoFilterBlock({
 									/>
 								) : (
 									<ParamRow label='Width px'>
-										<NumberInput value={filter.fixedW} min={1} max={7680} onChange={(v) => onChange({ ...filter, fixedW: v })} />
+										<Box sx={{ width: 72 }}>
+											<NumberInput value={filter.fixedW} min={1} max={7680} onChange={(v) => onChange({ ...filter, fixedW: v })} />
+										</Box>
 									</ParamRow>
 								)}
 								{!filter.lockAspect &&
@@ -433,12 +454,14 @@ function VideoFilterBlock({
 										/>
 									) : (
 										<ParamRow label='Height px'>
-											<NumberInput
-												value={filter.fixedH}
-												min={1}
-												max={7680}
-												onChange={(v) => onChange({ ...filter, fixedH: v })}
-											/>
+											<Box sx={{ width: 72 }}>
+												<NumberInput
+													value={filter.fixedH}
+													min={1}
+													max={7680}
+													onChange={(v) => onChange({ ...filter, fixedH: v })}
+												/>
+											</Box>
 										</ParamRow>
 									))}
 								<Box
@@ -484,12 +507,12 @@ function VideoFilterBlock({
 			case 'blur':
 				return (
 					<PanelSlider
-						label='Radius'
-						value={filter.radius}
+						label='Sigma'
+						value={filter.sigma}
 						min={0}
 						max={40}
 						step={0.5}
-						onChange={(v) => onChange({ ...filter, radius: parseFloat(v.toFixed(1)) })}
+						onChange={(v) => onChange({ ...filter, sigma: parseFloat(v.toFixed(1)) })}
 					/>
 				);
 			case 'deinterlace':
@@ -545,47 +568,91 @@ function VideoFilterBlock({
 				return null;
 			case 'fps':
 				return (
-					<PanelSlider
-						label='FPS'
-						value={filter.value}
-						min={1}
-						max={120}
-						step={0.5}
-						onChange={(v) => onChange({ ...filter, value: parseFloat(v.toFixed(2)) })}
-					/>
-				);
-			case 'unsharp':
-				return (
 					<>
 						<PanelSlider
-							label='Amount'
-							value={filter.lumaAmount}
-							min={-10}
-							max={10}
-							step={0.1}
-							noClamp
-							onChange={(v) => onChange({ ...filter, lumaAmount: parseFloat(v.toFixed(2)) })}
-						/>
-						<PanelSlider
-							label='Size (px)'
-							value={filter.lumaSize}
+							label='FPS'
+							value={filter.value}
 							min={1}
-							max={23}
-							step={2}
-							onChange={(v) => onChange({ ...filter, lumaSize: Math.round(v) })}
+							max={120}
+							step={0.5}
+							onChange={(v) => onChange({ ...filter, value: parseFloat(v.toFixed(2)) })}
 						/>
+						<Box
+							sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
+							onClick={() => onChange({ ...filter, smooth: !filter.smooth })}
+						>
+							<Checkbox size='small' checked={!!filter.smooth} onChange={() => {}} sx={{ p: 0, mr: 0.5, color: label, '&.Mui-checked': { color: defC } }} />
+							<Typography sx={{ fontSize: 11, color: label }}>Smooth (motion interpolation)</Typography>
+						</Box>
 					</>
 				);
+			case 'unsharp': {
+				const sharpMethod = filter.method ?? 'cas';
+				return (
+					<>
+						<ParamRow label='Method'>
+							<StyledSelect
+								value={sharpMethod}
+								onChange={(m) => onChange({ ...filter, method: m })}
+								options={['cas', 'unsharp'] as const}
+								getLabel={(m) => (m === 'cas' ? 'CAS (adaptive)' : 'Unsharp mask')}
+							/>
+						</ParamRow>
+						{sharpMethod === 'cas' ? (
+							<PanelSlider
+								label='Strength'
+								value={filter.strength ?? 0.4}
+								min={0}
+								max={1}
+								step={0.05}
+								onChange={(v) => onChange({ ...filter, strength: parseFloat(v.toFixed(2)) })}
+							/>
+						) : (
+							<>
+								<PanelSlider
+									label='Amount'
+									value={filter.lumaAmount}
+									min={-10}
+									max={10}
+									step={0.1}
+									noClamp
+									onChange={(v) => onChange({ ...filter, lumaAmount: parseFloat(v.toFixed(2)) })}
+								/>
+								<PanelSlider
+									label='Size (px)'
+									value={filter.lumaSize}
+									min={1}
+									max={23}
+									step={2}
+									onChange={(v) => onChange({ ...filter, lumaSize: Math.round(v) })}
+								/>
+							</>
+						)}
+					</>
+				);
+			}
 			case 'denoise':
 				return (
-					<PanelSlider
-						label='Strength'
-						value={filter.strength}
-						min={0}
-						max={10}
-						step={0.5}
-						onChange={(v) => onChange({ ...filter, strength: parseFloat(v.toFixed(1)) })}
-					/>
+					<>
+						<ParamRow label='Method'>
+							<StyledSelect
+								value={filter.method ?? 'hqdn3d'}
+								onChange={(m) => onChange({ ...filter, method: m })}
+								options={['hqdn3d', 'fftdnoiz', 'nlmeans', 'atadenoise'] as const}
+								getLabel={(m) =>
+									m === 'hqdn3d' ? 'hqdn3d (light/fast)' : m === 'fftdnoiz' ? 'fftdnoiz (balanced)' : m === 'nlmeans' ? 'nlmeans (max, slow)' : 'atadenoise (static cam)'
+								}
+							/>
+						</ParamRow>
+						<PanelSlider
+							label='Strength'
+							value={filter.strength}
+							min={0}
+							max={10}
+							step={0.5}
+							onChange={(v) => onChange({ ...filter, strength: parseFloat(v.toFixed(1)) })}
+						/>
+					</>
 				);
 			case 'pixfmt':
 				return (
@@ -628,6 +695,102 @@ function VideoFilterBlock({
 							noClamp
 							onChange={(v) => onChange({ ...filter, yPct: parseFloat(v.toFixed(1)) })}
 						/>
+					</>
+				);
+			case 'hue':
+				return (
+					<>
+						<PanelSlider label='Hue (°)' value={filter.degrees} min={-180} max={180} step={1} onChange={(v) => onChange({ ...filter, degrees: Math.round(v) })} />
+						<PanelSlider label='Saturation' value={filter.saturation} min={0} max={3} step={0.05} onChange={(v) => onChange({ ...filter, saturation: parseFloat(v.toFixed(2)) })} />
+					</>
+				);
+			case 'curves':
+				return (
+					<ParamRow label='Preset'>
+						<StyledSelect
+							value={filter.preset}
+							onChange={(p) => onChange({ ...filter, preset: p })}
+							options={['none', 'increase_contrast', 'linear_contrast', 'medium_contrast', 'strong_contrast', 'vintage', 'cross_process', 'negative', 'color_negative', 'darker', 'lighter']}
+						/>
+					</ParamRow>
+				);
+			case 'colormix':
+				return (
+					<ParamRow label='Preset'>
+						<StyledSelect
+							value={filter.preset}
+							onChange={(p) => onChange({ ...filter, preset: p })}
+							options={['grayscale', 'sepia', 'swapRB'] as const}
+							getLabel={(p) => (p === 'grayscale' ? 'Grayscale (b/w)' : p === 'sepia' ? 'Sepia' : 'Swap R↔B')}
+						/>
+					</ParamRow>
+				);
+			case 'colorbalance':
+				return (
+					<>
+						{(
+							[
+								['rs', 'Shadows R'], ['gs', 'Shadows G'], ['bs', 'Shadows B'],
+								['rm', 'Mids R'], ['gm', 'Mids G'], ['bm', 'Mids B'],
+								['rh', 'Highs R'], ['gh', 'Highs G'], ['bh', 'Highs B'],
+							] as const
+						).map(([k, lbl]) => (
+							<PanelSlider key={k} label={lbl} value={filter[k]} min={-1} max={1} step={0.05} noClamp onChange={(v) => onChange({ ...filter, [k]: parseFloat(v.toFixed(2)) })} />
+						))}
+					</>
+				);
+			case 'lut3d':
+				return (
+					<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+						<Button
+							size='small'
+							variant='outlined'
+							onClick={() =>
+								commands
+									.selectFiles({ multiSelect: false, filters: [{ name: 'LUT', extensions: ['cube', '3dl'] }] })
+									.then((r) => {
+										const p = unwrap(r);
+										if (p?.length) onChange({ ...filter, file: p[0] });
+									})
+									.catch(() => {})
+							}
+							sx={{ textTransform: 'none', fontSize: 11 }}
+						>
+							{filter.file ? 'Change .cube' : 'Select .cube…'}
+						</Button>
+						{filter.file && (
+							<Typography sx={{ fontSize: 10, color: label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+								{filter.file.split(/[/\\]/).pop()}
+							</Typography>
+						)}
+					</Box>
+				);
+			case 'vignette':
+				return (
+					<PanelSlider label='Amount' value={filter.amount} min={0} max={100} step={1} onChange={(v) => onChange({ ...filter, amount: Math.round(v) })} />
+				);
+			case 'deband':
+				return (
+					<PanelSlider
+						label='Strength'
+						value={filter.strength}
+						min={1}
+						max={50}
+						step={1}
+						onChange={(v) => onChange({ ...filter, strength: Math.round(v) })}
+					/>
+				);
+			case 'cleanup':
+				return (
+					<>
+						<Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => onChange({ ...filter, deblock: !filter.deblock })}>
+							<Checkbox size='small' checked={filter.deblock} onChange={() => {}} sx={{ p: 0, mr: 0.5, color: label, '&.Mui-checked': { color: defC } }} />
+							<Typography sx={{ fontSize: 11, color: label }}>Deblock (macroblock artifacts)</Typography>
+						</Box>
+						<Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => onChange({ ...filter, chromaNr: !filter.chromaNr })}>
+							<Checkbox size='small' checked={filter.chromaNr} onChange={() => {}} sx={{ p: 0, mr: 0.5, color: label, '&.Mui-checked': { color: defC } }} />
+							<Typography sx={{ fontSize: 11, color: label }}>Chroma denoise</Typography>
+						</Box>
 					</>
 				);
 			case 'bgcolor':
@@ -759,6 +922,47 @@ function AudioFilterBlock({ filter, onChange, onRemove }: { filter: AudioFilterI
 						onChange={(v) => onChange({ ...filter, freq: Math.round(v) })}
 					/>
 				);
+			case 'acompressor':
+				return (
+					<>
+						<PanelSlider label='Threshold dB' value={filter.threshold} min={-60} max={0} step={1} onChange={(v) => onChange({ ...filter, threshold: Math.round(v) })} />
+						<PanelSlider label='Ratio' value={filter.ratio} min={1} max={20} step={0.5} onChange={(v) => onChange({ ...filter, ratio: parseFloat(v.toFixed(1)) })} />
+					</>
+				);
+			case 'alimiter':
+				return (
+					<PanelSlider label='Limit dB' value={filter.limitDb} min={-12} max={0} step={0.5} noClamp onChange={(v) => onChange({ ...filter, limitDb: parseFloat(v.toFixed(1)) })} />
+				);
+			case 'agate':
+				return (
+					<PanelSlider label='Threshold dB' value={filter.thresholdDb} min={-80} max={0} step={1} onChange={(v) => onChange({ ...filter, thresholdDb: Math.round(v) })} />
+				);
+			case 'afftdn':
+				return (
+					<PanelSlider label='Noise floor dB' value={filter.noiseFloor} min={-80} max={-10} step={1} onChange={(v) => onChange({ ...filter, noiseFloor: Math.round(v) })} />
+				);
+			case 'speechnorm':
+				return (
+					<PanelSlider label='Peak' value={filter.peak} min={0.1} max={1} step={0.05} onChange={(v) => onChange({ ...filter, peak: parseFloat(v.toFixed(2)) })} />
+				);
+			case 'dynaudnorm':
+				return (
+					<PanelSlider label='Strength' value={filter.strength} min={0} max={100} step={1} onChange={(v) => onChange({ ...filter, strength: Math.round(v) })} />
+				);
+			case 'equalizer':
+				return (
+					<>
+						<PanelSlider label='Freq Hz' value={filter.freq} min={20} max={20000} step={10} onChange={(v) => onChange({ ...filter, freq: Math.round(v) })} />
+						<PanelSlider label='Gain dB' value={filter.gain} min={-20} max={20} step={0.5} noClamp onChange={(v) => onChange({ ...filter, gain: parseFloat(v.toFixed(1)) })} />
+					</>
+				);
+			case 'rubberband':
+				return (
+					<>
+						<PanelSlider label='Tempo' value={filter.tempo} min={0.5} max={2} step={0.01} onChange={(v) => onChange({ ...filter, tempo: parseFloat(v.toFixed(2)) })} />
+						<PanelSlider label='Pitch' value={filter.pitch} min={0.5} max={2} step={0.01} onChange={(v) => onChange({ ...filter, pitch: parseFloat(v.toFixed(2)) })} />
+					</>
+				);
 			case 'atempo':
 				return (
 					<PanelSlider
@@ -883,9 +1087,11 @@ interface ConvertPanelProps {
 	/** Source file dimensions — used to auto-fill canvas size in Position filter */
 	sourceW?: number;
 	sourceH?: number;
+	/** Активная тема — ограничивает секции/фильтры. По умолчанию full. */
+	theme?: ConvertTheme;
 }
 
-function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourceW, sourceH }: ConvertPanelProps) {
+function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourceW, sourceH, theme = CONVERT_THEME_FULL }: ConvertPanelProps) {
 	const bg = greyColor(15);
 	const border = greyColor(25);
 	const labelColor = greyColor(50);
@@ -1027,6 +1233,18 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 
 	const { image, video, audio } = settings;
 
+	// Alpha/pix_fmt из общего ffmpegCaps (mp4 → нет альфы → тумблер скрыт).
+	const videoAlphaAvail = alphaAvailable(ext, video.codec as VideoCodecId);
+	const videoPixFmts = pixFmtsFor(video.codec as VideoCodecId, !!video.alpha);
+
+	// Тема ограничивает секции/фильтры (full → всё разрешено).
+	const allowV = (t: VideoFilterType) => !theme.allowedVideoFilters || theme.allowedVideoFilters.includes(t);
+	const allowImg = (t: VideoFilterType) => !theme.allowedImageFilters || (theme.allowedImageFilters as readonly string[]).includes(t);
+	const allowAud = (t: AudioFilterType) => !theme.allowedAudioFilters || theme.allowedAudioFilters.includes(t);
+	const videoLabels = pickLabels(VIDEO_FILTER_LABELS, theme.allowedVideoFilters);
+	const imageLabels = pickLabels(IMAGE_FILTER_LABELS as Record<string, string>, theme.allowedImageFilters);
+	const audioLabels = pickLabels(AUDIO_FILTER_LABELS, theme.allowedAudioFilters);
+
 	// ── Render ─────────────────────────────────────────────────────────────
 
 	return (
@@ -1084,7 +1302,7 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 					{ key: 'audio', exts: audioExts },
 					{ key: 'image', exts: filteredImageExts },
 				]
-					.filter(({ exts }) => exts.length > 0)
+					.filter(({ key, exts }) => exts.length > 0 && (!theme.sections || theme.sections.includes(key as 'video' | 'audio' | 'image')))
 					.map(({ key, exts }) => (
 						<Box key={key} sx={{ mb: 0.75 }}>
 							<Typography sx={{ fontSize: 9, color: labelColor, mb: 0.4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -1150,7 +1368,7 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 						step={1}
 						onChange={(v) => setImage({ ...image, quality: Math.round(v) })}
 					/>
-					{image.filters.map((f) => (
+					{image.filters.filter((f) => allowImg(f.type)).map((f) => (
 						<VideoFilterBlock
 							key={f.id}
 							filter={f as VideoFilterItem}
@@ -1158,7 +1376,7 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 							onRemove={() => removeImageFilter(f.id)}
 						/>
 					))}
-					<AddFilterSelect labels={IMAGE_FILTER_LABELS as Record<string, string>} onAdd={(t) => addImageFilter(t as VideoFilterType)} />
+					{Object.keys(imageLabels).length > 0 && <AddFilterSelect labels={imageLabels} onAdd={(t) => addImageFilter(t as VideoFilterType)} />}
 				</Box>
 			)}
 
@@ -1207,7 +1425,30 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 										onChange={(v) => setVideo({ ...video, crf: Math.round(v) })}
 									/>
 								)}
-								{video.filters.map((f) => (
+								{videoAlphaAvail && (
+										<ParamRow label='Alpha'>
+											<Checkbox
+												size='small'
+												checked={!!video.alpha}
+												onChange={(e) => {
+													const alpha = e.target.checked;
+													const pfs = pixFmtsFor(video.codec as VideoCodecId, alpha);
+													setVideo({ ...video, alpha, pixFmt: pfs[0] });
+												}}
+												sx={{ p: 0 }}
+											/>
+										</ParamRow>
+									)}
+									{videoPixFmts.length > 0 && (
+										<ParamRow label='Pixel fmt'>
+											<StyledSelect
+												value={video.pixFmt && videoPixFmts.includes(video.pixFmt) ? video.pixFmt : videoPixFmts[0]}
+												onChange={(p) => setVideo({ ...video, pixFmt: p })}
+												options={videoPixFmts}
+											/>
+										</ParamRow>
+									)}
+									{video.filters.filter((f) => allowV(f.type)).map((f) => (
 									<VideoFilterBlock
 										key={f.id}
 										filter={f}
@@ -1215,7 +1456,7 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 										onRemove={() => removeVideoFilter(f.id)}
 									/>
 								))}
-								<AddFilterSelect labels={VIDEO_FILTER_LABELS} onAdd={addVideoFilter} />
+								{Object.keys(videoLabels).length > 0 && <AddFilterSelect labels={videoLabels} onAdd={addVideoFilter} />}
 							</>
 						)}
 					</Box>
@@ -1285,7 +1526,7 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 									getLabel={(ch) => (ch === 1 ? 'Mono (1ch)' : ch === 2 ? 'Stereo (2ch)' : '5.1 (6ch)')}
 								/>
 							</ParamRow>
-							{audio.filters.map((f) => (
+							{audio.filters.filter((f) => allowAud(f.type)).map((f) => (
 								<AudioFilterBlock
 									key={f.id}
 									filter={f}
@@ -1293,7 +1534,7 @@ function ConvertPanel({ settings, onChange, width, filePath, onSelectFile, sourc
 									onRemove={() => removeAudioFilter(f.id)}
 								/>
 							))}
-							<AddFilterSelect labels={AUDIO_FILTER_LABELS} onAdd={addAudioFilter} />
+							{Object.keys(audioLabels).length > 0 && <AddFilterSelect labels={audioLabels} onAdd={addAudioFilter} />}
 						</>
 					)}
 				</Box>

@@ -7,9 +7,11 @@
 // Interactive scale/crop/position handles (ConvertHandleOverlay) stay.
 
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import { useWavesurfer } from '@wavesurfer/react';
 import { toFileUrl } from '@/Utils/mediaUtils';
+import { commands, unwrap } from '@/Utils/specta';
 import type { PreviewRenderSpec } from '@/bindings';
-import { ConvertSettings, FALLBACK_IMAGE_FORMATS, buildPreviewFilterString } from './types';
+import { ConvertSettings, FALLBACK_IMAGE_FORMATS, buildPreviewFilterString, buildAudioFilterString } from './types';
 import { renderConvertPreview } from './convertPreviewCanvas';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
@@ -50,7 +52,16 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const [duration, setDuration] = useState(0);
 	// View toggle: 'original' for editing crop on the source frame, 'converted' (Result)
 	// for the rendered output where the accurate-frame engine lives.
-	const [mode, setMode] = useState<'original' | 'converted'>('original');
+	const [mode, setMode] = useState<'converted' | 'compare'>('converted');
+	const [wipeX, setWipeX] = useState(50); // % положение полосы сравнения (режим compare)
+	const wipeGeomRef = useRef({ offsetX: 0, offsetY: 0, scale: 1, displayW: 1, displayH: 1 });
+	const regionRef = useRef<{ start: number; end: number } | null>(null); // выбранный регион на вейвформе
+	const regionPlayRef = useRef(false); // идёт ли зацикленное проигрывание региона
+	const audioRef = useRef<HTMLAudioElement>(null); // плеер отрендеренного аудио-региона
+	const [audioMode, setAudioMode] = useState<'original' | 'processed'>('processed');
+	const audioModeRef = useRef(audioMode);
+	audioModeRef.current = audioMode;
+	const [audioErr, setAudioErr] = useState<string | null>(null);
 	const modeRef = useRef(mode);
 	modeRef.current = mode;
 
@@ -137,6 +148,15 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		graphKey: `${filePath}|${outputMode}|${filterGraph}`,
 	});
 
+	// Второй пайплайн: оригинал через ffmpeg (пустой фильтрграф) — для кадр-в-кадр Compare
+	// (тот же декодер, что и у результата → нет рассинхрона браузер/ffmpeg).
+	const buildOrigSpec = useCallback(
+		(time: number): PreviewRenderSpec | null =>
+			filePath ? { inputs: [{ path: filePath, seek: time }], filterGraph: '', complex: false, outLabel: null, time, maxDim: null, namespace: 'convert-orig' } : null,
+		[filePath],
+	);
+	const origPreview = usePreviewCache({ duration, cellCount, buildSpec: buildOrigSpec, graphKey: `${filePath}|orig` });
+
 	// Reset sizes and auto-fit guard on file change
 	useEffect(() => {
 		setOrigImageSize(null);
@@ -155,8 +175,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		const v     = videoRef.current;
 		const kSize = convertedSizeRef.current;
 		const oSize = origImageSizeRef.current;
-		const srcW  = (modeRef.current === 'converted' ? kSize?.w : undefined) ?? oSize?.w ?? v?.videoWidth  ?? kSize?.w ?? 0;
-		const srcH  = (modeRef.current === 'converted' ? kSize?.h : undefined) ?? oSize?.h ?? v?.videoHeight ?? kSize?.h ?? 0;
+		const srcW  = kSize?.w ?? oSize?.w ?? v?.videoWidth  ?? 0;
+		const srcH  = kSize?.h ?? oSize?.h ?? v?.videoHeight ?? 0;
 		if (!srcW || !srcH) return;
 		const scale = Math.min((area.clientWidth - 20) / srcW, (area.clientHeight - 20) / srcH);
 		const t = {
@@ -185,7 +205,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 			// A hidden, paused video doesn't reliably decode a frame for the canvas in
 			// WKWebView. Autoplay (muted+loop) keeps decoded frames flowing — same proven
 			// approach as the ffSwitch/VideoAdjust preview. User can pause/seek afterwards.
-			v.play().catch(() => { /* ignore autoplay rejection */ });
+			// Декодируем первый кадр, но НЕ оставляем воспроизведение — стартуем на паузе.
+			v.play().then(() => v.pause()).catch(() => {});
 			if (!hasAutoFitRef.current) {
 				hasAutoFitRef.current = true;
 				requestAnimationFrame(fitToView);
@@ -208,7 +229,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		const onPlay  = () => setPlaying(true);
 		const onPause = () => {
 			setPlaying(false);
-			if (modeRef.current === 'converted') requestFrame(v.currentTime);
+			requestFrame(v.currentTime);
+			if (modeRef.current === 'compare') origPreview.requestFrame(v.currentTime);
 		};
 		setPlaying(!v.paused);
 		v.addEventListener('play', onPlay);
@@ -268,28 +290,64 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		const loop = () => {
 			const v = videoRef.current;
 			if (v && v.duration > 0) {
+				const r = regionRef.current;
+				if (regionPlayRef.current && r && !v.paused && v.currentTime >= r.end) v.currentTime = r.start;
 				toolbarRef.current?.update(v.currentTime, v.duration);
 				timelineRef.current?.update(v.currentTime, v.duration);
 			}
-			if (modeRef.current === 'converted') drawConverted();
+			drawConverted();
 			rafRef.current = requestAnimationFrame(loop);
 		};
 		rafRef.current = requestAnimationFrame(loop);
 		return () => cancelAnimationFrame(rafRef.current);
 	}, [drawConverted]);
 
+	// Пробел: play/pause. Регион выбран → играем аудио региона (зациклено, со звуком);
+	// нет региона → играем видео целиком с оригинальным звуком.
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.code !== 'Space') return;
+			const el = e.target as HTMLElement | null;
+			const tag = el?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+			e.preventDefault();
+			const v = videoRef.current;
+			const a = audioRef.current;
+			// Что-то играет → стоп всё.
+			if ((a && !a.paused) || (v && !v.paused)) {
+				a?.pause();
+				if (v) { v.pause(); v.muted = true; }
+				regionPlayRef.current = false;
+				return;
+			}
+			const r = regionRef.current;
+			if (r && a && filePath) {
+				// Регион → играем выбранный режим (Original / Filtered).
+				playRegionAudio(audioModeRef.current);
+			} else if (v) {
+				// Нет региона → видео целиком с оригинальным звуком.
+				v.muted = false;
+				regionPlayRef.current = false;
+				v.play().catch(() => {});
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [filePath]);
+
 	// Auto-switch to Result view when settings change so the user sees the effect.
 	useEffect(() => {
 		if (!filePath) return;
-		setMode('converted');
+		// настройки изменились — текущий режим (Result/Compare) не трогаем
 	}, [settingsStr, filePath]);
 
 	// ── Re-request the accurate frame when graph / file / duration / view changes ──
 
 	useEffect(() => {
-		if (!filePath || !hasEffect || mode !== 'converted') return;
+		if (!filePath || !hasEffect) return;
 		if (!isImage && duration <= 0) return; // video: wait for metadata (duration)
 		requestFrame(videoRef.current?.currentTime ?? 0);
+		if (mode === 'compare') origPreview.requestFrame(videoRef.current?.currentTime ?? 0);
 	}, [filterGraph, filePath, duration, hasEffect, isImage, outputMode, mode, requestFrame]);
 
 	// ── Seek ───────────────────────────────────────────────────────────────
@@ -297,11 +355,55 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const seekTo = useCallback((ratio: number) => {
 		const v = videoRef.current;
 		if (!v) return;
+		regionPlayRef.current = false;
+		audioRef.current?.pause();
 		const t = ratio * durationRef.current;
 		v.currentTime = t;
 		onTimecodeChange?.(t);
-		if (modeRef.current === 'converted') requestFrame(t);
+		requestFrame(t);
+		if (modeRef.current === 'compare') origPreview.requestFrame(t);
 	}, [onTimecodeChange, requestFrame]);
+
+	const handleRegion = useCallback((r: { start: number; end: number } | null) => {
+		regionRef.current = r;
+		regionPlayRef.current = false;
+		audioRef.current?.pause();
+	}, []);
+
+	// Рендер + проигрывание аудио региона в выбранном режиме: 'processed' = с -af фильтрами,
+	// 'original' = пустая цепочка (исходный участок). Один путь через preview_render_audio.
+	const playRegionAudio = useCallback((m: 'original' | 'processed') => {
+		const r = regionRef.current;
+		const a = audioRef.current;
+		if (!r || !a || !filePath) return;
+		const filter = m === 'processed' ? buildAudioFilterString(settingsRef.current.audio) : '';
+		commands
+			.previewRenderAudio({ path: filePath, start: r.start, duration: Math.max(0.05, r.end - r.start), filter })
+			.then((res) => {
+				const out = unwrap(res);
+				if (!audioRef.current) return;
+				setAudioErr(null);
+				audioRef.current.src = toFileUrl(out.path);
+				audioRef.current.loop = true;
+				audioRef.current.currentTime = 0;
+				audioRef.current.play().catch(() => {});
+			})
+			.catch((err) => setAudioErr(String((err && (err as { message?: string }).message) || err)));
+	}, [filePath]);
+
+	const handlePlayMode = useCallback((m: 'original' | 'processed') => {
+		videoRef.current?.pause();
+		setAudioMode(m);
+		audioModeRef.current = m;
+		playRegionAudio(m);
+	}, [playRegionAudio]);
+
+	// Авто-сброс сообщения об ошибке аудио-превью.
+	useEffect(() => {
+		if (!audioErr) return;
+		const t = window.setTimeout(() => setAudioErr(null), 6000);
+		return () => window.clearTimeout(t);
+	}, [audioErr]);
 
 	const togglePlay = useCallback(() => {
 		const v = videoRef.current;
@@ -315,7 +417,8 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		v.pause();
 		v.currentTime = Math.max(0, Math.min(v.duration, v.currentTime + dir * (1 / 30)));
 		onTimecodeChange?.(v.currentTime);
-		if (modeRef.current === 'converted') requestFrame(v.currentTime);
+		requestFrame(v.currentTime);
+		if (modeRef.current === 'compare') origPreview.requestFrame(v.currentTime);
 	}, [onTimecodeChange, requestFrame]);
 
 	// ── Zoom ───────────────────────────────────────────────────────────────
@@ -380,8 +483,13 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 	const v        = videoRef.current;
 	const vidW     = v?.videoWidth  || 1920;
 	const vidH     = v?.videoHeight || 1080;
-	const displayW = mode === 'converted' && convertedSize ? convertedSize.w : (origImageSize?.w ?? vidW);
-	const displayH = mode === 'converted' && convertedSize ? convertedSize.h : (origImageSize?.h ?? vidH);
+	const isCompare = mode === 'compare';
+	// Активен crop-фильтр → показываем исходник с ручками (правка кропа), иначе результат.
+	const cropActive = (outputMode === 'image' ? settings.image.filters : settings.video.filters).some((f) => f.type === 'crop' && f.enabled !== false);
+	const cropEdit = mode === 'converted' && cropActive;
+	const processedView = isCompare || (mode === 'converted' && !cropActive);
+	const displayW = processedView && convertedSize ? convertedSize.w : (origImageSize?.w ?? vidW);
+	const displayH = processedView && convertedSize ? convertedSize.h : (origImageSize?.h ?? vidH);
 
 	// Original frame dimensions for the frame-boundary outline / handles
 	const origW = origImageSize?.w ?? origVideoSize?.w ?? 0;
@@ -395,16 +503,41 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 		height:   displayH * transform.scale,
 		imageRendering: 'auto',
 	};
+	wipeGeomRef.current = { offsetX: transform.offsetX, offsetY: transform.offsetY, scale: transform.scale, displayW, displayH };
 
 	// ── Display rule per view ──────────────────────────────────────────────
 	// Original view → source frame (+ crop handles). Result view → 🟡 live canvas,
 	// swapped to 🟢 accurate ffmpeg frame on pause when an effect is active.
-	const engineActive = mode === 'converted' && hasEffect;
+	const engineActive = processedView && hasEffect;
 	const showGreen  = engineActive && !playing && frameState === 'cached' && !!frameUrl;
-	const showCanvas = mode === 'converted' && !showGreen;
-	const showSource = mode === 'original';
+	const showCanvas = processedView && !showGreen;
+	// Исходник (браузерный <video>/<img>) — база ТОЛЬКО при правке кропа; иначе скрыт.
+	// В Compare оригинал берётся не отсюда, а из ffmpeg (origPreview) — кадр-в-кадр.
+	const sourceStyle: React.CSSProperties = cropEdit
+		? { ...mediaStyle, zIndex: 1 }
+		: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' };
+	// Перетаскивание полосы сравнения.
+	const onWipeDown = (e: React.MouseEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		const move = (ev: MouseEvent) => {
+			const area = previewAreaRef.current;
+			if (!area) return;
+			const g = wipeGeomRef.current;
+			const w = g.displayW * g.scale;
+			if (w <= 0) return;
+			const x = ev.clientX - area.getBoundingClientRect().left - g.offsetX;
+			setWipeX(Math.max(0, Math.min(100, (x / w) * 100)));
+		};
+		const up = () => {
+			window.removeEventListener('mousemove', move);
+			window.removeEventListener('mouseup', up);
+		};
+		window.addEventListener('mousemove', move);
+		window.addEventListener('mouseup', up);
+	};
 	const dotState: PreviewState =
-		mode === 'original' ? 'original' : (!hasEffect ? 'original' : (showGreen ? 'cached' : 'approx'));
+		cropEdit ? 'original' : (!hasEffect ? 'original' : (showGreen ? 'cached' : 'approx'));
 
 	// ── Render ─────────────────────────────────────────────────────────────
 
@@ -437,11 +570,11 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				)}
 
 				{/* Interactive scale / crop / position handles */}
-				{onSettingsChange && (
+				{onSettingsChange && !isCompare && outputMode !== 'audio' && (
 					<ConvertHandleOverlay
 						settings={settings}
 						outputMode={outputMode}
-						previewMode={mode}
+						previewMode={cropEdit ? 'original' : 'converted'}
 						origW={origW}
 						origH={origH}
 						displayW={displayW}
@@ -468,10 +601,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 								requestAnimationFrame(() => fitToView());
 							}
 						}}
-						style={showSource
-							? { ...mediaStyle, zIndex: 1 }
-							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
-						}
+						style={sourceStyle}
 						alt='Original'
 					/>
 				)}
@@ -486,10 +616,7 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 						muted
 						playsInline
 						preload='auto'
-						style={showSource
-							? { ...mediaStyle, zIndex: 1 }
-							: { position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }
-						}
+						style={sourceStyle}
 					/>
 				)}
 
@@ -513,10 +640,62 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 					/>
 				)}
 
+				{/* Compare: оригинал через ffmpeg (кадр-в-кадр), слева от полосы.
+				    Обрезка контейнером width+overflow (надёжнее clip-path в WKWebView). */}
+				{isCompare && origPreview.frameUrl && (
+					<div
+						style={{
+							position: 'absolute',
+							left: transform.offsetX,
+							top: transform.offsetY,
+							width: Math.max(0, displayW * transform.scale * (wipeX / 100)),
+							height: displayH * transform.scale,
+							overflow: 'hidden',
+							zIndex: 2,
+							pointerEvents: 'none',
+						}}
+					>
+						<img
+							src={origPreview.frameUrl}
+							style={{ position: 'absolute', left: 0, top: 0, width: displayW * transform.scale, height: displayH * transform.scale }}
+							alt='Original'
+						/>
+					</div>
+				)}
+
+				{/* Compare wipe: polosa + side labels */}
+				{isCompare && fileUrl && (
+					<>
+						<div style={{ position: 'absolute', left: transform.offsetX + 4, top: transform.offsetY + 4, zIndex: 3, padding: '1px 4px', fontSize: 9, borderRadius: 3, background: 'rgba(0,0,0,0.6)', color: '#8ec8f0', pointerEvents: 'none' }}>Original</div>
+						<div style={{ position: 'absolute', left: transform.offsetX + displayW * transform.scale - 46, top: transform.offsetY + 4, zIndex: 3, padding: '1px 4px', fontSize: 9, borderRadius: 3, background: 'rgba(0,0,0,0.6)', color: '#a6e3a1', pointerEvents: 'none' }}>Result</div>
+						<div
+							onMouseDown={onWipeDown}
+							style={{
+								position: 'absolute',
+								left: transform.offsetX + displayW * transform.scale * (wipeX / 100) - 1,
+								top: transform.offsetY,
+								width: 2,
+								height: displayH * transform.scale,
+								background: '#8ec8f0',
+								cursor: 'ew-resize',
+								zIndex: 3,
+							}}
+						>
+							<div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 16, height: 16, borderRadius: '50%', background: '#8ec8f0', border: '2px solid #0a0a0a' }} />
+						</div>
+					</>
+				)}
+
+				{/* Audio output → вейвформа источника вместо видео-превью */}
+				{outputMode === 'audio' && filePath && <ConvertAudioWave filePath={filePath} />}
+
+				{/* Скрытый плеер отрендеренного аудио-региона (превью аудио-фильтров) */}
+				<audio ref={audioRef} style={{ display: 'none' }} />
+
 				{/* Fidelity indicator */}
 				{fileUrl && (origW > 0 || convertedSize) && <PreviewStateDot state={dotState} showLabel />}
 
-				{showSource && !isImage && fileUrl && playbackError && (
+				{!isImage && fileUrl && playbackError && (
 					<div style={{
 						position: 'absolute', inset: 0, zIndex: 2,
 						display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -538,6 +717,13 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 					</div>
 				)}
 
+				{/* Ошибка аудио-превью (напр. фильтра нет в сборке ffmpeg) */}
+				{audioErr && (
+					<div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 7, background: 'rgba(120,20,20,0.92)', color: '#ffe', fontSize: 11, padding: '4px 10px', borderRadius: 4, maxWidth: '90%', textAlign: 'center', pointerEvents: 'none' }}>
+						Аудио-превью не отрисовалось: {audioErr}
+					</div>
+				)}
+
 				{/* Zoom indicator */}
 				<div style={{
 					position: 'absolute', bottom: 4, right: 8, zIndex: 3,
@@ -553,22 +739,26 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 				playing={playing}
 				onTogglePlay={togglePlay}
 				onSeek={seekTo}
-				showPlayback={!isImage}
+				showPlayback={!isImage && outputMode !== 'audio'}
 				showFrameStep
 				onStepFrame={stepFrame}
-				height={isImage ? CONTROLS_H / 2 : CONTROLS_H}
-				progressSlot={!isImage ? (
+				height={isImage ? CONTROLS_H / 2 : undefined}
+				progressSlot={!isImage && outputMode !== 'audio' ? (
 					<PreviewTimeline
 						ref={timelineRef}
 						duration={duration}
 						cellCount={cellCount}
 						cellStates={cellStates}
 						onSeek={seekTo}
+						audioUrl={filePath ? toFileUrl(filePath) : undefined}
+						onRegion={handleRegion}
+						audioMode={audioMode}
+						onPlayMode={handlePlayMode}
 					/>
 				) : undefined}
 				bottomSlot={
 					<div style={{ display: 'flex', gap: 4 }}>
-						{(['original', 'converted'] as const).map((m) => (
+						{(['converted', 'compare'] as const).map((m) => (
 							<button
 								key={m}
 								onClick={() => setMode(m)}
@@ -581,14 +771,48 @@ export default function ConvertPreview({ filePath, settings, onTimecodeChange, o
 									color: mode === m ? '#8ec8f0' : '#666',
 									outline: 'none',
 								}}
-								title={m === 'original' ? 'Source frame — edit crop here' : 'Rendered result (accurate frame on pause)'}
+								title={m === 'compare' ? 'Сравнение оригинал/результат — тащи полосу' : 'Результат — точный кадр на паузе'}
 							>
-								{m === 'original' ? 'Original' : 'Result'}
+								{m === 'compare' ? 'Compare' : 'Result'}
 							</button>
 						))}
 					</div>
 				}
 			/>
+		</div>
+	);
+}
+
+// Вейвформа источника для аудио-вывода (вместо видео-превью). Переиспользует wavesurfer
+// (как PREVIEW_WIN/AudioPreview). Клик/драг по волне = seek.
+function ConvertAudioWave({ filePath }: { filePath: string }) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const { wavesurfer, isPlaying } = useWavesurfer({
+		container: containerRef,
+		url: toFileUrl(filePath),
+		height: 150,
+		waveColor: '#3a4a52',
+		progressColor: '#4fc3f7',
+		cursorColor: '#fff',
+		cursorWidth: 1,
+		barWidth: 2,
+		barGap: 1,
+		barRadius: 2,
+		dragToSeek: true,
+		normalize: true,
+	});
+	return (
+		<div style={{ position: 'absolute', inset: 0, zIndex: 6, background: '#0d0d0d', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 24px' }}>
+			<div ref={containerRef} style={{ width: '100%', cursor: 'pointer' }} />
+			<div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+				<button
+					onClick={() => wavesurfer?.playPause()}
+					style={{ width: 34, height: 34, borderRadius: '50%', border: '1px solid #3a3a3a', background: '#252525', color: '#ddd', cursor: 'pointer', outline: 'none' }}
+				>
+					{isPlaying ? '⏸' : '▶'}
+				</button>
+				<span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>Audio output — waveform (no video preview)</span>
+			</div>
 		</div>
 	);
 }

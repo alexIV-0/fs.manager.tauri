@@ -95,7 +95,12 @@ fn month_name(month: u32) -> &'static str {
 
 /// Разворачивает шаблонные переменные в строке пути.
 /// Поддерживаемые: $YYYY, $MM, $DD, $HH, $mm, $ss, $curMonthStr,
-///                 $projectName, $mainFolderName, $localFolder, $curItem, $clearName, $findTime
+///                 $projectName, $mainFolderName, $projectPathGD, $localFolder,
+///                 $curItem, $clearName, $findTime
+///
+/// $projectPathGD = корень GD-папки проекта (абсолютный путь). Позволяет писать
+/// статистику ВНУТРЬ самого проекта, напр. ["$projectPathGD", "options", "__stat", "$YYYY.$MM"]
+/// → {project}/options/__stat/2026.06.jsonl — децентрализованно, рядом с проектом.
 fn apply_vars(s: &str, record: &DbItemRecord) -> String {
     let now = Utc::now();
     let clear_name = record.cur_item.rfind('.')
@@ -110,6 +115,9 @@ fn apply_vars(s: &str, record: &DbItemRecord) -> String {
     result = result.replace("$mm",           &format!("{:02}", now.minute()));
     result = result.replace("$ss",           &format!("{:02}", now.second()));
     result = result.replace("$curMonthStr",  month_name(now.month()));
+    // $projectPathGD до $projectName: первый не содержит второй как подстроку,
+    // но держим путь-переменные рядом для читаемости.
+    result = result.replace("$projectPathGD", &record.project_path_gd);
     result = result.replace("$projectName",  &record.project_name);
     result = result.replace("$mainFolderName", &record.main_folder_name);
     result = result.replace("$clearName",    clear_name);
@@ -325,11 +333,16 @@ pub fn write_local_archive(path: &Path, record: &DbItemRecord, status: &str, cos
     });
 
     use std::io::Write as IoWrite;
+    // Собираем строку с переносом ЗАРАНЕЕ и пишем одним write_all → один syscall.
+    // O_APPEND на локальной ФС делает такой write атомарным, поэтому параллельная
+    // обработка нескольких item'ов не переплетает строки в середине (в отличие от
+    // writeln!, который мог дробить вывод на data + '\n').
+    let line = format!("{}\n", serde_json::to_string(&entry).map_err(|e| e.to_string())?);
     let mut file = std::fs::OpenOptions::new()
         .create(true).append(true)
         .open(&jsonl_path)
         .map_err(|e| format!("open {}: {}", jsonl_path.display(), e))?;
-    writeln!(file, "{}", serde_json::to_string(&entry).map_err(|e| e.to_string())?)
+    file.write_all(line.as_bytes())
         .map_err(|e| format!("write: {}", e))
 }
 

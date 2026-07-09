@@ -13,7 +13,8 @@ import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { findFilesForSingleFolder } from './findFilesForSingleFolder';
 import { startProcessing } from './startProcessing';
-import { startProcessContext } from './utils/processingAbort';
+import { startProcessContext, getSignal } from './utils/processingAbort';
+import { clearTgRoutes, addTgRouteFromProject, runTgCollect } from './tgCollect';
 import { formatNameByPattern } from '@/Utils/formatNameByPattern';
 import { dirname } from '@/Utils/path';
 
@@ -33,6 +34,12 @@ export async function runProcessingForSingleFolder(folderPath: string) {
 	const mainFolderPath = dirname(folderPath);
 
 	console.groupCollapsed(`[Single run] ${findDateName}`);
+
+	// ТГ-сбор для этой папки (если есть options/tgSearch.json): качаем в IN ДО скана,
+	// чтобы Play собрал из Telegram и обработал за один проход (await — одноразовый прогон).
+	clearTgRoutes();
+	await addTgRouteFromProject(folderPath);
+	await runTgCollect(getSignal()).catch((e) => console.warn('[tgCollect] single-run:', e));
 
 	await findFilesForSingleFolder(folderPath, mainFolderPath, year, findDateName);
 

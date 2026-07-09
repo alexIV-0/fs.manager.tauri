@@ -531,6 +531,30 @@ pub fn write_file(file_path: String, content: String) -> Result<serde_json::Valu
     Ok(serde_json::json!({ "success": true }))
 }
 
+/// Дописывает строку в конец файла настоящим append'ом (O_APPEND), не перезаписывая файл.
+/// Для append-only логов вроде _post/$MM.$YYYY.jsonl: краш посреди записи в худшем случае
+/// оставит оборванную последнюю строку (парсер её пропустит), а не потеряет весь файл.
+/// Создаёт файл и родительские директории при необходимости.
+#[tauri::command]
+#[specta::specta]
+pub fn append_file(file_path: String, content: String) -> Result<serde_json::Value, String> {
+    use std::io::Write;
+    let path = Path::new(&file_path);
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({ "success": true }))
+}
+
 /// Записывает бинарный файл из base64-строки.
 /// Используется плагинами для сохранения скачанных через fetch результатов
 /// (видео, аудио, изображения). Создаёт родительские директории при необходимости.

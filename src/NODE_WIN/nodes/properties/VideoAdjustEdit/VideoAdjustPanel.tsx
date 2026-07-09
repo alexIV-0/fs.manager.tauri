@@ -13,6 +13,8 @@ import PanelSlider from '../PanelSlider';
 import { MyPopoverColor } from '@/MAIN_WIN/Universal/MyPopoverColor';
 import { SectionLabel, CheckboxRow, FilePickerButton } from '../PanelUI';
 import { VideoAdjustSettings, defaultFgShadow } from './types';
+import EncodeSettingsPanel from '../EncodeSettingsPanel';
+import { defaultEncodeSettings } from '@/Utils/ffmpegCaps';
 import { NumInput } from '@/components/NumInput';
 
 function fileBasename(p: string): string {
@@ -292,6 +294,14 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 					onChange={() => onChange({ ...settings, bg: { ...bgS, adjust: { ...bgS.adjust, hFlip: !bgS.adjust.hFlip } } })}
 					mb={0}
 				/>
+			</Box>
+
+			<Divider sx={{ borderColor: border }} />
+
+			{/* ── Output / Render ── */}
+			<Box sx={{ p: 1.5, pb: 1.5 }}>
+				<SectionLabel>Output / Render</SectionLabel>
+				<EncodeSettingsPanel value={settings.encode ?? defaultEncodeSettings()} onChange={(e) => onChange({ ...settings, encode: e })} />
 			</Box>
 		</Box>
 	);

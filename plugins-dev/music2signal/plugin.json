@@ -1,0 +1,17 @@
+{
+	"id": "music2signal",
+	"name": "Music to signal",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Анализ музыкального стема (ffmpeg astats): огибающая громкости, интервалы звучания, пик энергии и события динамики (buildup / drop / dropout) для скоринга моментов и точек реза.",
+	"main": "music2signal.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run",
+	"resourcePool": "local"
+}

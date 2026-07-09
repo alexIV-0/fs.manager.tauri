@@ -8,27 +8,9 @@ export const specialTypes = ['all'] as const;
 // Используем spread operator и typeof для получения типа
 export const searchTypes = [...mediaTypes, ...containerTypes, ...specialTypes];
 
-export const filePathNamePattern = [
-	'$projectName',
-	'$mainFolderName',
-	'$mainFolderPath',
-	'$curItem',
-	'$fileName',
-	'$clearItemName',
-	'$clearFileName',
-	'$localFolder',
-	'$id',
-	'$findTime',
-	'$YYYY',
-	'$MM',
-	'$DD',
-	'$HH',
-	'$mm',
-	'$ss',
-	'$curMonthStr',
-	'$random()',
-	'$random(10)',
-];
+// Список масок для автокомплита выводится из единого источника (src/Utils/masks.ts).
+// НЕ править руками — добавляй/убирай маски в MASKS.
+export { GLOBAL_MASK_TOKENS as filePathNamePattern } from '@/Utils/masks';
 
 // export const automatizationTypes = [
 // 	'autoreaction',

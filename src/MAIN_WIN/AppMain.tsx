@@ -1,5 +1,8 @@
 import { runProcessing } from '@/PROCESSING/runProcessing';
 import { abortNow } from '@/PROCESSING/utils/processingAbort';
+import { startPostScheduler, stopPostScheduler } from '@/PROCESSING/autoPost/scheduler';
+import { usePostingAvailable } from '@/PROCESSING/autoPost/usePostingAvailable';
+import { usePosting_store } from '@/Store/Processing/usePosting_store';
 import { commands } from '@/Utils/specta';
 import { greenColor, greyColor, steelColor } from '@/Store/Color/grayColor';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
@@ -8,9 +11,10 @@ import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { pathPattern_store, programPathPattern_store, typeOfFile_store, typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import ThemeWrapper from '@/theme/ThemeWrapper';
-import { Box, IconButton } from '@mui/material';
+import { Box, IconButton, Typography } from '@mui/material';
 import { RotateCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { CurentProjectFolder } from './ProjectFolderColumn/CurentProjectFolder';
 
 import { MainTopPanel } from './MainTopPanel';
@@ -25,6 +29,7 @@ import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { initializePlugins } from '@/Store/MainWin/plugin_store';
 import { MainFolderColumn } from './MainFolderColumn/MainFolderColumn';
 import MyButton from './Universal/myButton';
+import PostingStatusLine from './PostingStatusLine';
 import MyDivider from './Universal/myDivider';
 import { useColumnTabNavigation } from './hooks/useColumnTabNavigation';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
@@ -41,6 +46,10 @@ export default function AppMain() {
 	const { setMainFolderId } = setActiveFolders_store();
 	const { mainFolderArr } = mainFolders_stor();
 	const { isScanning, isScanningProcess, mainFolderIndex, setIsScanning, setIsScanningProcess, setMainFolderIndex } = isScanningStore();
+	const { isPosting } = usePosting_store();
+	// Постинг показываем/разрешаем только когда есть чем собрать пайплайн finder → poster
+	// (плагин-источник `finder` + хотя бы один постер). Иначе прячем весь UI постинга.
+	const postingReady = usePostingAvailable();
 
 	const bgLoading = greyColor(15);
 	const bgLoadingBar = greyColor(30);
@@ -84,6 +93,16 @@ export default function AppMain() {
 		loadAllPlugins();
 	}, []);
 
+	// Живое обновление списка плагинов после сборки/загрузки из PluginBuilder.
+	useEffect(() => {
+		const unlistenP = listen('plugins-changed', () => {
+			initializePlugins().catch((err) => console.error('plugins-changed reinit failed:', err));
+		});
+		return () => {
+			unlistenP.then((un) => un());
+		};
+	}, []);
+
 	// ========================
 	// ЗАПУСКАЕТСЯ ОСНОВНОЙ ПРОЦЕСС ОБРАБОТКИ
 	// ========================
@@ -116,6 +135,18 @@ export default function AppMain() {
 	const stopAfterProcessButtClick = () => {
 		setIsScanningProcess(!isScanningProcess);
 	};
+
+	// ========================
+	// ОТДЕЛЬНЫЙ ПРОЦЕСС АВТОПОСТИНГА (независим от обработки)
+	// ========================
+	const startPostingClick = () => startPostScheduler();
+	const stopPostingClick = () => stopPostScheduler();
+
+	// Если постинг крутится, а нужный плагин (finder или все постеры) выключили/удалили
+	// на лету — гасим раннер: без finder → poster он всё равно не соберёт маршрут.
+	useEffect(() => {
+		if (!postingReady && isPosting) stopPostScheduler();
+	}, [postingReady, isPosting]);
 
 	const reLoadExtension = () => {
 		window.location.reload();
@@ -210,9 +241,9 @@ export default function AppMain() {
 						overflow: 'hidden',
 					}}
 				>
-					<MainFolderColumn />
-					<ProjectFolderColumn />
 					<GlobalMenuProvider>
+						<MainFolderColumn />
+						<ProjectFolderColumn />
 						<CurentProjectFolder />
 					</GlobalMenuProvider>
 				</Box>
@@ -228,12 +259,47 @@ export default function AppMain() {
 							p: '0 10px',
 						}}
 					>
-						<StatusBar />
+						<Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', minWidth: 0 }}>
+							<Typography
+								sx={{
+									fontSize: '0.7rem',
+									fontWeight: 700,
+									letterSpacing: '0.5px',
+									textTransform: 'uppercase',
+									color: greyColor(48),
+									flexShrink: 0,
+								}}
+							>
+								обработка
+							</Typography>
+							<StatusBar />
+						</Box>
 						<IconButton onClick={reLoadExtension}>
 							<RotateCw />
 						</IconButton>
 					</Box>
 					<MyDivider disablePadding />
+					{/* ── Статусбар ПОСТИНГА (виден только когда есть finder + постер) ── */}
+					{postingReady && (
+						<>
+							<Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', p: '2px 10px', minWidth: 0 }}>
+								<Typography
+									sx={{
+										fontSize: '0.7rem',
+										fontWeight: 700,
+										letterSpacing: '0.5px',
+										textTransform: 'uppercase',
+										color: greyColor(48),
+										flexShrink: 0,
+									}}
+								>
+									постинг
+								</Typography>
+								<PostingStatusLine />
+							</Box>
+							<MyDivider disablePadding />
+						</>
+					)}
 					<Box
 						sx={{
 							display: 'flex',
@@ -263,6 +329,30 @@ export default function AppMain() {
 							</Box>
 						)}
 					</Box>
+					{postingReady && (
+						<Box
+							sx={{
+								display: 'flex',
+								gap: '5px',
+								p: '0 5px 5px 5px',
+								overflow: 'hidden',
+							}}
+						>
+							{!isPosting ? (
+								<MyButton
+									// sx={{ backgroundColor: colorSteel50, '&:hover': { bgcolor: colorSteel70 } }}
+									onClick={startPostingClick}
+									innerText={'START POSTING'}
+								/>
+							) : (
+								<MyButton
+									sx={{ backgroundColor: colorGreen70, '&:hover': { bgcolor: colorGreen95 } }}
+									onClick={stopPostingClick}
+									innerText={'Stop posting'}
+								/>
+							)}
+						</Box>
+					)}
 				</Box>
 			</Box>
 		</ThemeWrapper>

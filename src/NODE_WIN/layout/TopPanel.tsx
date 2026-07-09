@@ -10,6 +10,9 @@ import { Play, Square } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import PresetsModal from './PresetsModal';
 import DocModal from './DocModal';
+import { syncTgSearchSidecar } from '@/NODE_WIN/utils/syncTgSearchSidecar';
+import { syncPostSourcesSidecar } from '@/NODE_WIN/utils/syncPostSourcesSidecar';
+import { ensureProjectFolders } from '@/NODE_WIN/utils/ensureProjectFolders';
 
 interface TopPanelProps {
 	title: string | null;
@@ -33,6 +36,9 @@ function TopPanel({ title }: TopPanelProps) {
 		// Сначала сохраняем текущее состояние нод
 		const flow = reactFlow.toObject();
 		unwrap(await commands.saveFlowToOptionsFolder(path, flow as any));
+		await ensureProjectFolders(path, flow);
+		await syncTgSearchSidecar(path, flow);
+		await syncPostSourcesSidecar(path, flow);
 
 		// Запускаем обработку только для этой папки
 		await runProcessingForSingleFolder(path);

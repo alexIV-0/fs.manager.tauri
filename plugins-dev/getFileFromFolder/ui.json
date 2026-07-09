@@ -72,6 +72,23 @@
 					"value": false
 				},
 				"outputType": "boolean"
+			},
+			{
+				"id": "countRange",
+				"controlType": "valueRange",
+				"controlProps": {
+					"label": "File Count Range",
+					"tooltip": "Диапазон количества файлов для возврата. Оба значения 0 — вернём все файлы. Случайное целое число в пределах диапазона. Если файлов меньше — берём максимум без повторений.",
+					"format": "integer",
+					"step": 1,
+					"range": [0, 10],
+					"allowManualOverride": true,
+					"value": [0, 0]
+				},
+				"isInput": true,
+				"acceptedTypes": ["valueRange"],
+				"required": false,
+				"outputType": "array"
 			}
 		],
 		"output": {

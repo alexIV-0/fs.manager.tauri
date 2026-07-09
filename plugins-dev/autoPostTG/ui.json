@@ -1,0 +1,178 @@
+{
+	"type": "autoPostTG",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 820,
+	"data": {
+		"label": "TG aPosting Video",
+		"colorType": "posting",
+		"comment": "Автопостинг видео в Telegram-каналы по таймеру (App-timer).&nbsp;<div>Видео — со входа, бот — из главной папки, каналы — мультивыбор.&nbsp;</div><div>При наступлении слота ОДИН файл уходит во все выбранные каналы (1 загрузка → file_id для остальных); не прошедший проверку (≤50МБ) → errors, берём следующий. Подпись (необязательно) приходит по связи.</div>",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input Video",
+					"tooltip": "Видео для публикации (из папки IN или другой папки). Лимит Bot API — 50 МБ.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"video"
+				],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "account",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Bot",
+					"tooltip": "Бот Telegram этой главной папки. «Add Bot» — вставить токен от @BotFather. Бот должен быть админом каналов с правом «Публиковать сообщения».",
+					"options": [
+						"#tgAccounts",
+						"---",
+						"Add Bot"
+					],
+					"freeInput": false,
+					"value": ""
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "channels",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Channels",
+					"tooltip": "Каналы для постинга (мультивыбор). «Найти мои каналы» — авто-обнаружение (добавь бота админом → нажми). «Добавить вручную» — ввести @username/id. Проверяется право постить.",
+					"options": [
+						"#tgChannels"
+					],
+					"multiSelect": true,
+					"optionsOnly": true,
+					"allowDuplicates": false,
+					"value": []
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "caption",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Caption",
+					"tooltip": "Необязательно. Текст подписи (хештеги/упоминания) приходит по связи. Пусто = без подписи. Лимит — 1024 символа.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": [
+					"text",
+					"string"
+				],
+				"required": false,
+				"outputType": "accepted"
+			},
+			{
+				"id": "sendAs",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Send as",
+					"tooltip": "Video — стримится в клиенте (TG может перекодировать). Document — оригинал без перекодирования, без in-app перемотки.",
+					"options": [
+						"Video",
+						"Document"
+					],
+					"freeInput": false,
+					"value": "Video"
+				},
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "interval",
+				"controlType": "timecode",
+				"controlProps": {
+					"label": "Interval",
+					"tooltip": "Шаг между постами. Можно ввести число (90 = 00:01:30) или HH:MM:SS.",
+					"value": 60
+				},
+				"isInput": false,
+				"acceptedTypes": [
+					"timecode"
+				],
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "daysOfWeek",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Days of week",
+					"tooltip": "Дни, по которым постим. Пусто = все дни.",
+					"options": [
+						"Mon",
+						"Tue",
+						"Wed",
+						"Thu",
+						"Fri",
+						"Sat",
+						"Sun"
+					],
+					"multiSelect": true,
+					"optionsOnly": true,
+					"allowDuplicates": false,
+					"value": [
+						"Mon",
+						"Tue",
+						"Wed",
+						"Thu",
+						"Fri",
+						"Sat",
+						"Sun"
+					]
+				},
+				"required": true,
+				"outputType": "string"
+			},
+			{
+				"id": "window",
+				"controlType": "valueRange",
+				"controlProps": {
+					"label": "Time window",
+					"tooltip": "Окно времени суток для постинга. 00:00–24:00 = весь день.",
+					"value": [
+						0,
+						1440
+					]
+				},
+				"required": false,
+				"outputType": "string"
+			},
+			{
+				"id": "order",
+				"controlType": "ddm",
+				"controlProps": {
+					"label": "Order",
+					"tooltip": "Порядок выбора файлов из очереди.",
+					"options": [
+						"by Time",
+						"by Name",
+						"Random"
+					],
+					"freeInput": false,
+					"value": "by Time"
+				},
+				"required": false,
+				"outputType": "string"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": true
+	}
+}

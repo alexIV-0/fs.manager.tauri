@@ -22,6 +22,9 @@ use commands::{
     preview_commands::*,
     account_commands::*,
     vk_auth_commands::*,
+    youtube_auth_commands::*,
+    youtube_upload_commands::*,
+    tg_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
@@ -137,6 +140,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             read_file_sync,
             read_media_preview,
             write_file,
+            append_file,
             write_binary_file,
             check_file_path,
             check_folder_path,
@@ -156,18 +160,43 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             deps_whisper_models_dir,
             deps_list_whisper_models,
             deps_download_whisper_model,
+            deps_download_tg_server,
             // preview: точный ffmpeg-рендер кадра для редакторов фильтров
             preview_render_frame,
+            preview_render_audio,
             preview_clear_cache,
             // Autopost: хранилище аккаунтов (App Support, сегментация по главной папке + платформе)
             account_save,
             account_list,
             account_get_token,
+            account_add_channel,
+            account_remove_channel,
             account_delete,
             // VK OAuth + валидация (vk_auth_capture — внутренняя, через raw invoke из init-скрипта)
             vk_auth_open,
             vk_validate_token,
             vk_groups_get,
+            // YouTube OAuth (Модель B / BYO credentials): PKCE-флоу + refresh + upload
+            youtube_auth_start,
+            youtube_refresh_token,
+            youtube_get_access_token,
+            youtube_upload_video,
+            youtube_set_thumbnail,
+            // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
+            tg_validate_token,
+            tg_get_chat,
+            tg_discover_channels,
+            tg_discover_sources,
+            tg_get_updates,
+            tg_fetch_file,
+            tg_delete_message,
+            tg_set_reaction,
+            tg_create_forum_topic,
+            tg_base_url,
+            tg_server_start,
+            tg_server_stop,
+            tg_server_status,
+            tg_cloud_log_out,
         ])
 }
 
@@ -197,7 +226,7 @@ pub fn run() {
     export_specta_bindings();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -405,6 +434,7 @@ pub fn run() {
             read_file_sync,
             read_media_preview,
             write_file,
+            append_file,
             write_binary_file,
             check_file_path,
             check_folder_path,
@@ -553,25 +583,50 @@ pub fn run() {
             plugin_manager_install,
             plugin_manager_delete,
             plugin_manager_destroy,
+            plugin_build,
             // Deps: авто-загрузка ffmpeg/ffprobe + whisper-моделей
             deps_ffmpeg_status,
             deps_download_ffmpeg,
             deps_whisper_models_dir,
             deps_list_whisper_models,
             deps_download_whisper_model,
+            deps_download_tg_server,
             // Preview render (ffmpeg-кадр для редакторов фильтров)
             preview_render_frame,
+            preview_render_audio,
             preview_clear_cache,
             // Autopost: хранилище аккаунтов (App Support)
             account_save,
             account_list,
             account_get_token,
+            account_add_channel,
+            account_remove_channel,
             account_delete,
             // VK OAuth + валидация
             vk_auth_open,
             vk_auth_capture,
             vk_validate_token,
             vk_groups_get,
+            youtube_auth_start,
+            youtube_refresh_token,
+            youtube_get_access_token,
+            youtube_upload_video,
+            youtube_set_thumbnail,
+            // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
+            tg_validate_token,
+            tg_get_chat,
+            tg_discover_channels,
+            tg_discover_sources,
+            tg_get_updates,
+            tg_fetch_file,
+            tg_delete_message,
+            tg_set_reaction,
+            tg_create_forum_topic,
+            tg_base_url,
+            tg_server_start,
+            tg_server_stop,
+            tg_server_status,
+            tg_cloud_log_out,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

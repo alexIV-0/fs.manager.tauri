@@ -5,6 +5,7 @@ import path from 'path';
 import { fs, ffmpeg, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { buildFfSwitchGraph } from '../../src/Utils/ffmpegGraphs/ffSwitchGraph';
+import { buildEncodeArgs, defaultEncodeSettings, type EncodeSettings } from '../../src/Utils/ffmpegCaps';
 
 export { onLoad } from '../_template/tauri';
 
@@ -34,6 +35,7 @@ interface VideoAdjustSettings {
 	bgColor: string;
 	fg: { copies: number; fitPercent: number; shadow?: FgShadowSettings };
 	bg: { copies: number; adjust: BgAdjustSettings };
+	encode?: EncodeSettings;
 }
 
 // calcFinalFormat / hexToRgb / buildBgAdjustFilter + the whole filter_complex builder
@@ -60,6 +62,7 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 	}
 
 	const { useFgAsBg } = settings;
+	const enc = settings.encode ?? defaultEncodeSettings();
 	const fgCopies = Math.max(1, settings.fg.copies);
 
 	const curPath: string[] = (_item.targetPath?.length ?? 0) === 0 ? ['$clearName (switch $random(3))'] : [...(_item.targetPath ?? [])];
@@ -119,7 +122,8 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 	const basePath = createPathForFileByPattern(curPath, _description, fgSlots[0]);
 	const dirPath = path.dirname(basePath);
 	const fName = path.basename(basePath, path.extname(basePath));
-	const outFile = path.join(dirPath, `${fName}.mp4`);
+	const outExt = enc.container === 'original' ? (path.extname(fgSlots[0]).slice(1) || 'mp4') : enc.container;
+	const outFile = path.join(dirPath, `${fName}.${outExt}`);
 	await fs.mkdir(dirPath);
 
 	const inputFlags: string[] = fgSlots.flatMap((f) => ['-i', f]);
@@ -135,12 +139,7 @@ export async function ffSwitchFunc(_item: any, _description: any): Promise<strin
 		...audioMap,
 		'-t',
 		String(duration),
-		'-c:v',
-		'libx264',
-		'-preset',
-		'faster',
-		'-crf',
-		'22',
+		...buildEncodeArgs(enc),
 		'-threads',
 		'0',
 		outFile,

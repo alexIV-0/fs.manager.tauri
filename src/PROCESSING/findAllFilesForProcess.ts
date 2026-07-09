@@ -21,6 +21,7 @@ import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
 import { getSignal } from './utils/processingAbort';
 import { findFilesForSingleFolder } from './findFilesForSingleFolder';
+import { clearTgRoutes, addTgRouteFromProject } from './tgCollect';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { formatNameByPattern } from '@/Utils/formatNameByPattern';
@@ -42,6 +43,7 @@ export async function findAllFilesForProcess(clearQueue = true) {
 	if (clearQueue) {
 		useWorkProject_Store.getState().clearWorkProjectState();
 		clearErrorsState();
+		clearTgRoutes(); // пересобираем routing map ТГ-сбора каждый полный скан
 	}
 
 	// цикл по вкл. главным папкам
@@ -129,6 +131,10 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			console.groupCollapsed(`[${mainFolderName}] - ${projectName}`);
 
 			const projectPathOnGD = joinPath(curMainFolder.path, projectName);
+
+			// ТГ-сбор: безусловно (независимо от содержимого IN) собираем маршрут из
+			// options/tgSearch.json — дешёвый stat, до IN-гейта в findFilesForSingleFolder.
+			await addTgRouteFromProject(projectPathOnGD as string);
 
 			const beforeCount = useWorkProject_Store.getState().workProject.length;
 			await findFilesForSingleFolder(projectPathOnGD as string, curMainFolder.path as string, year, findDateName);

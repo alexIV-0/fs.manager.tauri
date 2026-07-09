@@ -62,7 +62,7 @@ export function OptionsPickerModal({ open, title = 'Выбор опций', curr
 			<DialogTitle sx={{ fontSize: 14, py: 1.5, pb: 1 }}>{title}</DialogTitle>
 			<DialogContent sx={{ p: 2 }}>
 				{renderSection('#-теги (динамические источники)', HASH_OPTIONS)}
-				{renderSection('$-паттерны (из PatternKeys)', PATTERN_OPTIONS)}
+				{renderSection('$-паттерны (маски имён)', PATTERN_OPTIONS)}
 				{renderSection('Специальные', SPECIAL_OPTIONS)}
 			</DialogContent>
 			<DialogActions>

@@ -10,6 +10,7 @@ import { makeDefaultProperty, validateUiJson } from './types';
 import { SidebarComponentList } from './components/SidebarComponentList';
 import { PropertySettingsPanel } from './PropertySettingsPanel';
 import { NodeSettingsPanel } from './NodeSettingsPanel';
+import { ComponentJsonEditor } from './ComponentJsonEditor';
 import {
 	DndContext,
 	DragEndEvent,
@@ -268,6 +269,37 @@ function Tab2Inner({ initialUiJson, onDragEndRef, onSyncRef, rightPanelWidth, on
 	const gray17 = greyColor(17);
 	const gray40 = greyColor(40);
 
+	// ── Resizable JSON editor pane (bottom of right panel) ──
+	const [jsonHeight, setJsonHeight] = useState(300);
+	const isJsonResizing = useRef(false);
+	const startJY = useRef(0);
+	const startJH = useRef(0);
+	const onJsonResizeStart = useCallback(
+		(e: React.MouseEvent) => {
+			isJsonResizing.current = true;
+			startJY.current = e.clientY;
+			startJH.current = jsonHeight;
+			e.preventDefault();
+		},
+		[jsonHeight],
+	);
+	useEffect(() => {
+		const onMove = (e: MouseEvent) => {
+			if (!isJsonResizing.current) return;
+			const delta = startJY.current - e.clientY; // drag up → taller editor
+			setJsonHeight(Math.min(700, Math.max(120, startJH.current + delta)));
+		};
+		const onUp = () => {
+			isJsonResizing.current = false;
+		};
+		window.addEventListener('mousemove', onMove);
+		window.addEventListener('mouseup', onUp);
+		return () => {
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+		};
+	}, []);
+
 	// ── Handle ReactFlow node changes (resize, etc.) ──
 	const onNodesChange = useCallback((changes: NodeChange[]) => {
 		setNodes((nds) => applyNodeChanges(changes, nds) as typeof nds);
@@ -403,6 +435,7 @@ function Tab2Inner({ initialUiJson, onDragEndRef, onSyncRef, rightPanelWidth, on
 						colorType: newUiJson.data.colorType,
 						comment: newUiJson.data.comment,
 						output: newUiJson.data.output,
+						properties: newUiJson.data.properties, // let raw-JSON edits reach the node
 						isValid: true, // always valid in builder so color is applied
 					},
 				};
@@ -491,20 +524,7 @@ function Tab2Inner({ initialUiJson, onDragEndRef, onSyncRef, rightPanelWidth, on
 						overflow: 'hidden',
 					}}
 				>
-					{panelMode === 'prop' && selectedProp ? (
-						<PropertySettingsPanel
-							property={selectedProp}
-							outputSourceId={nodeData?.output?.sourceProperty}
-							allPropertyIds={properties.map((p) => p.id)}
-							onChange={updateProperty}
-							onClose={() => {
-								setSelectedPropId(null);
-								setPanelMode('types');
-							}}
-						/>
-					) : panelMode === 'node' ? (
-						<NodeSettingsPanel uiJson={currentUiJson} onChange={updateUiJson} onClose={() => setPanelMode('types')} />
-					) : (
+					{panelMode === 'types' || (panelMode === 'prop' && !selectedProp) ? (
 						<Box sx={{ p: 3, textAlign: 'center', opacity: 0.4 }}>
 							<Typography variant='caption' sx={{ fontSize: 11 }}>
 								Кликни на ноду для настроек
@@ -512,6 +532,48 @@ function Tab2Inner({ initialUiJson, onDragEndRef, onSyncRef, rightPanelWidth, on
 								или на свойство для редактирования
 							</Typography>
 						</Box>
+					) : (
+						<>
+							{/* Top: structured field editor */}
+							<Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+								{panelMode === 'prop' && selectedProp ? (
+									<PropertySettingsPanel
+										property={selectedProp}
+										outputSourceId={nodeData?.output?.sourceProperty}
+										allPropertyIds={properties.map((p) => p.id)}
+										onChange={updateProperty}
+										onClose={() => {
+											setSelectedPropId(null);
+											setPanelMode('types');
+										}}
+									/>
+								) : (
+									<NodeSettingsPanel uiJson={currentUiJson} onChange={updateUiJson} onClose={() => setPanelMode('types')} />
+								)}
+							</Box>
+
+							{/* Horizontal splitter */}
+							<Box
+								onMouseDown={onJsonResizeStart}
+								sx={{
+									height: 5,
+									flexShrink: 0,
+									cursor: 'ns-resize',
+									bgcolor: gray40,
+									'&:hover': { bgcolor: 'primary.main' },
+									transition: 'background-color 0.2s',
+								}}
+							/>
+
+							{/* Bottom: raw JSON editor of the selected target */}
+							<Box sx={{ height: jsonHeight, flexShrink: 0, minHeight: 0 }}>
+								{panelMode === 'node' ? (
+									<ComponentJsonEditor editorKey='node' value={currentUiJson} onValidChange={updateUiJson} />
+								) : (
+									<ComponentJsonEditor editorKey={`prop:${selectedProp!.id}`} value={selectedProp} onValidChange={updateProperty} />
+								)}
+							</Box>
+						</>
 					)}
 				</Box>
 			</Box>

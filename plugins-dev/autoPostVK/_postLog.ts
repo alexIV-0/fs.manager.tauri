@@ -69,15 +69,31 @@ export function postedFileSet(records: PostRecord[]): Set<string> {
 	return new Set(records.filter((r) => r.status === 'published').map((r) => r.file));
 }
 
-/** Дописать запись в файл текущего месяца (read-modify-write — объём мал). */
-export async function appendRecord(projectPathGD: string, rec: PostRecord): Promise<void> {
+function cooldownFile(projectPathGD: string): string {
+	return path.join(postDir(projectPathGD), '_cooldown.json');
+}
+
+/** Пауза аккаунта после жёсткой ошибки VK (лимит/капча/флуд/rate). Драйвер постинга читает
+ *  этот файл и не постит с аккаунта до `until`. Ключ = имя аккаунта. */
+export async function writeCooldown(projectPathGD: string, account: string, until: number, code: number, msg: string): Promise<void> {
 	const dir = postDir(projectPathGD);
 	await fs.mkdir(dir);
-	const file = monthFile(projectPathGD);
-	let existing = '';
+	const file = cooldownFile(projectPathGD);
+	let obj: Record<string, any> = {};
 	if (await fs.existsFile(file)) {
-		existing = await fs.read(file);
-		if (existing && !existing.endsWith('\n')) existing += '\n';
+		try {
+			obj = JSON.parse(await fs.read(file)) || {};
+		} catch {}
 	}
-	await fs.write(file, existing + JSON.stringify(rec) + '\n');
+	obj[account] = { until, code, msg };
+	await fs.write(file, JSON.stringify(obj, null, 2));
+}
+
+/** Дописать запись в файл текущего месяца настоящим append'ом (O_APPEND).
+ *  Файл не перезаписывается: краш посреди записи оставит максимум оборванную последнюю
+ *  строку (парсер её пропустит), а не потеряет весь месячный файл. append_file на
+ *  Rust-стороне сам создаёт файл и родительские папки. */
+export async function appendRecord(projectPathGD: string, rec: PostRecord): Promise<void> {
+	const file = monthFile(projectPathGD);
+	await fs.append(file, JSON.stringify(rec) + '\n');
 }

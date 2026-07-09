@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import { pathPattern_store, typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
+import { usePostingAvailable } from '@/PROCESSING/autoPost/usePostingAvailable';
 import MySettingRow from './settings/MySettingRow';
 import MyTooltip from '@/MAIN_WIN/Universal/MyTooltip';
 import MyAutocomplete from '@/MAIN_WIN/Universal/MyAutocomplete';
@@ -77,6 +78,9 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 	// клик-действия (добавить/удалить тип) применяются сразу.
 	const { colorTypes, loaded, load, rescanColorTypes, setColorTypes, removeColorType } = appSettings_client();
 
+	// Секцию «Постинг» показываем только когда есть плагин-источник finder + хотя бы один постер.
+	const postingReady = usePostingAvailable();
+
 	const nodeTypes = typeOfNodes_store((s) => s.patternStore);
 	const nodeTypesAdd = typeOfNodes_store((s) => s.addPatternElement);
 	const nodeTypesRemove = typeOfNodes_store((s) => s.removePatternElement);
@@ -88,7 +92,10 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 	// Дедупликация по имени убирает дубли когда пользователь случайно добавил $projectName.
 	const archiveOptions = useMemo(() => {
 		const seen = new Set<string>();
-		const out: string[] = [CUSTOM_FOLDER];
+		// $projectPathGD — корень самого проекта: позволяет писать статистику внутрь
+		// проекта (options/__stat/...), а не в одно общее место. Резолвится в db_analytics.rs.
+		const out: string[] = [CUSTOM_FOLDER, '$projectPathGD'];
+		seen.add('$projectPathGD');
 		for (const name of filePathNamePattern) {
 			if (seen.has(name)) continue;
 			seen.add(name);
@@ -290,7 +297,23 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 				/>
 			</Section>
 
-			{/* ============ РАСПИСАНИЕ СКАНИРОВАНИЯ ============ */}
+			{/* ============ ИНТЕРФЕЙС ============ */}
+				<Section title='Интерфейс'>
+					<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+						<Checkbox
+							size='small'
+							checked={settings.ui?.showHints ?? false}
+							onChange={(e) => patch({ ui: { showHints: e.target.checked } })}
+							sx={{ p: 0.5 }}
+						/>
+						<Typography sx={{ color: greyColor(75), fontSize: '0.9rem' }}>
+							Показывать подсказки к фильтрам
+						</Typography>
+						<MyTooltip text='Включает короткие пояснения к фильтрам/настройкам (видео и аудио). Тексты подсказок подключаются постепенно.' />
+					</Box>
+				</Section>
+
+				{/* ============ РАСПИСАНИЕ СКАНИРОВАНИЯ ============ */}
 			<Section title='Расписание сканирования'>
 				<MySettingRow
 					label='Максимальное ожидание между сканами'
@@ -319,6 +342,21 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 					unit='мс'
 				/>
 			</Section>
+
+			{/* ============ ПОСТИНГ ============ */}
+			{postingReady && (
+				<Section title='Постинг'>
+					<MySettingRow
+						label='Интервал обхода папок (постинг)'
+						tooltip='Как часто отдельный процесс автопостинга обходит папки в поисках материала. Это НЕ интервал самой публикации (тот задаётся в ноде постинга на каждую папку). Допустимо дробное (0.5 = 30 сек).'
+						type='number'
+						value={settings.posting?.scanWaitMin ?? 0.5}
+						onChange={(v) => patch({ posting: { scanWaitMin: v } })}
+						unit='мин'
+						min={0}
+					/>
+				</Section>
+			)}
 
 			{/* ============ РЕСУРСНЫЕ ПУЛЫ ============ */}
 			<Section title='Ресурсные пулы'>

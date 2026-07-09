@@ -6,10 +6,12 @@ import { Trash2 } from 'lucide-react';
 import { useStore } from '@xyflow/react';
 import { memo, useEffect, useRef, useState } from 'react';
 import InputHandle from '../components/InputHandle';
-import MyToolTip from './CustomTooltip';
+import TooltipOrDelete from './TooltipOrDelete';
 
-// Опция считается разделителем если начинается с одного или нескольких тире
-const isDivider = (opt: string): boolean => /^-+/.test(opt.trim());
+// Опция считается разделителем если начинается с ТРЁХ+ тире («---» = линия, «---текст» =
+// заголовок). Порог 3+, а не 1, чтобы реальные имена с одиночным «-» в начале
+// (напр. чат «-=archiv_m1=-») НЕ принимались за разделитель.
+const isDivider = (opt: string): boolean => /^-{3,}/.test(opt.trim());
 // Текст после тире (пустая строка → просто линия)
 const getDividerText = (opt: string): string =>
 	opt
@@ -106,7 +108,7 @@ function SimpleDDM({ property, onChange, onOptionDelete, isOptionDeletable }: Si
 				<Typography variant='subtitle2' noWrap fontWeight={400} color={defColor}>
 					{controlProps.label}
 				</Typography>
-				<MyToolTip tooltip={controlProps.tooltip ?? ''} ml='auto' />
+				<TooltipOrDelete isDynamic={false} tooltip={controlProps.tooltip ?? ''} onDelete={() => {}} property={property} />
 			</Stack>
 
 			{/* Select */}

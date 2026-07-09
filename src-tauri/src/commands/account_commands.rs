@@ -39,7 +39,7 @@ fn sanitize_component(raw: &str) -> Result<String, String> {
 }
 
 /// Путь к `<platform>.json` для конкретной главной папки (каталог создаётся).
-fn platform_file(
+pub(crate) fn platform_file(
     app: &tauri::AppHandle,
     main_folder_name: &str,
     platform: &str,
@@ -58,7 +58,7 @@ fn platform_file(
 
 /// Читает массив аккаунтов из файла платформы (битый/отсутствующий → пустой).
 /// В выдачу попадают только объекты.
-fn read_accounts(path: &PathBuf) -> Vec<Value> {
+pub(crate) fn read_accounts(path: &PathBuf) -> Vec<Value> {
     match fs::read_to_string(path) {
         Ok(content) => match serde_json::from_str::<Value>(&content) {
             Ok(Value::Array(arr)) => arr.into_iter().filter(|v| v.is_object()).collect(),
@@ -68,7 +68,7 @@ fn read_accounts(path: &PathBuf) -> Vec<Value> {
     }
 }
 
-fn write_accounts(path: &PathBuf, accounts: &[Value]) -> Result<(), String> {
+pub(crate) fn write_accounts(path: &PathBuf, accounts: &[Value]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(&Value::Array(accounts.to_vec()))
         .map_err(|e| format!("to_string_pretty: {}", e))?;
     fs::write(path, content).map_err(|e| format!("write {}: {}", path.display(), e))
@@ -163,6 +163,106 @@ pub fn account_get_token(
         .and_then(|t| t.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| format!("no token for account '{}' on platform '{}'", name, platform))
+}
+
+/// Добавить/обновить канал в каталоге аккаунта (upsert по `id`, иначе по `username`).
+///
+/// Telegram: Bot API не умеет перечислять каналы бота, поэтому каждый канал добавляется
+/// вручную и хранится в `channels[]` аккаунта. Эта команда делает read-modify-write
+/// ТОЛЬКО поля `channels` — `accessToken` и прочие поля остаются нетронутыми (в отличие
+/// от `account_save`, который заменяет запись целиком). Возвращает обновлённый `channels`.
+#[tauri::command]
+#[specta::specta]
+pub fn account_add_channel(
+    app: tauri::AppHandle,
+    main_folder_name: String,
+    platform: String,
+    name: String,
+    channel: Value,
+) -> Result<Value, String> {
+    if !channel.is_object() {
+        return Err("channel must be a JSON object".into());
+    }
+    let new_id = channel.get("id").cloned();
+    let new_user = channel.get("username").and_then(|v| v.as_str()).map(str::to_string);
+
+    let path = platform_file(&app, &main_folder_name, &platform)?;
+    let mut accounts = read_accounts(&path);
+    let acc = accounts
+        .iter_mut()
+        .find(|a| account_name(a) == name.as_str())
+        .ok_or_else(|| format!("no account '{}' on platform '{}'", name, platform))?;
+
+    let obj = acc.as_object_mut().ok_or("account is not an object")?;
+    let channels = obj
+        .entry("channels")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let arr = channels.as_array_mut().ok_or("channels is not an array")?;
+
+    // upsert: совпадение по id (если задан) или по username
+    let pos = arr.iter().position(|c| {
+        let same_id = new_id.is_some() && c.get("id") == new_id.as_ref();
+        let same_user = new_user.is_some()
+            && c.get("username").and_then(|v| v.as_str()).map(str::to_string) == new_user;
+        same_id || same_user
+    });
+    match pos {
+        Some(i) => arr[i] = channel,
+        None => arr.push(channel),
+    }
+    let result = channels.clone();
+    write_accounts(&path, &accounts)?;
+    Ok(result)
+}
+
+/// Удалить из каталога аккаунта канал/чат (по `chat_id`) ИЛИ тему форума
+/// (по `chat_id` + `thread_id`). `thread_id = None` → удаляем сам канал/чат целиком;
+/// `Some` → удаляем только тему из его `topics[]`. read-modify-write ТОЛЬКО поля
+/// `channels` (токен не трогаем). Возвращает обновлённый `channels`. Идемпотентна.
+#[tauri::command]
+#[specta::specta]
+pub fn account_remove_channel(
+    app: tauri::AppHandle,
+    main_folder_name: String,
+    platform: String,
+    name: String,
+    chat_id: i64,
+    thread_id: Option<i64>,
+) -> Result<Value, String> {
+    let path = platform_file(&app, &main_folder_name, &platform)?;
+    let mut accounts = read_accounts(&path);
+    let acc = accounts
+        .iter_mut()
+        .find(|a| account_name(a) == name.as_str())
+        .ok_or_else(|| format!("no account '{}' on platform '{}'", name, platform))?;
+
+    let obj = acc.as_object_mut().ok_or("account is not an object")?;
+    let channels = obj
+        .entry("channels")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let arr = channels.as_array_mut().ok_or("channels is not an array")?;
+
+    match thread_id {
+        None => {
+            // удалить канал/чат целиком по id
+            arr.retain(|c| c.get("id").and_then(|v| v.as_i64()) != Some(chat_id));
+        }
+        Some(tid) => {
+            // удалить тему из topics[] нужного чата
+            if let Some(c) = arr
+                .iter_mut()
+                .find(|c| c.get("id").and_then(|v| v.as_i64()) == Some(chat_id))
+            {
+                if let Some(topics) = c.get_mut("topics").and_then(|t| t.as_array_mut()) {
+                    topics.retain(|t| t.get("threadId").and_then(|v| v.as_i64()) != Some(tid));
+                }
+            }
+        }
+    }
+
+    let result = channels.clone();
+    write_accounts(&path, &accounts)?;
+    Ok(result)
 }
 
 /// Удалить аккаунт платформы (idempotent).

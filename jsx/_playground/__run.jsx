@@ -1,7 +1,7 @@
 // ⚠️  АВТО-ГЕНЕРАЦИЯ — не редактируй. Источник: jsx/_playground/playground.js
-//     dev-скрипт: scaleAvatarByAudio. Пересобирается на yarn jsx:watch / jsx:play.
+//     dev-скрипт: robloxSplitScreen. Пересобирается на yarn jsx:watch / jsx:play.
 
-"object"!=typeof JSON&&(JSON={}),function(){"use strict";var rx_one=/^[\],:{}\s]*$/,rx_two=/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g,rx_three=/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g,rx_four=/(?:^|:|,)(?:\s*\[)+/g,rx_escapable=/[\\\"\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,rx_dangerous=/[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,gap,indent,meta,rep;function f(t){return t<10?"0"+t:t}function this_value(){return this.valueOf()}function quote(t){return rx_escapable.lastIndex=0,rx_escapable.test(t)?'"'+t.replace(rx_escapable,function(t){var e=meta[t];return"string"==typeof e?e:"\\u"+("0000"+t.charCodeAt(0).toString(16)).slice(-4)})+'"':'"'+t+'"'}function str(t,e){var r,n,o,u,f,a=gap,i=e[t];switch(i&&"object"==typeof i&&"function"==typeof i.toJSON&&(i=i.toJSON(t)),"function"==typeof rep&&(i=rep.call(e,t,i)),typeof i){case"string":return quote(i);case"number":return isFinite(i)?String(i):"null";case"boolean":case"null":return String(i);case"object":if(!i)return"null";if(gap+=indent,f=[],jlby y.fyc/ "[object Array]"===Object.prototype.toString.apply(i)){for(u=i.length,r=0;r<u;r+=1)f[r]=str(r,i)||"null";return o=0===f.length?"[]":gap?"[\n"+gap+f.join(",\n"+gap)+"\n"+a+"]":"["+f.join(",")+"]",gap=a,o}if(rep&&"object"==typeof rep)for(u=rep.length,r=0;r<u;r+=1)"string"==typeof rep[r]&&(o=str(n=rep[r],i))&&f.push(quote(n)+(gap?": ":":")+o);else for(n in i)Object.prototype.hasOwnProperty.call(i,n)&&(o=str(n,i))&&f.push(quote(n)+(gap?": ":":")+o);return o=0===f.length?"{}":gap?"{\n"+gap+f.join(",\n"+gap)+"\n"+a+"}":"{"+f.join(",")+"}",gap=a,o}}"function"!=typeof Date.prototype.toJSON&&(Date.prototype.toJSON=function(){return isFinite(this.valueOf())?this.getUTCFullYear()+"-"+f(this.getUTCMonth()+1)+"-"+f(this.getUTCDate())+"T"+f(this.getUTCHours())+":"+f(this.getUTCMinutes())+":"+f(this.getUTCSeconds())+"Z":null},Boolean.prototype.toJSON=this_value,Number.prototype.toJSON=this_value,String.prototype.toJSON=this_value),"function"!=typeof JSON.stringify&&(meta={"\b":"\\b","\t":"\\t","\n":"\\n","\f":"\\f","\r":"\\r",'"':'\\"',"\\":"\\\\"},JSON.stringify=function(t,e,r){var n;if(gap="",indent="","number"==typeof r)for(n=0;n<r;n+=1)indent+=" ";else"string"==typeof r&&(indent=r);if(rep=e,e&&"function"!=typeof e&&("object"!=typeof e||"number"!=typeof e.length))throw new Error("JSON.stringify");return str("",{"":t})}),"function"!=typeof JSON.parse&&(JSON.parse=function(text,reviver){var j;function walk(t,e){var r,n,o=t[e];if(o&&"object"==typeof o)for(r in o)Object.prototype.hasOwnProperty.call(o,r)&&(void 0!==(n=walk(o,r))?o[r]=n:delete o[r]);return reviver.call(t,e,o)}if(text=String(text),rx_dangerous.lastIndex=0,rx_dangerous.test(text)&&(text=text.replace(rx_dangerous,function(t){return"\\u"+("0000"+t.charCodeAt(0).toString(16)).slice(-4)})),rx_one.test(text.replace(rx_two,"@").replace(rx_three,"]").replace(rx_four,"")))return j=eval("("+text+")"),"function"==typeof reviver?walk({"":j},""):j;throw new SyntaxError("JSON.parse")})}();
+"object"!=typeof JSON&&(JSON={}),function(){"use strict";var rx_one=/^[\],:{}\s]*$/,rx_two=/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g,rx_three=/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g,rx_four=/(?:^|:|,)(?:\s*\[)+/g,rx_escapable=/[\\\"\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,rx_dangerous=/[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,gap,indent,meta,rep;function f(t){return t<10?"0"+t:t}function this_value(){return this.valueOf()}function quote(t){return rx_escapable.lastIndex=0,rx_escapable.test(t)?'"'+t.replace(rx_escapable,function(t){var e=meta[t];return"string"==typeof e?e:"\\u"+("0000"+t.charCodeAt(0).toString(16)).slice(-4)})+'"':'"'+t+'"'}function str(t,e){var r,n,o,u,f,a=gap,i=e[t];switch(i&&"object"==typeof i&&"function"==typeof i.toJSON&&(i=i.toJSON(t)),"function"==typeof rep&&(i=rep.call(e,t,i)),typeof i){case"string":return quote(i);case"number":return isFinite(i)?String(i):"null";case"boolean":case"null":return String(i);case"object":if(!i)return"null";if(gap+=indent,f=[],"[object Array]"===Object.prototype.toString.apply(i)){for(u=i.length,r=0;r<u;r+=1)f[r]=str(r,i)||"null";return o=0===f.length?"[]":gap?"[\n"+gap+f.join(",\n"+gap)+"\n"+a+"]":"["+f.join(",")+"]",gap=a,o}if(rep&&"object"==typeof rep)for(u=rep.length,r=0;r<u;r+=1)"string"==typeof rep[r]&&(o=str(n=rep[r],i))&&f.push(quote(n)+(gap?": ":":")+o);else for(n in i)Object.prototype.hasOwnProperty.call(i,n)&&(o=str(n,i))&&f.push(quote(n)+(gap?": ":":")+o);return o=0===f.length?"{}":gap?"{\n"+gap+f.join(",\n"+gap)+"\n"+a+"}":"{"+f.join(",")+"}",gap=a,o}}"function"!=typeof Date.prototype.toJSON&&(Date.prototype.toJSON=function(){return isFinite(this.valueOf())?this.getUTCFullYear()+"-"+f(this.getUTCMonth()+1)+"-"+f(this.getUTCDate())+"T"+f(this.getUTCHours())+":"+f(this.getUTCMinutes())+":"+f(this.getUTCSeconds())+"Z":null},Boolean.prototype.toJSON=this_value,Number.prototype.toJSON=this_value,String.prototype.toJSON=this_value),"function"!=typeof JSON.stringify&&(meta={"\b":"\\b","\t":"\\t","\n":"\\n","\f":"\\f","\r":"\\r",'"':'\\"',"\\":"\\\\"},JSON.stringify=function(t,e,r){var n;if(gap="",indent="","number"==typeof r)for(n=0;n<r;n+=1)indent+=" ";else"string"==typeof r&&(indent=r);if(rep=e,e&&"function"!=typeof e&&("object"!=typeof e||"number"!=typeof e.length))throw new Error("JSON.stringify");return str("",{"":t})}),"function"!=typeof JSON.parse&&(JSON.parse=function(text,reviver){var j;function walk(t,e){var r,n,o=t[e];if(o&&"object"==typeof o)for(r in o)Object.prototype.hasOwnProperty.call(o,r)&&(void 0!==(n=walk(o,r))?o[r]=n:delete o[r]);return reviver.call(t,e,o)}if(text=String(text),rx_dangerous.lastIndex=0,rx_dangerous.test(text)&&(text=text.replace(rx_dangerous,function(t){return"\\u"+("0000"+t.charCodeAt(0).toString(16)).slice(-4)})),rx_one.test(text.replace(rx_two,"@").replace(rx_three,"]").replace(rx_four,"")))return j=eval("("+text+")"),"function"==typeof reviver?walk({"":j},""):j;throw new SyntaxError("JSON.parse")})}();
 
 // jsx/utils/aep/clearRenderQueue.ts
 function clearRenderQueue() {
@@ -17,6 +17,114 @@ function clearRenderQueue() {
 function closeProject() {
   app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
   app.purge(PurgeTarget.ALL_CACHES);
+}
+
+// jsx/utils/fs/cleanName.ts
+function cleanName(name) {
+  var out = "";
+  for (var i = 0; i < name.length; i++) {
+    var ch = name.charAt(i);
+    var code = name.charCodeAt(i);
+    if (code >= 55296 && code <= 57343) {
+      continue;
+    }
+    if (ch == " " || ch == "[" || ch == "]" || ch == "(" || ch == ")" || ch == "." || ch == "_" || ch == "-") {
+      out += ch;
+      continue;
+    }
+    if (code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122) {
+      out += ch;
+      continue;
+    }
+    if (code >= 192) {
+      var isSymbol = code >= 8192 && code <= 11263 || // пунктуация, стрелки, мат.символы, значки, дингбаты
+      code >= 11776 && code <= 11903 || // дополнительная пунктуация
+      code >= 12288 && code <= 12351 || // CJK-символы и пунктуация
+      code >= 65024 && code <= 65039 || // variation selectors (модификаторы эмоджи)
+      code >= 65520;
+      if (!isSymbol) {
+        out += ch;
+      }
+      continue;
+    }
+  }
+  return out;
+}
+
+// jsx/utils/aep/tryToImportByName.ts
+function tryToImportByName(_path) {
+  var folderPath = File(_path).parent;
+  var originalName = cleanName(File(_path).displayName);
+  var files = Folder(folderPath).getFiles();
+  var newF;
+  for (var i = 0; i < files.length; i++) {
+    var fName = cleanName(files[i].displayName);
+    if (fName == originalName) {
+      newF = files[i];
+      break;
+    }
+  }
+  return newF;
+}
+
+// jsx/utils/aep/importFile.ts
+function importFile(_path, _type) {
+  if (typeof _type == "undefined") {
+    _type = "FOOTAGE";
+  }
+  var newFile;
+  var importOptions;
+  try {
+    importOptions = new ImportOptions(File(_path));
+  } catch (e) {
+    if (_type == "FOOTAGE") {
+      newFile = tryToImportByName(_path);
+      importOptions = new ImportOptions(newFile);
+    }
+  }
+  if (importOptions && importOptions.canImportAs(ImportAsType[_type])) {
+    newFile = app.project.importFile(importOptions);
+    if (_type == "PROJECT") {
+      var regEx = new RegExp(".aep");
+      for (var i = 1; i <= app.project.rootFolder.numItems; i++) {
+        var item = app.project.items[i];
+        if (item instanceof FolderItem && regEx.test(item.name)) {
+          newFile = item;
+          break;
+        }
+      }
+    }
+    return newFile;
+  } else {
+    return false;
+  }
+}
+
+// jsx/utils/aep/manyImportFile.ts
+function manyImportFile(_arr) {
+  var filesArr = [];
+  var problemsArr = [];
+  for (var i = 0; i < _arr.length; i++) {
+    var item = _arr[i];
+    var curFile = importFile(item, "FOOTAGE");
+    if (!curFile) {
+      problemsArr.push("coud not import file: " + item.path);
+      continue;
+    }
+    filesArr.push(curFile);
+  }
+  return { files: filesArr, problems: problemsArr };
+}
+
+// jsx/utils/fs/osSep.ts
+function osSep() {
+  if ($.os.match(/Windows/)) {
+    return "\\";
+  } else if ($.os.match(/Mac/)) {
+    return "/";
+  } else {
+    return "/";
+  }
 }
 
 // jsx/utils/fs/path/_core.ts
@@ -175,180 +283,6 @@ function basename(path, suffix) {
   return path.slice(start, end);
 }
 
-// jsx/utils/fs/path/extname.ts
-function extname(path) {
-  validateString(path, "path");
-  var start = 0;
-  var startDot = -1;
-  var startPart = 0;
-  var end = -1;
-  var matchedSlash = true;
-  var preDotState = 0;
-  if (IS_WIN && path.length >= 2 && path.charCodeAt(1) === CHAR_COLON && isWinDeviceRoot(path.charCodeAt(0))) {
-    start = startPart = 2;
-  }
-  for (var i = path.length - 1; i >= start; --i) {
-    var code = path.charCodeAt(i);
-    if (isSep(code)) {
-      if (!matchedSlash) {
-        startPart = i + 1;
-        break;
-      }
-      continue;
-    }
-    if (end === -1) {
-      matchedSlash = false;
-      end = i + 1;
-    }
-    if (code === CHAR_DOT) {
-      if (startDot === -1) {
-        startDot = i;
-      } else if (preDotState !== 1) {
-        preDotState = 1;
-      }
-    } else if (startDot !== -1) {
-      preDotState = -1;
-    }
-  }
-  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
-    return "";
-  }
-  return path.slice(startDot, end);
-}
-
-// jsx/utils/aep/compFromFootage.ts
-function compFromFootage(item) {
-  return app.project.items.addComp(
-    basename(item.name, extname(item.name)),
-    item.width,
-    item.height,
-    item.pixelAspect,
-    item.duration,
-    item.frameRate
-  );
-}
-
-// jsx/utils/prototips/addIndexOf.ts
-function addIndexOf() {
-  Array.prototype.indexOf = function(elem) {
-    for (var i = 0; i < this.length; i++) {
-      if (this[i] == elem) {
-        return i;
-      }
-    }
-    return -1;
-  };
-}
-
-// jsx/utils/aep/getEffectFromLayer.ts
-function getEffectsFromLayer(_layer, _nameArr) {
-  if (typeof [].indexOf !== "function") {
-    addIndexOf();
-  }
-  var eff = {};
-  var effects = _layer.property("ADBE Effect Parade");
-  for (var i = 1; i <= effects.numProperties; i++) {
-    var effName = effects.property(i).name;
-    var zz = _nameArr.indexOf(effName);
-    if (zz != -1) {
-      eff[effName] = effects.property(i);
-    }
-  }
-  return eff;
-}
-
-// jsx/utils/fs/cleanName.ts
-function cleanName(name) {
-  var out = "";
-  for (var i = 0; i < name.length; i++) {
-    var ch = name.charAt(i);
-    var code = name.charCodeAt(i);
-    if (code >= 55296 && code <= 57343) {
-      continue;
-    }
-    if (ch == " " || ch == "[" || ch == "]" || ch == "(" || ch == ")" || ch == "." || ch == "_" || ch == "-") {
-      out += ch;
-      continue;
-    }
-    if (code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122) {
-      out += ch;
-      continue;
-    }
-    if (code >= 192) {
-      var isSymbol = code >= 8192 && code <= 11263 || // пунктуация, стрелки, мат.символы, значки, дингбаты
-      code >= 11776 && code <= 11903 || // дополнительная пунктуация
-      code >= 12288 && code <= 12351 || // CJK-символы и пунктуация
-      code >= 65024 && code <= 65039 || // variation selectors (модификаторы эмоджи)
-      code >= 65520;
-      if (!isSymbol) {
-        out += ch;
-      }
-      continue;
-    }
-  }
-  return out;
-}
-
-// jsx/utils/aep/tryToImportByName.ts
-function tryToImportByName(_path) {
-  var folderPath = File(_path).parent;
-  var originalName = cleanName(File(_path).displayName);
-  var files = Folder(folderPath).getFiles();
-  var newF;
-  for (var i = 0; i < files.length; i++) {
-    var fName = cleanName(files[i].displayName);
-    if (fName == originalName) {
-      newF = files[i];
-      break;
-    }
-  }
-  return newF;
-}
-
-// jsx/utils/aep/importFile.ts
-function importFile(_path, _type) {
-  if (typeof _type == "undefined") {
-    _type = "FOOTAGE";
-  }
-  var newFile;
-  var importOptions;
-  try {
-    importOptions = new ImportOptions(File(_path));
-  } catch (e) {
-    if (_type == "FOOTAGE") {
-      newFile = tryToImportByName(_path);
-      importOptions = new ImportOptions(newFile);
-    }
-  }
-  if (importOptions && importOptions.canImportAs(ImportAsType[_type])) {
-    newFile = app.project.importFile(importOptions);
-    if (_type == "PROJECT") {
-      var regEx = new RegExp(".aep");
-      for (var i = 1; i <= app.project.rootFolder.numItems; i++) {
-        var item = app.project.items[i];
-        if (item instanceof FolderItem && regEx.test(item.name)) {
-          newFile = item;
-          break;
-        }
-      }
-    }
-    return newFile;
-  } else {
-    return false;
-  }
-}
-
-// jsx/utils/fs/osSep.ts
-function osSep() {
-  if ($.os.match(/Windows/)) {
-    return "\\";
-  } else if ($.os.match(/Mac/)) {
-    return "/";
-  } else {
-    return "/";
-  }
-}
-
 // jsx/utils/fs/path/dirname.ts
 function dirname(path) {
   validateString(path, "path");
@@ -390,6 +324,47 @@ function dirname(path) {
     return "//";
   }
   return path.slice(0, end);
+}
+
+// jsx/utils/fs/path/extname.ts
+function extname(path) {
+  validateString(path, "path");
+  var start = 0;
+  var startDot = -1;
+  var startPart = 0;
+  var end = -1;
+  var matchedSlash = true;
+  var preDotState = 0;
+  if (IS_WIN && path.length >= 2 && path.charCodeAt(1) === CHAR_COLON && isWinDeviceRoot(path.charCodeAt(0))) {
+    start = startPart = 2;
+  }
+  for (var i = path.length - 1; i >= start; --i) {
+    var code = path.charCodeAt(i);
+    if (isSep(code)) {
+      if (!matchedSlash) {
+        startPart = i + 1;
+        break;
+      }
+      continue;
+    }
+    if (end === -1) {
+      matchedSlash = false;
+      end = i + 1;
+    }
+    if (code === CHAR_DOT) {
+      if (startDot === -1) {
+        startDot = i;
+      } else if (preDotState !== 1) {
+        preDotState = 1;
+      }
+    } else if (startDot !== -1) {
+      preDotState = -1;
+    }
+  }
+  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
+    return "";
+  }
+  return path.slice(startDot, end);
 }
 
 // jsx/utils/fs/path/normalize.ts
@@ -497,27 +472,122 @@ function saveProject(_inObj, _addName) {
   return newAEP_file.fsName;
 }
 
-// jsx/dev/scaleAvatarByAudio.ts
-function scaleAvatarByAudio() {
+// jsx/utils/aep/scaleCurLayer.ts
+function scaleCurLayer(_layer, _scale, _size) {
+  if (typeof _scale == "undefined") {
+    return 0;
+  }
+  _scale = !isNaN(Number(_scale)) ? Number(_scale) : _scale;
+  var newScale = 100;
+  switch (typeof _scale) {
+    case "string":
+      var size = {
+        width: _layer.containingComp.width,
+        height: _layer.containingComp.height
+      };
+      if (typeof _size != "undefined") {
+        size.width = _size[0];
+        size.height = _size[1];
+      }
+      if (_scale == "fit" || _scale == "fill") {
+        var sWidth = size.width / _layer.width * 100;
+        var sHight = size.height / _layer.height * 100;
+        var testW = sHight * _layer.width / 100;
+        if (_scale == "fit") {
+          newScale = Math.min(sWidth, sHight);
+        } else if (_scale == "fill") {
+          newScale = Math.max(sWidth, sHight);
+        }
+      } else {
+        newScale = size[_scale.toLowerCase()] / _layer[_scale.toLowerCase()] * 100;
+      }
+      break;
+    case "number":
+      newScale = _layer.containingComp.height * _scale / _layer.width;
+      break;
+  }
+  _layer.transform.scale.setValue([newScale, newScale]);
+  return newScale;
+}
+
+// jsx/utils/prototips/isArray.ts
+function isArray(element) {
+  return element instanceof Array;
+}
+
+// jsx/utils/randomGen/getRandomInt.ts
+function getRandomInt(min, max) {
+  if (typeof max == "undefined") {
+    max = min;
+    min = 0;
+  }
+  if (max < min) {
+    var temp = max;
+    max = min;
+    min = temp;
+  }
+  if (min === max) {
+    return min;
+  }
+  var randNum = Math.floor(Math.random() * (max - min + 1)) + min;
+  return randNum;
+}
+
+// jsx/utils/randomGen/getDurationInSecconds.ts
+function getDurationInSecconds(rand, fps) {
+  var minVal = 0;
+  var maxVal = 0;
+  if (isArray(rand)) {
+    if (rand.length === 1) {
+      minVal = 0;
+      maxVal = rand[0];
+    } else if (rand.length >= 2) {
+      minVal = rand[0];
+      maxVal = rand[1];
+    }
+  } else {
+    minVal = 0;
+    maxVal = rand;
+  }
+  if (maxVal < minVal) {
+    var tmp = maxVal;
+    maxVal = minVal;
+    minVal = tmp;
+  }
+  if (minVal === maxVal) {
+    return minVal;
+  }
+  var minFrame = minVal * fps;
+  var maxFrame = maxVal * fps;
+  var randNum = getRandomInt(minFrame, maxFrame);
+  var sec = randNum / fps;
+  return sec;
+}
+
+// jsx/dev/robloxSplitScreen.ts
+function robloxSplitScreen() {
   var inObj = {
-  "aeInput": {
-    "video": [
-      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/testAE/06.06-11.25/original/easy Jinu.mov"
-    ]
-  },
-  "clearName": "easy Jinu",
-  "curItem": "easy Jinu.mov",
-  "findTime": "06.06-11.25",
+  "clearName": "Алина - 1 воровство Алины",
+  "curItem": "Алина - 1 воровство Алины.mkv",
+  "findTime": "19.06-15.16",
   "localFolder": "/Users/aleksey.ivanov/Desktop/work-local",
   "mainFolderName": "newMainFolder",
   "mainFolderPath": "/Users/aleksey.ivanov/Desktop/newMainFolder",
-  "mainWorkFolder": "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/testAE",
-  "pathForDelete": "/Users/aleksey.ivanov/Desktop/newMainFolder/testAE/IN/easy Jinu.mov",
-  "projectPathGD": "/Users/aleksey.ivanov/Desktop/newMainFolder/testAE",
-  "targetPath": "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/testAE/06.06-11.25/aeScript easy Jinu.mov",
+  "mainWorkFolder": "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test",
+  "pathForDelete": "/Users/aleksey.ivanov/Desktop/newMainFolder/ROBLOX test/IN/Алина - 1 воровство Алины.mkv",
+  "projectPathGD": "/Users/aleksey.ivanov/Desktop/newMainFolder/ROBLOX test",
   "typeOfFile": {
-    "aep": [
-      "aep"
+    "video": [
+      "avi",
+      "mov",
+      "mp4",
+      "mpeg",
+      "mpg",
+      "m2v",
+      "m4v",
+      "ts",
+      "mxf",
+      "mkv"
     ],
     "audio": [
       "mp3",
@@ -533,14 +603,6 @@ function scaleAvatarByAudio() {
       "gif",
       "pgf"
     ],
-    "moho": [
-      "moho"
-    ],
-    "scripts": [
-      "js",
-      "jsx",
-      "lua"
-    ],
     "text": [
       "txt",
       "json"
@@ -549,78 +611,85 @@ function scaleAvatarByAudio() {
       "lrc",
       "srt"
     ],
-    "video": [
-      "avi",
-      "mov",
-      "mp4",
-      "mpeg",
-      "mpg",
-      "m2v",
-      "m4v",
-      "ts",
-      "mxf"
-    ],
     "xlsx": [
       "tsv",
       "csv"
+    ],
+    "aep": [
+      "aep"
+    ],
+    "moho": [
+      "moho"
+    ],
+    "scripts": [
+      "js",
+      "jsx",
+      "lua"
     ]
   },
-  "year": "2026"
+  "year": "2026",
+  "aeInput": {
+    "video": [
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/19.06-15.16/Алина - 1 воровство Алины.mp4"
+    ],
+    "mems": [
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/mems/Hitube_cEfmLbEmse_2026_06_17_15_39_45.mov"
+    ],
+    "statBG": [
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg1.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg2.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg3.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg4.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg5.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg6.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg7.mp4",
+      "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/statBG/bg8.mp4"
+    ],
+    "compDuration": [
+      35,
+      60
+    ],
+    "randScenes": [
+      3,
+      5
+    ]
+  },
+  "targetPath": "/Users/aleksey.ivanov/Desktop/work-local/newMainFolder/ROBLOX test/19.06-15.16/Алина - 1 воровство Алины (3Rn).mkv"
 };
-  closeProject();
   var input = inObj.aeInput;
   var _S = osSep();
+  closeProject();
   var video = importFile(input.video[0]);
   if (!(video instanceof FootageItem)) {
     return false;
   }
-  var mainComp = compFromFootage(video);
-  var videoLay = mainComp.layers.add(video);
-  if (videoLay.audioEnabled == false) {
-    videoLay.audioEnabled = true;
+  var fps = 25;
+  var compW = 1080;
+  var compH = 960;
+  var mainCompDuration = getDurationInSecconds(input.compDuration, fps);
+  var mainComp = app.project.items.addComp("mainComp", compW, 1920, 1, mainCompDuration, fps);
+  var memComp = app.project.items.addComp("memComp", compW, compH, 1, mainCompDuration, fps);
+  var videoComp = app.project.items.addComp("videoComp", compW, compH, 1, mainCompDuration, fps);
+  var video = importFile(input.video[0]);
+  var memVid = manyImportFile(input.mems).files;
+  var statBGvid = manyImportFile(input.statBG).files;
+  setVideoToComp([video], 20, videoComp);
+  setVideoToComp(statBGvid, 0, memComp, memVid);
+  var videoCompLay = mainComp.layers.add(videoComp);
+  if (videoCompLay.hasAudio) {
+    videoCompLay.audioEnabled = false;
   }
-  videoLay.solo = true;
-  mainComp.openInViewer();
-  var command = app.findMenuCommandId("Convert Audio to Keyframes");
-  app.executeCommand(command);
-  var audioAmp = mainComp.layer(1);
-  var audKeyEff = getEffectsFromLayer(audioAmp, ["Both Channels"]);
-  var audKey = audKeyEff["Both Channels"]("Slider");
-  var pause = 2;
-  var addCut = 1;
-  var audLevel = 0.3;
-  var segments = [];
-  var inSpeech = false;
-  var speechStart = 0;
-  var lastVoiceTime = 0;
-  for (var i = 1; i <= audKey.numKeys; i++) {
-    var t = audKey.keyTime(i);
-    var v = audKey.keyValue(i);
-    if (v >= audLevel) {
-      if (!inSpeech) {
-        speechStart = t;
-        inSpeech = true;
-      }
-      lastVoiceTime = t;
-    } else if (inSpeech && t - lastVoiceTime >= pause) {
-      segments.push({ start: speechStart, end: lastVoiceTime });
-      inSpeech = false;
-    }
+  var memCompLay = mainComp.layers.add(memComp);
+  if (memCompLay.hasAudio) {
+    memCompLay.audioEnabled = false;
   }
-  if (inSpeech) {
-    segments.push({ start: speechStart, end: lastVoiceTime });
-  }
-  audioAmp.remove();
-  videoLay.remove();
-  var scaleExpr = "v=0.5;\ns=ease(time, inPoint, inPoint+v, 0,100) + ease(time, outPoint-v, outPoint, 100,0) - 100;\n[s,s]";
-  for (var s = 0; s < segments.length; s++) {
-    var inPoint = Math.max(0, segments[s].start - addCut);
-    var outPoint = Math.min(mainComp.duration, video.duration, segments[s].end + addCut);
-    var segLay = mainComp.layers.add(video);
-    segLay.inPoint = inPoint;
-    segLay.outPoint = outPoint;
-    var scaleProp = segLay.property("ADBE Transform Group").property("ADBE Scale");
-    scaleProp.expression = scaleExpr;
+  var randPos = getRandomInt(100);
+  if (randPos > 50) {
+    videoCompLay.transform.position.setValue([compW / 2, compH / 2]);
+    memCompLay.transform.position.setValue([compW / 2, mainComp.height - compH / 2]);
+  } else {
+    memCompLay.transform.position.setValue([compW / 2, compH / 2]);
+    videoCompLay.transform.position.setValue([compW / 2, mainComp.height - compH / 2]);
   }
   var finalFile = [];
   var RQ = app.project.renderQueue;
@@ -629,17 +698,48 @@ function scaleAvatarByAudio() {
   fileToRender.outputModule(1).file = File(
     dirname(inObj.targetPath) + _S + basename(inObj.targetPath, extname(inObj.targetPath)) + ".[fileExtension]"
   );
-  fileToRender.outputModule(1).applyTemplate("-=QT_alfa (hapQ)=-");
   finalFile.push(fileToRender.outputModule(1).file.fsName);
-  saveProject(inObj, "(scale)");
+  saveProject(inObj, "(roblox)");
   RQ.render();
   closeProject();
   return finalFile;
+  function setVideoToComp(_video, _offset, _comp, _mems) {
+    var prevTime = 0;
+    while (prevTime < _comp.duration) {
+      var randDur = getDurationInSecconds(input.randScenes, _comp.frameRate);
+      if (_comp.duration - (prevTime + randDur) < 1) {
+        randDur = _comp.duration - prevTime;
+      }
+      var video2 = _video[getRandomInt(_video.length - 1)];
+      var vidLay = _comp.layers.add(video2);
+      var startTimeForVid = getDurationInSecconds([_offset, video2.duration - _offset - randDur], _comp.frameRate);
+      vidLay.inPoint = startTimeForVid;
+      vidLay.outPoint = startTimeForVid + randDur;
+      vidLay.startTime = prevTime - startTimeForVid;
+      scaleCurLayer(vidLay, "fill");
+      if (typeof _mems != "undefined") {
+        var mems = _mems[getRandomInt(_mems.length - 1)];
+        var memsLay = _comp.layers.add(mems);
+        var startTimeForVid = getDurationInSecconds(mems.duration - randDur, _comp.frameRate);
+        memsLay.inPoint = startTimeForVid;
+        memsLay.outPoint = startTimeForVid + randDur;
+        memsLay.startTime = prevTime - startTimeForVid;
+        var randScale = getRandomInt(_comp.height, _comp.height / 1.3);
+        var newScale = scaleCurLayer(memsLay, "fit", [randScale, randScale]);
+        var newH = mems.height * newScale / 100 / 2;
+        var newW = mems.width * newScale / 100 / 2;
+        var posX = getRandomInt(newW, _comp.width - newW);
+        var posY = getRandomInt(newH, _comp.height - newH);
+        memsLay.transform.position.setValue([posX, posY]);
+      }
+      prevTime += randDur;
+    }
+  }
 }
 
 /* @AE_ENTRY */
 try {
-    var __res__ = scaleAvatarByAudio();
+    var __res__ = robloxSplitScreen();
     $.writeln('=== PLAYGROUND RESULT ===');
     $.writeln(JSON.stringify(__res__));
 } catch (e) {

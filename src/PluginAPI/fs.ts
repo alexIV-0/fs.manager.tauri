@@ -89,11 +89,8 @@ export const writeFileSync = writeFile;
 // ─── Append ──────────────────────────────────────────────────────────────────
 
 export async function appendFile(p: string, data: string): Promise<void> {
-	let existing = '';
-	if (await exists(p)) {
-		existing = await readFile(p);
-	}
-	await writeFile(p, existing + data);
+	// Настоящий append (O_APPEND) через Rust — не перезаписывает файл целиком.
+	unwrap(await commands.appendFile(p, data));
 }
 export const appendFileSync = appendFile;
 

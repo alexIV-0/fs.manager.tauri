@@ -41,6 +41,10 @@ pub struct RunScriptInAEArgs {
     pub keep_temp_files: Option<bool>,
     /// Таймаут ожидания результата в секундах (по умолчанию 120)
     pub timeout_sec: Option<u64>,
+    /// Убивать предыдущий процесс AE перед запуском (Windows), чтобы "-r" гарантированно
+    /// попал в холодный старт — AE не подхватывает "-r", если уже открыт. По умолчанию true;
+    /// выключается галкой в ноде, если вдруг понадобится оставить AE открытым вручную.
+    pub kill_previous_instance: Option<bool>,
 }
 
 // ==================== COMMAND ====================
@@ -94,7 +98,8 @@ fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String
     // exec_command). После выхода из функции handle дропается, но сам процесс AE
     // продолжает жить независимо (GUI-приложение). На macOS — None (там запуск
     // через osascript, который сам быстро выходит, а AE остаётся в памяти системы).
-    let _ae_child = launch_in_ae(&args.ae_path, &temp_script_path)?;
+    let kill_previous = args.kill_previous_instance.unwrap_or(true);
+    let _ae_child = launch_in_ae(&args.ae_path, &temp_script_path, kill_previous)?;
 
     // Ждём результата
     let timeout = Duration::from_secs(args.timeout_sec.unwrap_or(120));
@@ -120,7 +125,7 @@ fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String
 #[tauri::command]
 #[specta::specta]
 pub fn launch_ae_with_script(ae_path: String, script_path: String) -> Result<(), String> {
-    launch_in_ae(&ae_path, Path::new(&script_path)).map(|_| ())
+    launch_in_ae(&ae_path, Path::new(&script_path), true).map(|_| ())
 }
 
 // ==================== HELPERS ====================
@@ -227,7 +232,12 @@ fn find_entry_call(script: &str) -> Option<(String, std::ops::Range<usize>)> {
 /// как caller дропнет handle, сам процесс AE продолжит работать независимо.
 /// На macOS возвращает `None` — там запуск идёт через osascript, который сам сразу
 /// выходит, и AE живёт в памяти как обычное GUI-приложение.
-fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<Option<std::process::Child>, String> {
+fn launch_in_ae(
+    ae_path: &str,
+    script_path: &Path,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    kill_previous_instance: bool,
+) -> Result<Option<std::process::Child>, String> {
     let script_str = script_path.to_string_lossy();
 
     #[cfg(target_os = "macos")]
@@ -259,6 +269,33 @@ fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<Option<std::process
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        // AfterFX.exe принимает "-r" ТОЛЬКО при холодном старте — если он уже открыт
+        // (например, остался от предыдущего айтема пайплайна), повторный запуск с "-r"
+        // просто не выполняет скрипт: окно не появляется, AE молча игнорирует команду.
+        // Поэтому по умолчанию перед каждым запуском убиваем предыдущий инстанс —
+        // это единственный надёжный способ гарантировать холодный старт. Отключается
+        // флагом kill_previous_instance (галка в ноде), если нужно оставить AE открытым
+        // вручную (например, для отладки скрипта).
+        if kill_previous_instance {
+            let exe_name = Path::new(ae_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "AfterFX.exe".to_string());
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", &exe_name])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+            // Даём Windows время освободить mutex/хендлы предыдущего процесса перед
+            // новым запуском — без паузы новый AE иногда стартует раньше, чем ОС
+            // полностью освободила single-instance lock прошлого.
+            std::thread::sleep(Duration::from_millis(800));
+        }
+
         // У AfterFX.exe кастомный парсер аргументов: всё, что идёт после `-r`, он
         // трактует как путь к скрипту целиком (включая пробелы). При этом —
         // парадокс — если передать путь в кавычках "...", AE 2026 (и некоторые
@@ -272,7 +309,6 @@ fn launch_in_ae(ae_path: &str, script_path: &Path) -> Result<Option<std::process
         // строку БЕЗ кавычек. AE сам разберётся.
         // Caller (run_script_in_ae_blocking) держит Child handle живым на время
         // поллинга — копирует pattern из exec_command (mohoProject).
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let child = Command::new(ae_path)
             .arg("-r")
             .raw_arg(script_str.as_ref())

@@ -56,8 +56,26 @@ export async function getFileFromFolder(_item: any, _description: any): Promise<
 	// Полные пути (Rust возвращает только имена).
 	allItems = allItems.map((file) => (path.isAbsolute(file) ? file : path.join(pathByPattern, file)));
 
+	// Сколько файлов вернуть:
+	// 1) oneRandomeFile (legacy-чекбокс) — ровно 1 случайный файл. Имеет приоритет,
+	//    чтобы старые флоу работали как прежде.
+	// 2) countRange [min, max] — если max>0, берём случайное N в [max(1,min), max]
+	//    (минимум 1 при активном параметре), но не больше, чем есть файлов. 0,0 = выкл.
+	// 3) иначе — все файлы.
+	const countRange: [number, number] = Array.isArray(_item.countRange) ? _item.countRange : [0, 0];
+	const [rangeMin, rangeMax] = countRange;
+
 	if (_item.oneRandomeFile && allItems.length > 0) {
 		finalFile.push(allItems[getRandomInt(allItems.length - 1)]);
+	} else if (rangeMax > 0 && allItems.length > 0) {
+		const minN = Math.max(1, rangeMin);
+		const maxN = Math.max(minN, rangeMax);
+		const count = Math.min(getRandomInt(minN, maxN), allItems.length);
+		// Выбираем count случайных файлов без повторений.
+		const pool = [...allItems];
+		for (let i = 0; i < count && pool.length > 0; i++) {
+			finalFile.push(pool.splice(getRandomInt(pool.length - 1), 1)[0]);
+		}
 	} else {
 		finalFile.push(...allItems);
 	}

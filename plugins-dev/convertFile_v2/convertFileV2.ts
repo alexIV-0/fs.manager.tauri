@@ -87,6 +87,9 @@ function buildConvertFFmpegArgs(settings: ConvertSettings, outputMode: 'image' |
 			if (codec === 'hap_q') args.push('-format', 'hap_q');
 			if (PRESET_CODECS.has(codec)) args.push('-preset', settings.video.preset);
 			if (CRF_CODECS.has(codec)) args.push('-crf', String(settings.video.crf));
+			if (codec === 'prores' && settings.video.alpha) args.push('-profile:v', '4444');
+			if (codec === 'hap' && settings.video.alpha) args.push('-format', 'hap_alpha');
+			if (settings.video.pixFmt) args.push('-pix_fmt', settings.video.pixFmt);
 		} else {
 			args.push('-vn');
 		}

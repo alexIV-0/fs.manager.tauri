@@ -22,3 +22,6 @@ pub mod deps_commands;
 pub mod preview_commands;
 pub mod account_commands;
 pub mod vk_auth_commands;
+pub mod youtube_auth_commands;
+pub mod youtube_upload_commands;
+pub mod tg_commands;

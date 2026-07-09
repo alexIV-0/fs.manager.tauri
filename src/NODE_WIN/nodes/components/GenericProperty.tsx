@@ -8,12 +8,17 @@ import ChipAutocompleteProperty from '../properties/ChipAutocompleteProperty';
 import CustomSlider from '../properties/CustomSlider';
 import TextProperty from '../properties/LinkProperty';
 import TimeCode from '../properties/TimeCode';
-import TimeRange from '../properties/TimeRange';
+import ValueRange from '../properties/ValueRange';
 import LoopGroupProperty from './LoopGroupProperty';
 import TextEditPropertyComponent from '../properties/TextEditProperty';
 import AddNewPropertyButtom from '../properties/AddNewPropertyButtom';
 import SimpleDDMProperty from '../properties/SimpleDDM';
 import VkAccountDDM from '../properties/VkAccountDDM';
+import YoutubeAccountDDM from '../properties/YoutubeAccountDDM';
+import TgAccountDDM from '../properties/TgAccountDDM';
+import TgChannelsProperty from '../properties/TgChannelsProperty';
+import TgSourceProperty from '../properties/TgSourceProperty';
+import CollectProperty from '../properties/CollectProperty';
 import PathNavigator from '../properties/PathNavigator';
 import JsonNavigator from '../properties/JsonNavigator';
 import AddPathPropertyButton from '../properties/AddPathPropertyButton';
@@ -37,13 +42,21 @@ function GenericProperty({ property }: { property: Property }) {
 			case 'checkbox':
 				return <CheckboxProperty property={property} onChange={(_, checked) => handleChange(checked)} />;
 			case 'autocomplete':
-				return <ChipAutocompleteProperty property={property} onChange={handleChange} />;
-			case 'ddm':
-				return property.controlProps.options?.includes('#vkAccounts') ? (
-					<VkAccountDDM property={property} onChange={handleChange} />
+				return property.controlProps.options?.includes('#tgChannels') ? (
+					<TgChannelsProperty property={property} onChange={handleChange} />
 				) : (
-					<SimpleDDMProperty property={property} onChange={handleChange} />
+					<ChipAutocompleteProperty property={property} onChange={handleChange} />
 				);
+			case 'ddm':
+				if (property.controlProps.options?.includes('#vkAccounts'))
+					return <VkAccountDDM property={property} onChange={handleChange} />;
+				if (property.controlProps.options?.includes('#youtubeAccounts'))
+					return <YoutubeAccountDDM property={property} onChange={handleChange} />;
+				if (property.controlProps.options?.includes('#tgAccounts'))
+					return <TgAccountDDM property={property} onChange={handleChange} />;
+				if (property.controlProps.options?.includes('#tgSources'))
+					return <TgSourceProperty property={property} onChange={handleChange} />;
+				return <SimpleDDMProperty property={property} onChange={handleChange} />;
 			case 'link':
 				return <TextProperty property={property} />;
 			case 'addLink':
@@ -52,8 +65,8 @@ function GenericProperty({ property }: { property: Property }) {
 				return <CustomSlider property={property} onChange={handleChange} />;
 			case 'timecode':
 				return <TimeCode property={property} onChange={handleChange} />;
-			case 'timeRange':
-				return <TimeRange property={property} onChange={handleChange} />;
+			case 'valueRange':
+				return <ValueRange property={property} onChange={handleChange} />;
 			case 'loop':
 				return <LoopGroupProperty property={property} />;
 			case 'textedit':
@@ -74,6 +87,8 @@ function GenericProperty({ property }: { property: Property }) {
 				return <KeyingPropertyComponent property={property as KeyingProperty} />;
 			case 'convertSettings':
 				return <ConvertPropertyComponent property={property as ConvertSettingsProperty} />;
+			case 'collectScheme':
+				return <CollectProperty property={property} />;
 			default:
 				return null;
 		}

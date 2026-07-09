@@ -20,7 +20,18 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["video", "audio", "image", "text", "aep", "moho", "files", "folders", "all", "file"],
+				"acceptedTypes": [
+					"video",
+					"audio",
+					"image",
+					"text",
+					"aep",
+					"moho",
+					"files",
+					"folders",
+					"all",
+					"file"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -30,13 +41,22 @@
 				"controlProps": {
 					"label": "Path",
 					"tooltip": "Указывается папка для сохранения финального файла. Если не указан - Будет сохранен в папку OUT в папке с проектом на GD. имя будет стандартное (\"[$id]_$findTime-$clearName ($random(3))\"), если не указано",
-					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"options": [
+						"#pathPattern",
+						"Custom Folder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"optionsOnly": false,
-					"value": ["$MM $curMonthStr", "[$id]_$findTime_$clearName"]
+					"value": [
+						"$MM $curMonthStr",
+						"$findTime_$clearName"
+					]
 				},
 				"isInput": true,
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": true,
 				"outputType": "path"
 			}

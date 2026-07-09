@@ -242,3 +242,98 @@ pub fn preview_clear_cache(app: tauri::AppHandle, namespace: Option<String>) -> 
     }
     Ok(())
 }
+
+// ==================== Превью аудио региона (с -af фильтрами) ====================
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewAudioSpec {
+    /// Абсолютный путь к исходнику (видео/аудио).
+    pub path: String,
+    /// Начало региона (сек).
+    pub start: f64,
+    /// Длительность региона (сек).
+    pub duration: f64,
+    /// `-af` цепочка аудио-фильтров (может быть пустой → просто вырезка региона).
+    pub filter: String,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewAudioResult {
+    /// Абсолютный путь к WAV в кэше (фронт превращает в asset-URL через toFileUrl).
+    pub path: String,
+    pub cached: bool,
+}
+
+fn compute_audio_key(spec: &PreviewAudioSpec) -> String {
+    let mut h = DefaultHasher::new();
+    spec.path.hash(&mut h);
+    spec.filter.hash(&mut h);
+    spec.start.to_bits().hash(&mut h);
+    spec.duration.to_bits().hash(&mut h);
+    file_mtime_nanos(&spec.path).hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_render_audio(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<AppSettingsState>>,
+    spec: PreviewAudioSpec,
+) -> Result<PreviewAudioResult, String> {
+    if spec.path.is_empty() || spec.duration <= 0.0 {
+        return Err("preview_render_audio: пустой путь или нулевая длительность".into());
+    }
+
+    let ffmpeg = super::ffmpeg_commands::resolve_program_path("ffmpeg", &state);
+    let cache_dir = preview_cache_dir(&app, "audio")?;
+    let out_path = cache_dir.join(format!("{}.wav", compute_audio_key(&spec)));
+
+    if out_path.exists() {
+        return Ok(PreviewAudioResult {
+            path: out_path.to_string_lossy().to_string(),
+            cached: true,
+        });
+    }
+
+    let mut args: Vec<String> = vec![
+        "-hide_banner".into(),
+        "-loglevel".into(),
+        "error".into(),
+        "-ss".into(),
+        format!("{}", spec.start),
+        "-i".into(),
+        spec.path.clone(),
+        "-t".into(),
+        format!("{}", spec.duration),
+        "-vn".into(),
+    ];
+    if !spec.filter.trim().is_empty() {
+        args.push("-af".into());
+        args.push(spec.filter.clone());
+    }
+    args.push("-y".into());
+    args.push(out_path.to_string_lossy().to_string());
+
+    let output = Command::new(&ffmpeg)
+        .args(&args)
+        .hide_console()
+        .output()
+        .map_err(|e| format!("не удалось запустить ffmpeg: {}", e))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let tail = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        return Err(format!("ffmpeg: {}", tail));
+    }
+    if !out_path.exists() {
+        return Err("ffmpeg отработал, но аудио не создано".into());
+    }
+
+    Ok(PreviewAudioResult {
+        path: out_path.to_string_lossy().to_string(),
+        cached: false,
+    })
+}

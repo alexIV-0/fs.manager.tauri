@@ -47,6 +47,8 @@ struct RequiredCaps {
 #[derive(Debug, Clone, Deserialize)]
 struct OptionalCaps {
     encoders: Vec<String>,
+    #[serde(default)]
+    filters: Vec<String>,
 }
 
 fn load_requirements() -> Result<Requirements, String> {
@@ -439,6 +441,11 @@ fn run_gate(ffmpeg: &Path, ffprobe: &Path, req: &Requirements) -> Result<GateRes
             missing_optional.push(format!("encoder:{}", e));
         }
     }
+    for f in &req.optional.filters {
+        if !filters.contains(f) {
+            missing_optional.push(format!("filter:{}", f));
+        }
+    }
 
     Ok(GateResult {
         version,
@@ -498,6 +505,14 @@ pub async fn deps_download_ffmpeg(app: tauri::AppHandle) -> Result<FfmpegInstall
     let ffprobe_base = exe_name("ffprobe");
 
     let tmp = std::env::temp_dir();
+    // Бинарники каждой сборки распаковываем в staging (в dest копируем только выбранную);
+    // лучшего кандидата держим в best_* — чтобы не остановиться на первой рабочей сборке,
+    // а найти самую полную (с optional-возможностями вроде filter:rubberband).
+    let stage_ffmpeg = tmp.join("fsm_stage_ffmpeg");
+    let stage_ffprobe = tmp.join("fsm_stage_ffprobe");
+    let best_ffmpeg = tmp.join("fsm_best_ffmpeg");
+    let best_ffprobe = tmp.join("fsm_best_ffprobe");
+    let mut best: Option<FfmpegInstallResult> = None;
     let mut last_result: Option<FfmpegInstallResult> = None;
 
     for src in &sources {
@@ -550,8 +565,8 @@ pub async fn deps_download_ffmpeg(app: tauri::AppHandle) -> Result<FfmpegInstall
             req.clone(),
             ffmpeg_zip.clone(),
             probe_zip_path,
-            ffmpeg_dest.clone(),
-            ffprobe_dest.clone(),
+            stage_ffmpeg.clone(),
+            stage_ffprobe.clone(),
             ffmpeg_base.clone(),
             ffprobe_base.clone(),
         );
@@ -588,7 +603,10 @@ pub async fn deps_download_ffmpeg(app: tauri::AppHandle) -> Result<FfmpegInstall
             missing_optional: gate.missing_optional.clone(),
         };
 
-        if result.ok {
+        if result.ok && result.missing_optional.is_empty() {
+            // Идеальная сборка (есть всё, включая optional) — фиксируем в dest и выходим.
+            std::fs::copy(&stage_ffmpeg, &ffmpeg_dest).map_err(|e| format!("copy ffmpeg: {}", e))?;
+            std::fs::copy(&stage_ffprobe, &ffprobe_dest).map_err(|e| format!("copy ffprobe: {}", e))?;
             emit_progress(
                 &app,
                 "ffmpeg",
@@ -599,8 +617,43 @@ pub async fn deps_download_ffmpeg(app: tauri::AppHandle) -> Result<FfmpegInstall
             );
             return Ok(result);
         }
-        // Не прошёл gate — запоминаем и пробуем следующий источник.
+        if result.ok {
+            // Прошла required, но не хватает optional — кандидат. Держим лучшего (минимум
+            // missing_optional) в best_* и пробуем следующий источник: вдруг полнее.
+            let better = match &best {
+                None => true,
+                Some(b) => result.missing_optional.len() < b.missing_optional.len(),
+            };
+            if better {
+                let _ = std::fs::copy(&stage_ffmpeg, &best_ffmpeg);
+                let _ = std::fs::copy(&stage_ffprobe, &best_ffprobe);
+                best = Some(result);
+            }
+            continue;
+        }
+        // Не прошёл required — запоминаем и пробуем следующий источник.
         last_result = Some(result);
+    }
+
+    // Идеальной сборки (без missing_optional) не нашлось — берём лучшего кандидата,
+    // прошедшего required (минимум optional-дыр).
+    if let Some(b) = best {
+        std::fs::copy(&best_ffmpeg, &ffmpeg_dest).map_err(|e| format!("copy ffmpeg: {}", e))?;
+        std::fs::copy(&best_ffprobe, &ffprobe_dest).map_err(|e| format!("copy ffprobe: {}", e))?;
+        emit_progress(
+            &app,
+            "ffmpeg",
+            "done",
+            &format!(
+                "✅ {} ({}) — нет optional: {}",
+                b.version.clone().unwrap_or_default(),
+                b.source.clone().unwrap_or_default(),
+                b.missing_optional.join(", ")
+            ),
+            1,
+            Some(1),
+        );
+        return Ok(b);
     }
 
     // Ни один источник не прошёл gate. Возвращаем последний (с missing), не подключая пути.
@@ -736,4 +789,51 @@ pub async fn deps_download_whisper_model(
     }
     let _ = std::fs::remove_file(&part);
     Err(format!("не удалось скачать {}: {}", filename, last_err))
+}
+
+// ==================== Локальный telegram-bot-api server ====================
+
+/// Имя ассета бинаря под текущую ОС/арх (совпадает с именами в CI tg-bot-api-builds).
+fn tg_server_asset() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("telegram-bot-api-macos-arm64"),
+        ("macos", _) => Some("telegram-bot-api-macos-x86_64"),
+        ("windows", _) => Some("telegram-bot-api-windows-x86_64.exe"),
+        _ => None,
+    }
+}
+
+/// Релиз с собранными бинарями telegram-bot-api (CI-репо tg-bot-api-builds, тег latest).
+const TG_SERVER_RELEASE_BASE: &str = "https://github.com/alexIV-0/tg-bot-api-builds/releases/download/latest";
+
+/// Скачивает бинарь telegram-bot-api под текущую ОС из фиксированного релиза в app_data/bin,
+/// ставит +x и снимает карантин на macOS. Возвращает путь к бинарю.
+#[tauri::command]
+#[specta::specta]
+pub async fn deps_download_tg_server(app: tauri::AppHandle) -> Result<String, String> {
+    let asset = tg_server_asset().ok_or_else(|| {
+        format!(
+            "нет сборки telegram-bot-api под эту ОС ({}/{})",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
+    let url = format!("{}/{}", TG_SERVER_RELEASE_BASE, asset);
+    let dest = bin_dir(&app)?.join(asset);
+
+    download_to(&app, &url, &dest, "tgserver", "telegram-bot-api").await?;
+    set_executable(&dest)?;
+
+    // macOS: снять карантин, иначе Gatekeeper не даст запустить скачанный неподписанный бинарь.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("xattr")
+            .arg("-dr")
+            .arg("com.apple.quarantine")
+            .arg(&dest)
+            .status();
+    }
+
+    emit_progress(&app, "tgserver", "done", "готово", 1, Some(1));
+    Ok(dest.to_string_lossy().to_string())
 }

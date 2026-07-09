@@ -8,8 +8,23 @@ import { memo, useEffect, useRef, useState } from 'react';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
 import { joinPath } from '@/Utils/joinPath';
-import { setProjectActivity } from '@/Utils/projectActivityLS';
+import { getProjectActivity, setProjectActivity } from '@/Utils/projectActivityLS';
+import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { commands, unwrap } from '@/Utils/specta';
+import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
+import { useContextMenu } from '../hooks/useContextMenu';
+import { useMenuItems } from '../hooks/useMenuItems';
+import { FileFolderContextMenu } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
+import {
+	copyPath,
+	showInFinder,
+	deleteItem,
+	createFolder,
+	copyToClipboardFs,
+	cutToClipboardFs,
+	pasteFromClipboardFs,
+} from '@/PROCESSING/utils/fileSystemActions';
+import { ProjectStatsModal } from './ProjectStatsModal';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
 	name,
@@ -21,6 +36,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 	refreshKey?: number;
 }) {
 	const [onOffVal, setOnOffVal] = useState(true);
+	const [statsOpen, setStatsOpen] = useState(false);
 	const listItemRef = useRef<HTMLLIElement>(null);
 
 	const activeMainFolder = setActiveFolders_store((s) => s.activeMainFolder);
@@ -50,13 +66,33 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			addFolder(name);
 		} else {
 			removeFolder(name);
-			// Ручное включение = проект снова в работе. Ставим активность «сейчас» —
-			// auto-disable даст ему полные N дней (а не сутки, как делал старый bump).
-			// Дату ведём в LS, т.к. mtime папки OUT на gsync ненадёжен (его откатывает синк).
-			const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
-			if (activeMain) setProjectActivity(activeMain.id, name, Date.now());
+			reactivateOnManualEnable();
 		}
 		setOnOffVal(!_prev);
+	}
+
+	// Двойная логика ручного включения:
+	// — папка давно холодная (активность > N дней, т.е. была авто-отключена) →
+	//   даём ровно сутки. Если за эти сутки в неё что-то обработается, addedCount>0
+	//   поднимет активность до «сейчас» → полные N дней. Если ничего не попало —
+	//   на следующем проходе она снова отключится.
+	// — свежая папка (активность ≤ N дней) → не трогаем, ведёт себя как обычно.
+	// Дату ведём в LS, т.к. mtime папки OUT на gsync ненадёжен (его откатывает синк).
+	function reactivateOnManualEnable() {
+		const autoDisableDays = getAppSettings().cleanup.autoDisableDays;
+		if (!autoDisableDays || autoDisableDays <= 0) return;
+
+		const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
+		if (!activeMain) return;
+
+		const dayMs = 86_400_000;
+		const activity = getProjectActivity(activeMain.id, name);
+		// Нет истории — пусть auto-disable засеет «сейчас» (полные N дней).
+		if (activity === undefined) return;
+		// Свежая папка — оставляем как есть.
+		if (Date.now() - activity <= autoDisableDays * dayMs) return;
+		// Холодная — сутки до повторного auto-disable.
+		setProjectActivity(activeMain.id, name, Date.now() - (autoDisableDays - 1) * dayMs);
 	}
 
 	const handleMainClick = () => {
@@ -84,6 +120,69 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 		window.tauriAPI.invoke('open-node-window', optionsPath);
 	};
 
+	// ── Контекстное меню (ПКМ) ──────────────────────────────────────────────
+	const menuId = `project-${activeMainFolder ?? ''}-${name}`;
+	const { menuPosition, handleContextMenu, handleMenuClose, isMenuOpen } = useContextMenu(menuId);
+	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
+
+	// Абсолютный путь проектной папки (main-папка + имя проекта).
+	const getProjectPath = (): string | null => {
+		const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
+		return activeMain ? joinPath(activeMain.path, name) : null;
+	};
+
+	// Удаление проекта: с диска + из списка main-папки + чистка off-списка LS,
+	// иначе в колонке остался бы «призрак» удалённой папки.
+	const handleDeleteProject = async () => {
+		const activeMain = mainFolders_stor.getState().mainFolderArr.find((f) => f.id === activeMainFolder);
+		if (!activeMain) return;
+		await deleteItem(joinPath(activeMain.path, name));
+		mainFolders_stor.getState().updateParameters({
+			id: activeMain.id,
+			projectFolders: activeMain.projectFolders.filter((f: string) => f !== name),
+		});
+		removeFolder(name);
+	};
+
+	const menuItems = useMenuItems({
+		type: 'project',
+		// специфичные для 2-й колонки
+		onOpenNodes: openOptions,
+		onOpenStats: () => setStatsOpen(true),
+		// зеркало пунктов 3-й колонки
+		onRename: () => {
+			handleMenuClose();
+			// Откладываем на тик, иначе autoFocus TextField тут же теряет фокус.
+			setTimeout(() => startEditing(), 0);
+		},
+		onCopyPath: () => {
+			const p = getProjectPath();
+			if (p) copyPath(p);
+		},
+		onShowInFinder: () => {
+			const p = getProjectPath();
+			if (p) showInFinder(p);
+		},
+		onDelete: handleDeleteProject,
+		onCreateFolder: () => {
+			const p = getProjectPath();
+			if (p) createFolder(p);
+		},
+		onCopy: () => {
+			const p = getProjectPath();
+			if (p) copyToClipboardFs([p]);
+		},
+		onCut: () => {
+			const p = getProjectPath();
+			if (p) cutToClipboardFs([p]);
+		},
+		onPaste: () => {
+			const p = getProjectPath();
+			if (p) pasteFromClipboardFs(p);
+		},
+		hasClipboard,
+	});
+
 	useEffect(() => {
 		setOnOffVal(!folders.includes(name));
 	}, [activeMainFolder, name, folders, refreshKey]);
@@ -105,6 +204,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 	}, [renameProjectRequest, name, isEditing, startEditing]);
 
 	return (
+		<>
 		<ListItem
 			ref={listItemRef}
 			disablePadding
@@ -116,6 +216,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 				'&:hover .removeProjectButton': { opacity: 1 },
 			}}
 			onClick={handleMainClick}
+			onContextMenu={(e) => handleContextMenu(e, handleMainClick)}
 			onMouseEnter={handleMouseEnter}
 		>
 			<Checkbox checked={onOffVal} onClick={(e) => { e.stopPropagation(); toggleState(onOffVal); }} />
@@ -162,5 +263,22 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 				<Settings strokeWidth={1} size={20} />
 			</IconButton>
 		</ListItem>
+
+		<FileFolderContextMenu
+			menuId={menuId}
+			type='project'
+			position={menuPosition}
+			open={isMenuOpen}
+			onClose={handleMenuClose}
+			items={menuItems}
+		/>
+
+		<ProjectStatsModal
+			open={statsOpen}
+			onClose={() => setStatsOpen(false)}
+			projectName={name}
+			projectPath={getProjectPath() ?? ''}
+		/>
+		</>
 	);
 });

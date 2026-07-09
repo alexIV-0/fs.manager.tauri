@@ -19,7 +19,7 @@ interface FileFolderContextMenuProps {
   position: { mouseX: number; mouseY: number } | null;
   onClose: () => void;
   items: ContextMenuItem[];
-  type: "file" | "folder" | "empty";
+  type: "file" | "folder" | "empty" | "project";
   menuId: string;
 }
 

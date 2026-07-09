@@ -78,7 +78,36 @@ export interface PropertyBase<CT extends string, CP> {
 	outputMarker?: string;
 	required?: boolean;
 	output?: OutputConfig;
+	/**
+	 * Пометка «показать этот параметр на сайте».
+	 * Сериализуется в options.json как есть (через reactFlow.toObject()).
+	 * Будущий сайт читает options.json и рендерит свойства с exposedToSite===true
+	 * теми же property-компонентами в виде стека настроек для пользователя.
+	 */
+	exposedToSite?: boolean;
 }
+
+/**
+ * controlType'ы «простых» контролов, которым в редакторе доступна галочка
+ * «показать на сайте» (рядом с tooltip/корзиной). Этот же набор переиспользует
+ * сайт, чтобы понять, какие свойства он умеет отрисовать.
+ */
+export const EXPOSABLE_CONTROL_TYPES: ReadonlySet<string> = new Set([
+	'checkbox',
+	'slider',
+	'timecode',
+	'ddm',
+	'autocomplete',
+	'textedit',
+	'valueRange',
+]);
+
+/**
+ * controlType'ы, у которых рядом с tooltip показывается шестерёнка «дефолтные
+ * настройки» — per-flow override настроек уровня pluginBuilder (имя/label не меняется).
+ * Пока только valueRange.
+ */
+export const GEAR_CONTROL_TYPES: ReadonlySet<string> = new Set(['valueRange']);
 
 export interface CheckboxPropertyControlProps extends CheckboxProps {
 	label?: string;
@@ -145,10 +174,11 @@ export interface TextEditPropertyControlProps {
 	inheritedValue?: string;
 	language?: TextEditLanguage;
 	editLabel?: boolean; // если true — двойной клик по label позволяет его редактировать
+	runnable?: boolean; // если true — в модалке редактора появляется ▶ Run + панель результата (нода jsCode)
 }
 
-export type AddableType = 'Link' | 'TextEdit' | 'Timecode' | 'Slider' | 'Checkbox';
-export const ALL_ADDABLE_TYPES: AddableType[] = ['Link', 'TextEdit', 'Timecode', 'Slider', 'Checkbox'];
+export type AddableType = 'Link' | 'TextEdit' | 'Timecode' | 'Slider' | 'Checkbox' | 'TimeRange' | 'NumberRange';
+export const ALL_ADDABLE_TYPES: AddableType[] = ['Link', 'TextEdit', 'Timecode', 'Slider', 'Checkbox', 'TimeRange', 'NumberRange'];
 
 export interface AddNewPropertyControlProps {
 	label?: string;
@@ -275,11 +305,12 @@ export interface ConvertSettingsPropertyControlProps {
 	tooltip?: string;
 	value: string; // JSON string с настройками ConvertSettings
 	inheritedValue?: string[]; // file paths from upstream connection
+	theme?: string; // id темы модалки (convertThemes.ts); пусто → 'full'
 }
 
 export type ConvertSettingsProperty = PropertyBase<'convertSettings', ConvertSettingsPropertyControlProps>;
 
-export interface TimeRangePropertyControlProps {
+export interface ValueRangePropertyControlProps {
 	label?: string;
 	tooltip?: string;
 	value: [number, number];
@@ -292,7 +323,15 @@ export interface TimeRangePropertyControlProps {
 	allowManualOverride?: boolean; // разрешить ручной ввод за пределами диапазона слайдера
 }
 
-export type TimeRangeProperty = PropertyBase<'timeRange', TimeRangePropertyControlProps>;
+export type ValueRangeProperty = PropertyBase<'valueRange', ValueRangePropertyControlProps>;
+
+export interface CollectSchemePropertyControlProps {
+	label?: string;
+	tooltip?: string;
+	value: { type?: string }; // MVP: { type }; фаза 2: + taskName/steps визарда
+}
+
+export type CollectSchemeProperty = PropertyBase<'collectScheme', CollectSchemePropertyControlProps>;
 
 export type Property =
 	| CheckboxProperty
@@ -313,7 +352,8 @@ export type Property =
 	| VideoAdjustmentProperty
 	| KeyingProperty
 	| ConvertSettingsProperty
-	| TimeRangeProperty;
+	| ValueRangeProperty
+	| CollectSchemeProperty;
 
 // export enum SearchType {
 // 	IMAGE = 'image',

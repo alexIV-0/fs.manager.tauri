@@ -63,11 +63,23 @@ export async function promptUpdaterFunc(_item: any, _description: any): Promise<
 	const dynamicLabels = Object.keys(_item).filter((k) => !KNOWN_ITEM_KEYS.has(k));
 
 	// ── 3. Replace [label] tokens in text ───────────────────────────────────
+	// Умная подстановка: если значение входа — путь к СУЩЕСТВУЮЩЕМУ файлу, подставляем
+	// его содержимое (как для promptPath); иначе — значение как строку. Так вход можно
+	// кормить и файлом (нода вернула путь), и строкой (нода вернула контент).
 	let modifiedText = text;
 	for (const label of dynamicLabels) {
 		const importedValues: any[] = _item.import?.[label] ?? [];
-		const rawValue = importedValues.length > 0 ? importedValues : _item[label];
-		const strValue = toStringValue(rawValue);
+		let strValue: string;
+		if (importedValues.length > 0) {
+			const parts: string[] = [];
+			for (const v of importedValues) {
+				if (typeof v === 'string' && (await fs.existsFile(v))) parts.push(await fs.read(v));
+				else parts.push(toStringValue(v));
+			}
+			strValue = parts.join('\n');
+		} else {
+			strValue = toStringValue(_item[label]);
+		}
 		const pattern = new RegExp(`\\[${escapeRegExp(label)}\\]`, 'g');
 		modifiedText = modifiedText.replace(pattern, strValue);
 	}

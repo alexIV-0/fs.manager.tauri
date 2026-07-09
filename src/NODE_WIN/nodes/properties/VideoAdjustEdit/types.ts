@@ -1,5 +1,7 @@
 // src/NODE_WIN/nodes/properties/VideoAdjustEdit/types.ts
 
+import { defaultEncodeSettings, type EncodeSettings } from '@/Utils/ffmpegCaps';
+
 export interface BgAdjustSettings {
 	blur: number;       // 0–50 px
 	brightness: number; // -1 .. +1  (0 = no change; CSS: 1 + brightness)
@@ -41,6 +43,8 @@ export interface VideoAdjustSettings {
 	};
 	fgFilePath?: string;
 	bgFilePath?: string;
+	/** Render-настройки выхода (контейнер/кодек/preset/CRF/pix_fmt). */
+	encode?: EncodeSettings;
 }
 
 export function defaultFgShadow(): FgShadowSettings {
@@ -58,6 +62,7 @@ export function defaultVideoAdjustSettings(): VideoAdjustSettings {
 			copies: 1,
 			adjust: { blur: 0, brightness: 0, contrast: 1, saturation: 1, hFlip: false },
 		},
+		encode: defaultEncodeSettings(),
 	};
 }
 
