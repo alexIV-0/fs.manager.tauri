@@ -235,6 +235,7 @@ fn find_entry_call(script: &str) -> Option<(String, std::ops::Range<usize>)> {
 fn launch_in_ae(
     ae_path: &str,
     script_path: &Path,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     kill_previous_instance: bool,
 ) -> Result<Option<std::process::Child>, String> {
     let script_str = script_path.to_string_lossy();

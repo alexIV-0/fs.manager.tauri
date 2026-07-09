@@ -210,14 +210,27 @@ export function renderConvertPreview(
 
 	for (const f of filters) canvas = applyFilter(canvas, f, frame, bgColor);
 
-	if (frame.mode === 'fixed' && frame.width > 0 && frame.height > 0) {
-		if (positionActive) {
-			// Position already placed the source into the frame canvas.
-		} else if (scaleActive) {
-			canvas = padCropInto(canvas, frame.width, frame.height, bgColor);
-		} else {
-			canvas = coverInto(canvas, frame.width, frame.height, bgColor);
+	if (frame.mode === 'fixed') {
+		const W = frame.width;
+		const H = frame.height;
+		if (W > 0 && H > 0) {
+			if (positionActive) {
+				// Position already placed the source into the frame canvas.
+			} else if (scaleActive) {
+				canvas = padCropInto(canvas, W, H, bgColor);
+			} else {
+				canvas = coverInto(canvas, W, H, bgColor);
+			}
+		} else if (W > 0 || H > 0) {
+			// One dimension auto (0) → scale by the other, source aspect preserved (no crop/pad).
+			const aspect = canvas.width / canvas.height;
+			const tw = W > 0 ? W : Math.round(H * aspect);
+			const th = H > 0 ? H : Math.round(W / aspect);
+			const out = makeCanvas(tw, th);
+			out.getContext('2d')!.drawImage(canvas, 0, 0, tw, th);
+			canvas = out;
 		}
+		// both 0 → no frame scaling (leave canvas as-is)
 	}
 
 	return canvas;

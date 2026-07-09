@@ -256,20 +256,17 @@ function FrameBlock({
 	const label = greyColor(50);
 	const defC = greyColor(80);
 
-	const lockAspect = frame.lockAspect;
+	// "Preserve proportions" is expressed as a 0 (auto) dimension: the non-zero field sets
+	// that side and the other is derived from the source aspect ratio at conversion time.
+	const autoAspect = frame.width === 0 || frame.height === 0;
 
-	const setW = (v: number) =>
-		onChange({
-			...frame,
-			width: v,
-			height: lockAspect && frame.width > 0 ? Math.round((v / frame.width) * frame.height) : frame.height,
-		});
-	const setH = (v: number) =>
-		onChange({
-			...frame,
-			height: v,
-			width: lockAspect && frame.height > 0 ? Math.round((v / frame.height) * frame.width) : frame.width,
-		});
+	const setW = (v: number) => onChange({ ...frame, width: v });
+	const setH = (v: number) => onChange({ ...frame, height: v });
+
+	const toggleAuto = () =>
+		autoAspect
+			? onChange({ ...frame, width: frame.width || 1920, height: frame.height || 1080 }) // exit auto → fill defaults
+			: onChange({ ...frame, width: 0, height: 0 }); // enter auto → clear both, user types one side
 
 	return (
 		<Box sx={{ mb: 1.25, border: `1px solid ${border}`, borderRadius: '4px', backgroundColor: bg, overflow: 'hidden' }}>
@@ -350,31 +347,37 @@ function FrameBlock({
 						<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
 							<Typography sx={{ fontSize: 11, color: label }}>W</Typography>
 							<Box sx={{ width: 64 }}>
-								<NumberInput value={frame.width} min={2} max={9999} onChange={setW} />
+								<NumberInput value={frame.width} min={0} max={9999} onChange={setW} />
 							</Box>
-							<Typography sx={{ fontSize: 11, color: label }}>px</Typography>
+							<Typography sx={{ fontSize: 11, color: frame.width === 0 ? defC : label }}>
+								{frame.width === 0 ? 'auto' : 'px'}
+							</Typography>
 						</Box>
 						<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0, ml: 1.5 }}>
 							<Typography sx={{ fontSize: 11, color: label }}>H</Typography>
 							<Box sx={{ width: 64 }}>
-								<NumberInput value={frame.height} min={2} max={9999} onChange={setH} />
+								<NumberInput value={frame.height} min={0} max={9999} onChange={setH} />
 							</Box>
-							<Typography sx={{ fontSize: 11, color: label }}>px</Typography>
+							<Typography sx={{ fontSize: 11, color: frame.height === 0 ? defC : label }}>
+								{frame.height === 0 ? 'auto' : 'px'}
+							</Typography>
 						</Box>
 					</Box>
 
-					{/* Lock aspect */}
+					{/* Preserve proportions — sets both sides to 0 (auto); type one side, the other follows the source aspect */}
 					<Box
 						sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
-						onClick={() => onChange({ ...frame, lockAspect: !lockAspect })}
+						onClick={toggleAuto}
 					>
 						<Checkbox
 							size='small'
-							checked={lockAspect}
+							checked={autoAspect}
 							onChange={() => {}}
 							sx={{ p: 0, mr: 0.5, color: label, '&.Mui-checked': { color: defC } }}
 						/>
-						<Typography sx={{ fontSize: 11, color: label }}>Lock aspect ratio</Typography>
+						<Typography sx={{ fontSize: 11, color: label }}>
+							Preserve proportions <span style={{ color: greyColor(38) }}>(0 = auto side)</span>
+						</Typography>
 					</Box>
 				</Box>
 			)}
@@ -434,7 +437,9 @@ function VideoFilterBlock({
 									/>
 								) : (
 									<ParamRow label='Width px'>
-										<NumberInput value={filter.fixedW} min={1} max={7680} onChange={(v) => onChange({ ...filter, fixedW: v })} />
+										<Box sx={{ width: 72 }}>
+											<NumberInput value={filter.fixedW} min={1} max={7680} onChange={(v) => onChange({ ...filter, fixedW: v })} />
+										</Box>
 									</ParamRow>
 								)}
 								{!filter.lockAspect &&
@@ -449,12 +454,14 @@ function VideoFilterBlock({
 										/>
 									) : (
 										<ParamRow label='Height px'>
-											<NumberInput
-												value={filter.fixedH}
-												min={1}
-												max={7680}
-												onChange={(v) => onChange({ ...filter, fixedH: v })}
-											/>
+											<Box sx={{ width: 72 }}>
+												<NumberInput
+													value={filter.fixedH}
+													min={1}
+													max={7680}
+													onChange={(v) => onChange({ ...filter, fixedH: v })}
+												/>
+											</Box>
 										</ParamRow>
 									))}
 								<Box

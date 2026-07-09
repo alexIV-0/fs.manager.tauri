@@ -1,0 +1,17 @@
+{
+	"id": "speech2signal",
+	"name": "Speech to signal",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Анализ голосового стема (ffmpeg astats): огибающая громкости, интервалы речи, пик энергии и прокси возбуждённости (arousal) по блокам — эмоциональная составляющая для скоринга моментов.",
+	"main": "speech2signal.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run",
+	"resourcePool": "local"
+}

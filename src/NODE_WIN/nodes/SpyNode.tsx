@@ -1,5 +1,6 @@
 import { CustomNode } from '@/NODE_WIN/definitions/types';
 import { complimentColor } from '@/NODE_WIN/utils/complimentColor';
+import { isEdgeActive } from '@/NODE_WIN/utils/edgeActive';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import { useEditableField } from '@/hooks/useEditableField';
 import { Box, TextField, Typography } from '@mui/material';
@@ -41,7 +42,11 @@ function SpyNode(props: NodeProps) {
 		updateNodeInternals(nodeId);
 	}, [label, isEditing, nodeId, updateNodeInternals]);
 
-	const incomingEdge = edges.find((e) => e.target === nodeId && e.targetHandle === 'in');
+	// Только активный вход. Inactive-коннектор (от выключенной ноды) — «история»:
+	// слот должен оставаться свободным для подмены источника (то же правило, что
+	// в InputHandle.tsx). Иначе isConnectable={!hasIncoming} мёртво глушит хендл и
+	// validateConnection даже не спрашивается.
+	const incomingEdge = edges.find((e) => e.target === nodeId && e.targetHandle === 'in' && isEdgeActive(e));
 	useNodesData(incomingEdge?.source ?? '');
 
 	const color = useMemo(() => {

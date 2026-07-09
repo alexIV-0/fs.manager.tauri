@@ -199,9 +199,9 @@ export const AUDIO_FILTER_LABELS: Record<AudioFilterType, string> = {
  *  filters to override this default behaviour. */
 export interface FrameSettings {
 	mode:       'original' | 'fixed';
-	width:      number;
-	height:     number;
-	lockAspect: boolean;    // when true, editing W auto-recalculates H and vice-versa
+	width:      number;     // 0 = auto (derive from source aspect using the other dimension)
+	height:     number;     // 0 = auto
+	lockAspect: boolean;    // deprecated / unused — aspect is now expressed via a 0 dimension
 }
 
 export function defaultFrameSettings(): FrameSettings {
@@ -322,6 +322,19 @@ function colorToFfmpeg(hex: string): string {
 	return hex.startsWith('#') ? `0x${hex.slice(1)}` : hex;
 }
 
+/** Snap a fixed pixel dimension down to the nearest even value. Most video codecs
+ *  (h264 / h265 / yuv420p …) reject odd width/height, so every explicit size we emit
+ *  must be even. Values ≤0 mean "auto" and are returned unchanged (the `-2` in the
+ *  scale expression keeps the auto side even). */
+function evenPx(n: number): number {
+	return n <= 0 ? n : Math.max(2, Math.floor(n / 2) * 2);
+}
+
+/** Wrap a scale width/height *expression* (e.g. `iw*0.7`) so its result is even. */
+function evenExpr(expr: string): string {
+	return `trunc((${expr})/2)*2`;
+}
+
 function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings, bgColor: string = '#000000'): string[] {
 	const parts: string[] = [];
 	for (const f of filters) {
@@ -331,9 +344,11 @@ function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings
 				if (f.mode === 'original') break;
 				if (f.mode === 'pct') {
 					const wp = (f.widthPct / 100).toFixed(4);
-					parts.push(`scale=iw*${wp}:${f.lockAspect ? '-2' : `ih*${(f.heightPct / 100).toFixed(4)}`}`);
+					const w = evenExpr(`iw*${wp}`);
+					const h = f.lockAspect ? '-2' : evenExpr(`ih*${(f.heightPct / 100).toFixed(4)}`);
+					parts.push(`scale=${w}:${h}`);
 				} else {
-					parts.push(`scale=${f.fixedW}:${f.lockAspect ? '-2' : f.fixedH}`);
+					parts.push(`scale=${evenPx(f.fixedW)}:${f.lockAspect ? '-2' : evenPx(f.fixedH)}`);
 				}
 				break;
 			}
@@ -394,8 +409,8 @@ function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings
 				// centred (offset 2W, 2H). Then crop W×H window at the right offset to show the source at
 				// the requested xPct/yPct, clamped so ffmpeg never gets out-of-range crop offsets.
 				if (!frame) break;
-				const W = frame.mode === 'fixed' ? frame.width : 0;
-				const H = frame.mode === 'fixed' ? frame.height : 0;
+				const W = frame.mode === 'fixed' ? evenPx(frame.width) : 0;
+				const H = frame.mode === 'fixed' ? evenPx(frame.height) : 0;
 				if (W <= 0 || H <= 0) break;
 				const color = colorToFfmpeg(bgColor);
 				const xPct = f.xPct;
@@ -468,14 +483,18 @@ export function getScaledSourceDims(
 	return { w, h };
 }
 
-/** Default cover behaviour for the output frame when neither Scale nor Position filters
- *  are active. Scales the source to cover the canvas preserving aspect ratio
- *  (overflow allowed), then crops to exact W×H centered. */
+/** Output-frame sizing.
+ *  - Both W and H > 0  → exact box: cover (scale to fill, preserving aspect) then crop overflow.
+ *  - Exactly one > 0   → "auto": that dimension is fixed, the other is derived from the
+ *                         source's aspect ratio at conversion time (`-2` = even auto). No crop, no pad.
+ *  - Both 0            → no frame scaling. */
 export function buildFrameFilterString(frame: FrameSettings): string {
 	if (frame.mode !== 'fixed') return '';
-	const W = frame.width;
-	const H = frame.height;
-	if (W <= 0 || H <= 0) return '';
+	const W = evenPx(frame.width);
+	const H = evenPx(frame.height);
+	if (W > 0 && H <= 0) return `scale=${W}:-2`;
+	if (H > 0 && W <= 0) return `scale=-2:${H}`;
+	if (W <= 0 && H <= 0) return '';
 	return `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}`;
 }
 
@@ -488,12 +507,15 @@ export function buildVideoFilterString(video: VideoConvertSettings): string {
 	const parts = buildVideoFilterItems(video.filters, frame, bgColor);
 
 	if (frame.mode === 'fixed') {
-		if (positionActive) {
+		// Cover / pad-crop only make sense for an exact W×H box. When one dimension is
+		// "auto" (0), fall through to buildFrameFilterString (scale=W:-2 / scale=-2:H).
+		const bothFixed = frame.width > 0 && frame.height > 0;
+		if (bothFixed && positionActive) {
 			// Position filter is responsible for placing the source inside the frame canvas.
-		} else if (scaleActive) {
+		} else if (bothFixed && scaleActive) {
 			// Scale controls the source size; center it inside the frame canvas, pad gaps, crop overflow.
-			const W = frame.width;
-			const H = frame.height;
+			const W = evenPx(frame.width);
+			const H = evenPx(frame.height);
 			const color = colorToFfmpeg(bgColor);
 			parts.push(`pad=max(iw\\,${W}):max(ih\\,${H}):(ow-iw)/2:(oh-ih)/2:${color}`);
 			parts.push(`crop=${W}:${H}:(iw-${W})/2:(ih-${H})/2`);

@@ -1,0 +1,89 @@
+{
+	"type": "transcriptJSONnormalize",
+	"position": {
+		"x": 0,
+		"y": 0
+	},
+	"width": 400,
+	"height": 560,
+	"data": {
+		"label": "Transcript JSON normalize",
+		"colorType": "helpers",
+		"comment": "Превращает «жирный» пословный JSON whisper (--output-json-full) в лёгкий сигнальный файл { lang, dur, words?, sentences }. words — пословные тайминги (для снапа границ реза); sentences — предложения (или титр-блоки с переносами строк под After Effects).",
+		"properties": [
+			{
+				"id": "inputFile",
+				"controlType": "link",
+				"controlProps": {
+					"label": "Input JSON (whisper full)",
+					"tooltip": "Пословный JSON whisper (формат JSONfull из TranscribeVA). Из него берём слова с DTW-таймингами.",
+					"value": ""
+				},
+				"isInput": true,
+				"acceptedTypes": ["text"],
+				"required": true,
+				"outputType": "accepted"
+			},
+			{
+				"id": "targetPath",
+				"controlType": "autocomplete",
+				"controlProps": {
+					"label": "Target Path",
+					"tooltip": "Путь до финального файла. Если пустой — сохраняется рядом с исходником.",
+					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"multiSelect": true,
+					"allowDuplicates": true,
+					"value": []
+				},
+				"isInput": true,
+				"outputType": "path",
+				"acceptedTypes": ["path"],
+				"required": false
+			},
+			{
+				"id": "words",
+				"controlType": "checkbox",
+				"controlProps": {
+					"label": "Пословный слой (words)",
+					"tooltip": "Включать тяжёлый пословный слой `words` (тайминги каждого слова) — нужен для точного снапа границ реза и караоке-подсветки.<div><b>Вкл</b> (дефолт): в файле есть `words`, а предложения несут указатель `w:[i,j)` на свои слова.</div><div><b>Выкл</b>: только `sentences` (для LLM/статичных титров) — файл легче, указателей `w` нет.</div>",
+					"value": true
+				},
+				"outputType": "boolean"
+			},
+			{
+				"id": "maxLineLength",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Символов в строке (перенос)",
+					"tooltip": "Максимум символов в одной строке предложения.<div><b>0</b> — без переносов: чистые предложения по пунктуации (для LLM/анализа).</div><div><b>>0</b> — упаковка текста в строки ≤N символов с переносом `\\r` (титр-блоки под текстовый слой After Effects). Напр. 32.</div>",
+					"value": 0,
+					"minValue": 0,
+					"maxValue": 60,
+					"step": 1,
+					"useValuesAsLabels": true,
+					"minMaxValueVisible": true
+				},
+				"outputType": "number"
+			},
+			{
+				"id": "maxLine",
+				"controlType": "slider",
+				"controlProps": {
+					"label": "Строк в блоке",
+					"tooltip": "Максимум строк в одном титр-блоке (работает при «Символов в строке» > 0). Когда блок заполнен — начинается новый. Напр. 2.",
+					"value": 2,
+					"minValue": 1,
+					"maxValue": 5,
+					"step": 1,
+					"useValuesAsLabels": true,
+					"minMaxValueVisible": true
+				},
+				"outputType": "number"
+			}
+		],
+		"output": {
+			"sourceProperty": "inputFile"
+		},
+		"isValid": false
+	}
+}
