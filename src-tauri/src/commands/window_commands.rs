@@ -1500,8 +1500,21 @@ pub fn log_window_emit_item_end(
         let cost      = payload.get("totalCost").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let ended_at  = payload.get("endTime").and_then(|v| v.as_str()).unwrap_or("");
         let duration  = payload.get("duration").and_then(|v| v.as_str()).unwrap_or("00:00:00");
+        // startedAt берём из лог-группы (ставится на item:start), а НЕ из registeredAt (= время находки).
+        let started_at = finished_group
+            .as_ref()
+            .and_then(|g| g.get("startTime"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        // Абсолютные пути финальных файлов; в db_analytics режутся до пути от корня проекта.
+        let out_files: Vec<String> = payload
+            .get("outFiles")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
         if let Ok(db) = db_state.lock() {
-            super::db_analytics::write_analytics(&app, item_id, status, cost, ended_at, duration, &db);
+            super::db_analytics::write_analytics(&app, item_id, status, cost, ended_at, &started_at, duration, &out_files, &db);
         }
     }
 

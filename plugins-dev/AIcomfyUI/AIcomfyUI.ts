@@ -5,6 +5,7 @@
 import path from 'path';
 import { fs, http, sendToMW } from '../_template/tauri';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 
 export { onLoad } from '../_template/tauri';
 
@@ -56,7 +57,13 @@ export async function AIcomfyUIFunc(_item: any, _description: any): Promise<any[
 	const pathForDelete = typeof _item.description?.pathForDelete === 'string' ? _item.description?.pathForDelete : 'workflow.json';
 	const targetFilePath = createPathForFileByPattern(curPath, _description, pathForDelete);
 	const targetDir = path.dirname(targetFilePath);
-	const targetBaseName = path.basename(targetFilePath, path.extname(targetFilePath));
+
+	// Путь (папку) резолвим один раз выше. Само ИМЯ файла — последний чип маски —
+	// раскрываем отдельно на КАЖДЫЙ пришедший от сервера файл (в downloadOutputs),
+	// подставляя серверное имя в `file`. Так file-маски ($fileName / $clearFileName /
+	// $index) считаются от РЕЗУЛЬТАТА обработки, а не от несуществующего входного файла,
+	// а description-маски ($clearName / $id / $findTime) — от исходно найденного элемента.
+	const namePattern = curPath[curPath.length - 1] ?? '$clearName';
 
 	sendToMW('statusbar', { text: `${_description.infoText}: [ComfyUI Request]\n ${_description.curItem}` });
 
@@ -145,7 +152,7 @@ export async function AIcomfyUIFunc(_item: any, _description: any): Promise<any[
 		inputFiles,
 		overrides,
 		targetDir,
-		targetBaseName,
+		namePattern,
 		description: _description,
 	});
 
@@ -161,7 +168,7 @@ async function sendToComfyAsync(opts: {
 	inputFiles: { path: string; filename: string; nodeId: string; fieldName: string }[];
 	overrides: Record<string, Record<string, any>>;
 	targetDir: string;
-	targetBaseName: string;
+	namePattern: string;
 	description: any;
 }): Promise<string[] | null> {
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -208,7 +215,8 @@ async function sendToComfyAsync(opts: {
 				baseUrl: opts.baseUrl,
 				serverToken: opts.serverToken,
 				targetDir: opts.targetDir,
-				targetBaseName: opts.targetBaseName,
+				namePattern: opts.namePattern,
+				description: opts.description,
 				infoText: opts.description?.infoText,
 				curItem: opts.description?.curItem,
 			});
@@ -228,7 +236,8 @@ async function pollAndDownload(opts: {
 	baseUrl: string;
 	serverToken: string;
 	targetDir: string;
-	targetBaseName: string;
+	namePattern: string;
+	description: any;
 	infoText?: string;
 	curItem?: string;
 }): Promise<string[]> {
@@ -272,7 +281,7 @@ async function pollAndDownload(opts: {
 
 		if (status === 'done') {
 			sendToMW('log', { text: `📋 Full status response:\n${JSON.stringify(statusData, null, 2)}` });
-			return await downloadOutputs(statusData.outputs, opts.targetDir, opts.targetBaseName, opts.baseUrl, authHeaders);
+			return await downloadOutputs(statusData.outputs, opts.targetDir, opts.namePattern, opts.baseUrl, authHeaders, opts.description);
 		}
 		if (status === 'failed' || status === 'error' || status === 'cancelled') {
 			throw new Error(`Job ${opts.jobId} failed: ${statusData.error || 'Unknown error'}`);
@@ -283,18 +292,38 @@ async function pollAndDownload(opts: {
 async function downloadOutputs(
 	outputs: Array<{ url: string; filename: string; output_type: string }>,
 	targetDir: string,
-	targetBaseName: string,
+	namePattern: string,
 	baseUrl: string,
 	headers: [string, string][],
+	description: any,
 ): Promise<string[]> {
 	const results: string[] = [];
 	await fs.mkdir(targetDir);
+
+	const usedNames = new Set<string>();
+	// Список пришедших имён — для $index (позиция файла среди результатов).
+	const serverNames = outputs.map((o) => o.filename);
 
 	for (let i = 0; i < outputs.length; i++) {
 		const output = outputs[i];
 		const fileUrl = output.url.startsWith('http') ? output.url : `${baseUrl}${output.url}`;
 		const serverExt = path.extname(output.filename);
-		const fileName = outputs.length === 1 ? `${targetBaseName}${serverExt}` : `${targetBaseName}_${i}${serverExt}`;
+
+		// Раскрываем имя-чип для КОНКРЕТНОГО серверного файла:
+		//   $fileName → серверное имя как есть, $clearFileName → почищенное,
+		//   $index → номер файла, $clearName/$id/$findTime → от исходно найденного элемента.
+		const perFileDesc = { ...description, finalFile: serverNames };
+		const resolved = formatNameByPattern({ string: namePattern, description: perFileDesc, file: output.filename }).trim();
+		const base = path.basename(resolved || path.basename(output.filename, serverExt));
+
+		let fileName = `${base}${serverExt}`;
+		let dup = 1;
+		while (usedNames.has(fileName)) {
+			fileName = `${base}_${dup}${serverExt}`;
+			dup++;
+		}
+		usedNames.add(fileName);
+
 		const targetPath = path.join(targetDir, fileName);
 
 		sendToMW('log', { text: `⬇️ Downloading: ${output.filename} → ${fileName}` });

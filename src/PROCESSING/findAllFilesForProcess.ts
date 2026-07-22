@@ -14,6 +14,7 @@ import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
 import { getProjectActivity, setProjectActivity, pruneActivity } from '@/Utils/projectActivityLS';
+import { recordActivity, persistEnabled } from '@/Utils/folderState';
 import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
 import { reloadFolders } from './reloadFolders';
@@ -100,7 +101,9 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				}
 				if (lastActivityMs < cutoffMs) {
 					offSet.add(projectName);
-					console.log(`[autoDisable] ${mainFolderName}/${projectName} — idle > ${autoDisableDays}d`);
+					// SSOT: фиксируем авто-отключение в файле папки (для сайта/др. машины).
+						persistEnabled(curMainFolder.id, projectName, false, 'auto');
+						console.log(`[autoDisable] ${mainFolderName}/${projectName} — idle > ${autoDisableDays}d`);
 				}
 			}
 			if (offSet.size !== getOffArr.length) {
@@ -144,7 +147,8 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				// Проект реально используется — двигаем дату активности на «сейчас».
 				// Пока в него что-то падает, auto-disable его не тронет. Бесплатно:
 				// перебора файлов нет, это побочка уже сделанного поиска.
-				setProjectActivity(curMainFolder.id, projectName, Date.now());
+				// recordActivity = LS всегда + файл options/folderState.json троттлингом ~1/сутки.
+				recordActivity(curMainFolder.id, projectName, Date.now());
 			}
 
 			console.groupEnd();

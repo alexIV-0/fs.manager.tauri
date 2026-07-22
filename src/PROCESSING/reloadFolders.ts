@@ -1,5 +1,6 @@
 import { commands, unwrap } from '@/Utils/specta';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
+import { hydrateMainFolder } from '@/Utils/folderState';
 
 export async function reloadFolders(_obj: any) {
 	const res = unwrap(await commands.getSomeFromFolder(_obj.path, [{ type: 'folders', ext: [] }])) as any;
@@ -24,6 +25,12 @@ export async function reloadFolders(_obj: any) {
 			// Перерисовываем FolderItem (жёлтая подсветка idle зависит от off-списка).
 			window.dispatchEvent(new CustomEvent('folders-off-list-changed', { detail: { key: _obj.id } }));
 		}
+
+		// 7. Гидрация из папки (SSOT): читаем options/folderState.json по всем проектам,
+		//    подхватываем внешние правки (сайт/др. машина: enabled — файл выигрывает,
+		//    lastActivityAt — max) и делаем ленивую миграцию legacy off-списка в файлы.
+		//    На КАЖДОМ reload/проходе — чтобы состояние сходилось с папкой.
+		if (_obj.path) await hydrateMainFolder(_obj.id, _obj.path, finalArr);
 	}
 
 	return finalArr;

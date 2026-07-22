@@ -771,6 +771,41 @@ pub fn list_subfolders(paths: Vec<String>) -> Result<serde_json::Value, String> 
     Ok(serde_json::Value::Object(out))
 }
 
+/// Батч-чтение состояния вкл/выкл проектов из `<project>/options/folderState.json`.
+/// Для главной папки читает каждую подпапку верхнего уровня и возвращает объект
+/// `{ [projectName]: stateJson }` ТОЛЬКО для тех, где файл существует и парсится.
+/// Отсутствующий/битый файл просто пропускается (ключа нет) — так TS-гидратор отличает
+/// «есть состояние в папке» от «нужна ленивая миграция из legacy LS». Один IPC на всю
+/// главную папку вместо N round-trip к Google Drive.
+#[tauri::command]
+#[specta::specta]
+pub fn read_folder_states(main_folder_path: String) -> Result<serde_json::Value, String> {
+    let dir = Path::new(&main_folder_path);
+    let mut out = serde_json::Map::new();
+    if !dir.is_dir() {
+        return Ok(serde_json::Value::Object(out));
+    }
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let state_file = entry_path.join("options").join("folderState.json");
+        if !state_file.is_file() {
+            continue;
+        }
+        // Битый JSON / нечитаемый файл — пропускаем: не даём мусору перезаписать кэш
+        // и не блокируем гидрацию остальных проектов.
+        if let Ok(content) = fs::read_to_string(&state_file) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                out.insert(name, val);
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
 /// Рекурсивный поиск. Возвращает `{[type]: string[]}` — относительные пути от `path`,
 /// разбитые по типу (как в Electron'е). Папки тоже могут включаться если в search есть type=folders.
 #[tauri::command]

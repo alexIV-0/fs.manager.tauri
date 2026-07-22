@@ -41,7 +41,16 @@ fn default_app_settings() -> Value {
         },
         "resourcePools": {},
         "storage": {
-            "localArchives": [],
+            // Дефолтный локальный архив статистики (JSONL рядом с проектом).
+            // Держать синхронно с DEFAULT_APP_SETTINGS в src/types/appSettings.ts.
+            // Применяется только к СВЕЖИМ settings.json (существующие не мёржатся, см. app_settings_get).
+            "localArchives": [
+                {
+                    "enabled": true,
+                    "templateId": "local-archive",
+                    "path": ["$projectPathGD", "options", "_stats", "$YYYY.$MM"]
+                }
+            ],
             "onlineDb": { "enabled": false, "url": "", "templateId": "database-sync" }
         },
         "cleanup": { "retentionDays": null, "autoDisableDays": null },

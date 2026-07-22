@@ -1,13 +1,13 @@
 {
-	"type": "transcriptJSONnormalize",
+	"type": "JSONnormalizeTranscribe",
 	"position": {
 		"x": 0,
 		"y": 0
 	},
-	"width": 400,
-	"height": 560,
+	"width": 420,
+	"height": 570,
 	"data": {
-		"label": "Transcript JSON normalize",
+		"label": "JSON normalize (Transcribe)",
 		"colorType": "helpers",
 		"comment": "Превращает «жирный» пословный JSON whisper (--output-json-full) в лёгкий сигнальный файл { lang, dur, words?, sentences }. words — пословные тайминги (для снапа границ реза); sentences — предложения (или титр-блоки с переносами строк под After Effects).",
 		"properties": [
@@ -20,7 +20,9 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["text"],
+				"acceptedTypes": [
+					"text"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -30,14 +32,20 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если пустой — сохраняется рядом с исходником.",
-					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"options": [
+						"#pathPattern",
+						"Custom Folder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": false
 			},
 			{
@@ -84,6 +92,6 @@
 		"output": {
 			"sourceProperty": "inputFile"
 		},
-		"isValid": false
+		"isValid": true
 	}
 }

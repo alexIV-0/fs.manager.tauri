@@ -14,6 +14,48 @@ const EMIT_THROTTLE_MS: u64 = 150;
 
 use super::process_utils::HiddenConsole;
 
+/// Перед запуском бинарника-файла (плагинного whisper-cli, ffmpeg и т.п.) на unix
+/// гарантируем exec-бит, а на macOS снимаем Gatekeeper-карантин. Иначе на ЧУЖОЙ
+/// машине ad-hoc-подписанный (не нотаризованный) бинарь из плагина падает с
+/// "operation not permitted": при переносе приложения (zip/AirDrop/Drive/DMG)
+/// macOS вешает `com.apple.quarantine`, и Gatekeeper блокирует запуск. Дублирует
+/// логику, которая уже есть для СКАЧИВАЕМЫХ зависимостей в deps_commands.rs, но
+/// для ВСТРОЕННЫХ в плагин бинарников её не было.
+///
+/// Трогаем только реальные пути-файлы; bare-команды из PATH (sh, env) — пропускаем.
+#[cfg(unix)]
+fn ensure_launchable(cmd: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    let path = Path::new(cmd);
+    if !path.is_file() {
+        return;
+    }
+
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.mode() & 0o111 == 0 {
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Тихо снимаем карантин с самого файла; если атрибута нет — xattr вернёт
+        // ненулевой код, нам это неважно.
+        let _ = Command::new("xattr")
+            .arg("-d")
+            .arg("com.apple.quarantine")
+            .arg(path)
+            .status();
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_launchable(_cmd: &str) {}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecCommandArgs {
@@ -113,6 +155,10 @@ fn exec_command_blocking(
             }),
         );
     }
+
+    // Гарантируем, что бинарь запустится и на чужой машине (exec-бит + снятие
+    // Gatekeeper-карантина для встроенных в плагин ad-hoc-подписанных бинарников).
+    ensure_launchable(cmd);
 
     let mut command = Command::new(cmd);
     command

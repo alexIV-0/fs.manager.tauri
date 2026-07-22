@@ -200,6 +200,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 					endTime: new Date().toISOString(),
 					totalCost: payload.totalCost,
 					duration: payload.duration,
+					outFiles: payload.outFiles ?? [],
 				})
 				.catch(() => {});
 		} else if (type === 'node:start') {
@@ -363,11 +364,11 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 	const hasCostTracking = steps.some((s) => ['run', 'fromSite'].includes(s.costUnit ?? 'run'));
 	const totalCost = hasCostTracking ? ctx.accumulatedCost : undefined;
 
-	// Суммируем длительности всех выходных медиафайлов из терминальных шагов.
-	const mediaDurationSecs = await collectMediaDuration(ctx, steps);
+	// Собираем пути финальных файлов + суммарный хронометраж выходных медиафайлов.
+	const { secs: mediaDurationSecs, files: outFiles } = await collectOutputInfo(ctx, steps);
 	const duration = secsToDurationStr(mediaDurationSecs);
 
-	send('item:end', { itemId, status: finalStatus, totalCost, duration });
+	send('item:end', { itemId, status: finalStatus, totalCost, duration, outFiles });
 	return finalStatus;
 }
 
@@ -673,7 +674,13 @@ function secsToDurationStr(secs: number): string {
 	return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
-async function collectMediaDuration(ctx: ExecutionContext, steps: { stepId: string; isTerminal: boolean }[]): Promise<number> {
+// Обходит выходные файлы терминальных шагов: собирает их пути (для статистики, поле out[])
+// и суммирует хронометраж медиа-файлов через ffprobe (поле outSec). Пути финалов, которые
+// раньше терялись здесь, теперь возвращаются наверх и уезжают в item:end payload.
+async function collectOutputInfo(
+	ctx: ExecutionContext,
+	steps: { stepId: string; isTerminal: boolean }[],
+): Promise<{ secs: number; files: string[] }> {
 	const types = typeOfFile_store.getState().patternStore;
 	const mediaExts = new Set<string>(
 		types
@@ -683,6 +690,7 @@ async function collectMediaDuration(ctx: ExecutionContext, steps: { stepId: stri
 	);
 
 	let totalSecs = 0;
+	const files: string[] = [];
 	for (const step of steps) {
 		if (!step.isTerminal) continue;
 		const output = ctx.results.get(step.stepId);
@@ -692,8 +700,9 @@ async function collectMediaDuration(ctx: ExecutionContext, steps: { stepId: stri
 				typeof item === 'string' ? item
 				: (item as any)?.path ?? (item as any)?.filePath ?? (item as any)?.outputPath ?? null;
 			if (typeof filePath !== 'string' || !filePath) continue;
+			files.push(filePath); // все терминальные выходы (не только медиа)
 			const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
-			if (!mediaExts.has(ext)) continue;
+			if (!mediaExts.has(ext)) continue; // хронометраж — только по медиа
 			try {
 				const infoJson: string = await api().invoke('ffprobe_get_info', filePath);
 				const streams: any[] = JSON.parse(infoJson).streams ?? [];
@@ -703,5 +712,5 @@ async function collectMediaDuration(ctx: ExecutionContext, steps: { stepId: stri
 			} catch {}
 		}
 	}
-	return totalSecs;
+	return { secs: totalSecs, files };
 }

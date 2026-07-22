@@ -814,6 +814,22 @@ async listSubfolders(paths: string[]) : Promise<Result<JsonValue, string>> {
 }
 },
 /**
+ * Батч-чтение состояния вкл/выкл проектов из `<project>/options/folderState.json`.
+ * Для главной папки читает каждую подпапку верхнего уровня и возвращает объект
+ * `{ [projectName]: stateJson }` ТОЛЬКО для тех, где файл существует и парсится.
+ * Отсутствующий/битый файл просто пропускается (ключа нет) — так TS-гидратор отличает
+ * «есть состояние в папке» от «нужна ленивая миграция из legacy LS». Один IPC на всю
+ * главную папку вместо N round-trip к Google Drive.
+ */
+async readFolderStates(mainFolderPath: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_folder_states", { mainFolderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Рекурсивный поиск. Возвращает `{[type]: string[]}` — относительные пути от `path`,
  * разбитые по типу (как в Electron'е). Папки тоже могут включаться если в search есть type=folders.
  */

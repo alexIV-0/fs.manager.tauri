@@ -235,7 +235,10 @@ fn find_entry_call(script: &str) -> Option<(String, std::ops::Range<usize>)> {
 fn launch_in_ae(
     ae_path: &str,
     script_path: &Path,
-    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos")),
+        allow(unused_variables)
+    )]
     kill_previous_instance: bool,
 ) -> Result<Option<std::process::Child>, String> {
     let script_str = script_path.to_string_lossy();
@@ -244,16 +247,39 @@ fn launch_in_ae(
     {
         // Пробуем определить: это aerender или .app?
         if ae_path.ends_with("aerender") || ae_path.ends_with("aerender.exe") {
+            // aerender — это CLI-рендерер: каждый запуск = свежий процесс, «предыдущего
+            // инстанса» нет, поэтому kill_previous_instance тут неприменим.
             Command::new(ae_path)
                 .args(["-script", &script_str])
                 .spawn()
                 .map_err(|e| format!("Failed to launch aerender: {}", e))?;
         } else {
-            // Запускаем через osascript
             let app_name = Path::new(ae_path)
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy();
+
+            // Как и на Windows: перед запуском убиваем предыдущий инстанс AE, чтобы
+            // скрипт исполнился в заведомо холодном приложении (остаточный AE от
+            // прошлого айтема мог остаться с открытым проектом/модалкой и подхватить
+            // DoScriptFile в грязном состоянии). Отключается флагом (галка в ноде).
+            if kill_previous_instance {
+                // Точечно бьём по .app-бандлу из пути AE: pkill -f матчит по полному
+                // пути исполняемого процесса (…/Adobe After Effects 2026.app/Contents/
+                // MacOS/After Effects), поэтому имя бандла в паттерне не заденет
+                // посторонние процессы. -9 = форс-килл (аналог taskkill /F на Windows).
+                let bundle = Path::new(ae_path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("{}.app", app_name));
+                let _ = Command::new("pkill").args(["-9", "-f", &bundle]).status();
+                // Даём системе освободить хендлы прошлого процесса перед новым запуском
+                // (тот же приём, что и на Windows).
+                std::thread::sleep(Duration::from_millis(800));
+            }
+
+            // Запускаем через osascript. `tell application` сам поднимет AE, если он
+            // был убит выше, и выполнит скрипт уже в холодном инстансе.
             let applescript = format!(
                 r#"tell application "{}" to DoScriptFile "{}""#,
                 app_name, script_str

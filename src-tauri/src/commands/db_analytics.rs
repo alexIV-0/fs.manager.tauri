@@ -81,6 +81,33 @@ fn render_secs(registered_at: &str, ended_at: &str) -> u64 {
     (end - start).max(0) as u64
 }
 
+/// Нормализует ISO-8601 строку к UTC "…Z" с миллисекундами.
+/// registeredAt из Rust приходит как "+00:00" (микросекунды), а endedAt/startedAt из JS —
+/// уже "Z" (мс). Приводим всё к единому виду, чтобы парсеры графиков не спотыкались.
+fn iso_utc_z(s: &str) -> String {
+    use chrono::{DateTime, SecondsFormat};
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Millis, true))
+        .unwrap_or_else(|_| s.to_string())
+}
+
+/// Расширение файла в нижнем регистре ("clip.MP4" → "mp4"). Без точки → "".
+fn file_ext(name: &str) -> String {
+    match name.rfind('.') {
+        Some(i) if i + 1 < name.len() => name[i + 1..].to_lowercase(),
+        _ => String::new(),
+    }
+}
+
+/// Путь относительно корня проекта: strip project_path_gd, разделители → "/".
+/// Файл не под корнем (нетипично) → оставляем абсолютный путь как есть.
+fn rel_to_project(abs: &str, project_root: &str) -> String {
+    Path::new(abs)
+        .strip_prefix(Path::new(project_root))
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| abs.to_string())
+}
+
 // ── Вспомогательные функции ───────────────────────────────────────────────────
 
 fn month_name(month: u32) -> &'static str {
@@ -312,7 +339,27 @@ pub fn write_total_by_project(path: &Path, record: &DbItemRecord, status: &str, 
     write_json(path, &data)
 }
 
-pub fn write_local_archive(path: &Path, record: &DbItemRecord, status: &str, cost: f64, ended_at: &str) -> Result<(), String> {
+// Версия схемы JSONL-строки. Растёт при добавлении/переименовании ключей.
+// Читатели статистики должны ветвиться по этому полю (v1: см. ideasAndTest/STATS_SCHEMA_PLAN.md).
+const LOCAL_ARCHIVE_SCHEMA_VERSION: u32 = 1;
+
+/// Пофайловая запись статистики (пресет "Локальный архив (JSONL)").
+/// Атомарные факты по одному item'у; агрегаты (за период / по проекту / платные-бесплатные)
+/// считаются на чтении. Схема заморожена в v1.
+///
+/// - `started_at` — реальный старт обработки (из лог-группы), НЕ registeredAt (= время находки).
+/// - `duration`   — хронометраж ВЫХОДНЫХ медиафайлов ("HH:MM:SS"), считается ffprobe на фронте.
+/// - `out_files`  — абсолютные пути финальных файлов; здесь режутся до пути от корня проекта.
+pub fn write_local_archive(
+    path: &Path,
+    record: &DbItemRecord,
+    status: &str,
+    cost: f64,
+    ended_at: &str,
+    started_at: &str,
+    duration: &str,
+    out_files: &[String],
+) -> Result<(), String> {
     // local-archive пишет в .jsonl (одна JSON-строка на item)
     let jsonl_path = path.with_extension("jsonl");
     if let Some(parent) = jsonl_path.parent() {
@@ -320,16 +367,30 @@ pub fn write_local_archive(path: &Path, record: &DbItemRecord, status: &str, cos
             .map_err(|e| format!("mkdir: {}", e))?;
     }
 
+    // Пути финальных файлов — относительно корня проекта (projectPathGD не пишем: на разных
+    // машинах он разный, корень восстанавливается из расположения самого .jsonl).
+    let out_rel: Vec<String> = out_files
+        .iter()
+        .map(|f| rel_to_project(f, &record.project_path_gd))
+        .collect();
+    let out_type = out_rel.first().map(|f| file_ext(f)).unwrap_or_default();
+
     let entry = json!({
-        "itemId":          &record.item_id,
-        "registeredAt":    &record.registered_at,
-        "endedAt":         ended_at,
-        "status":          status,
-        "projectName":     &record.project_name,
-        "mainFolderName":  &record.main_folder_name,
-        "projectPathGD":   &record.project_path_gd,
-        "curItem":         &record.cur_item,
-        "totalCost":       cost,
+        "schemaVersion":  LOCAL_ARCHIVE_SCHEMA_VERSION,
+        "itemId":         &record.item_id,
+        "status":         status,
+        "project":        &record.project_name,
+        "mainFolder":     &record.main_folder_name,
+        "curItem":        &record.cur_item,
+        "inType":         file_ext(&record.cur_item),
+        "outType":        out_type,
+        "registeredAt":   iso_utc_z(&record.registered_at),  // нашли файл
+        "startedAt":      iso_utc_z(started_at),              // старт обработки
+        "endedAt":        iso_utc_z(ended_at),                // конец
+        "outSec":         parse_duration_secs(duration),      // хронометраж результата, сек
+        "renderSec":      render_secs(started_at, ended_at),  // честный рендер без очереди
+        "out":            out_rel,
+        "totalCost":      cost,
     });
 
     use std::io::Write as IoWrite;
@@ -355,7 +416,9 @@ pub fn write_analytics(
     status: &str,
     total_cost: f64,
     ended_at: &str,
+    started_at: &str,
     duration: &str,
+    out_files: &[String],
     db_state: &DbState,
 ) {
     let record = match db_state.items.get(item_id) {
@@ -426,7 +489,7 @@ pub fn write_analytics(
             "by-month"          => write_by_month(&resolved, &record, status, total_cost, ended_at, duration),
             "by-year"           => write_by_year(&resolved, &record, status, total_cost, ended_at, duration),
             "total-by-project"  => write_total_by_project(&resolved, &record, status, total_cost, ended_at, duration),
-            "local-archive"     => write_local_archive(&resolved, &record, status, total_cost, ended_at),
+            "local-archive"     => write_local_archive(&resolved, &record, status, total_cost, ended_at, started_at, duration, out_files),
             other => {
                 println!("[db_analytics] unknown template: {}", other);
                 continue;
@@ -437,5 +500,59 @@ pub fn write_analytics(
             Ok(()) => println!("[db_analytics] ✓ {}", resolved.display()),
             Err(e) => println!("[db_analytics] ✗ template={} err={}", template_id, e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iso_utc_z_normalizes_rust_and_js_timestamps() {
+        // registeredAt из Rust: "+00:00" с микросекундами → "…Z" с мс
+        assert_eq!(
+            iso_utc_z("2026-07-08T13:44:54.816390+00:00"),
+            "2026-07-08T13:44:54.816Z"
+        );
+        // endedAt из JS: уже "…Z" (мс) → идемпотентно
+        assert_eq!(
+            iso_utc_z("2026-07-08T13:55:54.011Z"),
+            "2026-07-08T13:55:54.011Z"
+        );
+        // смещение приводится к UTC
+        assert_eq!(iso_utc_z("2026-07-08T16:44:54.000+03:00"), "2026-07-08T13:44:54.000Z");
+        // мусор — оставляем как есть, без паники
+        assert_eq!(iso_utc_z(""), "");
+        assert_eq!(iso_utc_z("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn file_ext_extracts_lowercase_extension() {
+        assert_eq!(file_ext("clip.MP4"), "mp4");
+        // реальный curItem с двойной точкой перед расширением
+        assert_eq!(file_ext("1 - Открытие. Слово..mp4"), "mp4");
+        assert_eq!(file_ext("noext"), "");
+        assert_eq!(file_ext("trailingdot."), "");
+        assert_eq!(file_ext("a.b.mov"), "mov");
+    }
+
+    #[test]
+    fn rel_to_project_strips_root() {
+        let root = "/Users/x/newMainFolder/reels from vid";
+        assert_eq!(
+            rel_to_project("/Users/x/newMainFolder/reels from vid/OUT/shorts/clip_01.mp4", root),
+            "OUT/shorts/clip_01.mp4"
+        );
+        // файл не под корнем — оставляем абсолютный путь
+        assert_eq!(rel_to_project("/tmp/other.mp4", root), "/tmp/other.mp4");
+    }
+
+    #[test]
+    fn render_secs_uses_started_not_registered() {
+        // старт 13:50:12 → конец 13:55:54 = 342 c (очередь до старта НЕ входит)
+        assert_eq!(
+            render_secs("2026-07-08T13:50:12.000Z", "2026-07-08T13:55:54.000Z"),
+            342
+        );
     }
 }
