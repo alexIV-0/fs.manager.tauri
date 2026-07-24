@@ -87,6 +87,37 @@
 Формат времени — ISO UTC с `Z`, единообразно со [`STATS_SCHEMA_PLAN.md`](./STATS_SCHEMA_PLAN.md).
 `projectPathGD` НЕ пишем (на разных машинах разный) — идентичность даёт расположение самого файла.
 
+### Справочник ключей (что за что отвечает, кто и как меняет)
+
+Пример реального файла `{project}/options/folderState.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "disabledReason": null,
+  "disabledAt": null,
+  "lastActivityAt": "2026-07-21T07:45:46.861Z",
+  "updatedAt": "2026-07-23T07:11:47.096Z",
+  "updatedBy": "app:85FSWsp2"
+}
+```
+
+| Ключ | Тип / значения | За что отвечает | Кто и когда пишет |
+|---|---|---|---|
+| `schemaVersion` | `number` (сейчас `1`) | Версия формата файла — чтобы будущие читатели умели мигрировать старое. | Ставится **при любой** записи (`FOLDER_STATE_SCHEMA_VERSION` в [`folderState.ts:30`](../src/Utils/folderState.ts#L30)). Меняется только при эволюции схемы (bump в коде). |
+| `enabled` | `boolean` | Авторская воля: участвует ли проект в обработке. `true` — обрабатывается; `false` — горячий цикл его пропускает (в UI желтеет). | Ручной чекбокс ([`useFoldersFromLS.ts`](../src/MAIN_WIN/hooks/useFoldersFromLS.ts) → `persistEnabled`), авто-отключение по холоду ([`findAllFilesForProcess.ts`](../src/PROCESSING/findAllFilesForProcess.ts) → `persistEnabled(..'auto')`), в будущем — сайт. **Файл = SSOT:** на гидрации значение из файла перекрывает LS-кэш (off-список подстраивается под файл). |
+| `disabledReason` | `'manual' \| 'auto' \| null` | Почему выключен. `null` всегда при `enabled:true`. `'manual'` — руками/сайтом. `'auto'` — авто-отключение по неактивности (`cutoff = now − autoDisableDays`). | Пишется вместе с `enabled` в `persistEnabled` (`enabled ? null : reason`). Auto-off «липкий» до ручного включения. Ленивая миграция из legacy off-списка ставит `'manual'` (reason из легаси не различить → безопаснее sticky-manual). |
+| `disabledAt` | `string \| null`, ISO UTC | Когда выключили — для сайта («выключено N дней назад»). | В `persistEnabled`: при выключении = `now`, при включении обнуляется в `null`. |
+| `lastActivityAt` | `string \| null`, ISO UTC | Дата последней **реальной** активности (обработка нашла и добавила файлы, `addedCount>0`). Вход для расчёта авто-отключения. | Горячий бамп `recordActivity` ([`folderState.ts:157`](../src/Utils/folderState.ts#L157)): LS всегда, в файл — **троттлингом ~1/сутки**. Слияние = **max** (никогда не откатывается — защита от машины с отстающими часами). Засев/бэкдейт (первая встреча, ручное включение холодной) идут LS-only через `setProjectActivity`, в файл НЕ пишутся. **`updatedAt` при этом НЕ трогается.** |
+| `updatedAt` | `string`, ISO UTC | Время последней смены `enabled` — база для last-write-wins при слиянии. | Бампается **только** в `persistEnabled` (смена вкл/выкл). Бамп активности его не двигает. Для правок с сайта время ставит **сервер** (его часы авторитетны), не браузер. |
+| `updatedBy` | `string`: `"app:<clientId>" \| "site"` | Кто последним менял `enabled` — для аудита и разрешения конфликтов. `<clientId>` = стабильный per-install `nanoid(8)`, лежит в LS `folderState.clientId` (пример: `app:85FSWsp2`). | Пишется вместе с `updatedAt` (только на смене `enabled`). Бамп активности сохраняет прежнее значение. |
+
+> **Почему `updatedAt` может быть позже `lastActivityAt` (как в примере: 07-23 vs 07-21).**
+> Это два разных события, и они намеренно расходятся. `lastActivityAt` = когда в проект в последний раз реально добавили файлы. `updatedAt`/`updatedBy` = когда в последний раз меняли **флаг вкл/выкл**. В примере: последняя обработка была 21-го, а 23-го проект вручную (пере)включили с машины `85FSWsp2` — активности с тех пор не было, поэтому `lastActivityAt` не сдвинулся. Бамп активности сознательно не трогает `updatedAt`, чтобы не мешать LWW по `enabled`.
+
+> **Read-modify-write.** Любая запись (`writeStateFile`) сперва перечитывает файл и сохраняет поля, которых нет в патче. Поэтому `recordActivity` (патч только `lastActivityAt`) не затирает `enabled`/`disabledReason`/`updatedBy`, а `persistEnabled` не откатывает `lastActivityAt`. Битый/отсутствующий файл → создаётся с нуля.
+
 ### Политика записи (без замусоривания)
 Файл появляется **только у проектов, которые реально трогали**:
 - при смене `enabled` (ручной toggle / auto-off) — пишем сразу;
