@@ -16,6 +16,7 @@ import { UniversalFolderView } from '../FileExplorerColumn/UniversalFolderView';
 import { joinPath } from '@/Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
 import { invalidateDirCache } from '@/Store/helpers/readDirContent';
+import { ensureMirrorDir } from '@/Utils/storageSeam';
 
 export function CurentProjectFolder() {
 	const [activeItem, setActiveItem] = useState<{
@@ -182,6 +183,9 @@ export function CurentProjectFolder() {
 			}
 
 			const pathTo = joinPath(dropData.targetPath, dragData.name);
+
+			// Папка-приёмник может быть облачной и существовать только в каталоге.
+			await ensureMirrorDir(dropData.targetPath);
 
 			if (isCopy) {
 				unwrap(await commands.copyItem(dragData.path, pathTo, { overwrite: true }));

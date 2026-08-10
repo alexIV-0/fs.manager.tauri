@@ -11,6 +11,7 @@ import { loadPlugin } from '@/PluginAPI/loader';
 import { acquirePool, releasePool, resolvePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
+import { pathExists as seamPathExists } from '@/Utils/storageSeam';
 
 const api = () => (window as any).tauriAPI;
 
@@ -45,7 +46,10 @@ async function pathExists(p: string): Promise<boolean> {
 	// `checkFilePath` отбрасывает папки (внутри стоит `!p.is_file() → return ""`), поэтому
 	// для проверки «вообще существует ли путь» (файл или папка) используем `path_exists`.
 	// Без этого фикса для папок postProcess получал pathForDeleteExists=false → SKIPPED.
-	return Boolean(unwrap(await commands.pathExists(p)));
+	//
+	// Через шов: облачный файл существует, даже если ещё не скачан. Иначе элемент
+	// молча выпал бы из обработки — путь есть, а файла на диске пока нет.
+	return seamPathExists(p);
 }
 
 /**

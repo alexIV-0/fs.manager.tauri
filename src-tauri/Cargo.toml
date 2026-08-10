@@ -30,12 +30,20 @@ pathdiff = "0.2"
 dirs = "5"
 url = "2"
 zip = "0.6"
-tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "net", "io-util", "fs"] }
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "net", "io-util", "fs", "sync"] }
+# `stream` — тело запроса потоком: заливка мастера не должна читаться в память целиком.
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 sha2 = "0.10"
+# Локальный индекс облачного хранилища (см. ideasAndTest/R2_SYNC_PLAN.md, раздел 5).
+# `bundled` — SQLite собирается из исходников, чтобы не зависеть от системной версии.
+rusqlite = { version = "0.32", features = ["bundled"] }
 sha1 = "0.10"
 md5 = { package = "md-5", version = "0.10" }
 filetime = "0.2"
+# ReaderStream для потоковой заливки + счётчик прогресса. Обе уже есть в дереве
+# зависимостей (их тянет reqwest), явное указание почти ничего не стоит.
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
 tauri-plugin-clipboard = "2.1.11"
 tauri-plugin-drag = "2.1.1"
 systemicons = "0.9.13"
@@ -44,6 +52,11 @@ base64 = "0.22.1"
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+
+# Только для тестов: `#[tokio::test]` требует фичу `macros`, а в релизную сборку
+# её тащить незачем.
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [

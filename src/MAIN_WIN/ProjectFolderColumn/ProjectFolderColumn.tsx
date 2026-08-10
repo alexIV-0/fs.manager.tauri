@@ -19,13 +19,14 @@ import {
 	resizeHandleStyle,
 	resizeHandleStyleLeft,
 	topButtonStyle,
-	topShadowStyle,
+	topShadowFor,
 } from '../mainStyles';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { columnBorder } from '../columnFocusStyle';
+import { useActiveFolderIsOnline } from '../hooks/useActiveFolderIsOnline';
 import { ProjectFolderItem } from './ProjectFolderItem';
 import { getUniqueFolderName } from '@/Utils/getUniqueFolderName';
 import { saveToLocalStorage } from '@/Utils/loadSaveToLS';
@@ -47,6 +48,7 @@ export function ProjectFolderColumn() {
 	// const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
 	// const [scrollToFolderId, setScrollToFolderId] = useState<string | null>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
+	const isOnlineFolder = useActiveFolderIsOnline();
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, {
@@ -229,9 +231,19 @@ export function ProjectFolderColumn() {
 	useEffect(() => {
 		const folders = mainFolderArr.find((f) => f.id === activeMainFolder)?.projectFolders || [];
 		setActiveFolderArr(folders);
-		if (folders.length !== 0) {
-			setActiveFolders_store.getState().setActiveProjectFolder(folders[0]);
-		}
+
+		const current = setActiveFolders_store.getState().activeProjectFolder;
+		// Выбор сохраняем, если он принадлежит ЭТОЙ главной папке. Раньше эффект
+		// безусловно ставил folders[0], а зависит он от всего `mainFolderArr` — любая
+		// правка стора (галочка, пересборка списка проектов) сбрасывала выбор на
+		// первый проект, и третья колонка не следовала за кликом.
+		if (current && folders.includes(current)) return;
+
+		// Иначе выбор чужой или устарел. `null` при пустом списке обязателен: иначе
+		// в силе остаётся имя проекта от ПРЕДЫДУЩЕЙ главной папки, третья колонка
+		// не проходит проверку «проект принадлежит папке» и продолжает показывать
+		// содержимое прошлой папки — ровно то, что выглядит как «выбор не работает».
+		setActiveFolders_store.getState().setActiveProjectFolder(folders[0] ?? null);
 	}, [activeMainFolder, mainFolderArr]);
 
 	return (
@@ -253,7 +265,7 @@ export function ProjectFolderColumn() {
 			<Box
 				sx={{
 					...bottomBoxStyle,
-					...topShadowStyle,
+					...topShadowFor(isOnlineFolder),
 					display: 'flex',
 					flexDirection: 'row',
 				}}

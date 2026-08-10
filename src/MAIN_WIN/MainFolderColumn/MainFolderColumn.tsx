@@ -4,8 +4,8 @@ import { options_store } from '@/Store/MainWin/options_store';
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { restrictToParentElement } from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Box, Button, IconButton, List } from '@mui/material';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { Box, Button, IconButton, InputBase, List, Tooltip } from '@mui/material';
+import { ChevronDown, ChevronUp, Cloud, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
@@ -14,6 +14,8 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { columnBorder } from '../columnFocusStyle';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 
+import { storage_store } from '@/Store/MainWin/storage_store';
+import { AddOnlineFolderDialog } from '../Storage/AddOnlineFolderDialog';
 import { FolderItem } from './FolderItem';
 import { SortableItem } from './SortableItem';
 import {
@@ -38,21 +40,35 @@ export function MainFolderColumn() {
 	const [isResizing, setIsResizing] = useState(false);
 	const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
 	const [scrollToFolderId, setScrollToFolderId] = useState<string | null>(null);
+	const [filter, setFilter] = useState('');
+	const [addOnlineOpen, setAddOnlineOpen] = useState(false);
 
 	const getBasename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
 
-	const displayedFolders =
+	// Фильтр по колонке. Именно по колонке, а не по всему хранилищу: кросс-проектный
+	// поиск уже есть в отдельной модалке, и дублировать его тут значит сделать
+	// непонятными оба.
+	const matches = (name: string) => !filter.trim() || name.toLowerCase().includes(filter.trim().toLowerCase());
+
+	const sortedFolders =
 		sortMode === 'asc'
 			? [...mainFolderArr].sort((a, b) => getBasename(a.path).localeCompare(getBasename(b.path)))
 			: sortMode === 'desc'
 				? [...mainFolderArr].sort((a, b) => getBasename(b.path).localeCompare(getBasename(a.path)))
 				: mainFolderArr;
 
+	const displayedFolders = sortedFolders.filter((f) => matches(getBasename(f.path)));
+
 	const cycleSortMode = () => {
 		setSortMode((prev) => (prev === 'manual' ? 'asc' : prev === 'asc' ? 'desc' : 'manual'));
 	};
 	const { activeMainFolder, activeProjectFolder, setActiveProjectFolder, setMainFolderId } = setActiveFolders_store();
 	const boxRef = useRef<HTMLDivElement>(null);
+
+	// Хранилище подключено — значит кнопку «добавить онлайн папку» есть смысл
+	// показывать. Отдельной секции для облачных папок нет: они лежат в общем
+	// списке и ведут себя как все остальные, отличаясь только значком.
+	const storageStatus = storage_store((s) => s.status);
 
 	// ==============================
 	// 🔹 Навигация с клавиатуры (когда фокус на главной колонке)
@@ -254,6 +270,24 @@ export function MainFolderColumn() {
 				</IconButton>
 			</Box>
 
+			<InputBase
+				value={filter}
+				onChange={(e) => setFilter(e.target.value)}
+				placeholder='фильтр'
+				startAdornment={<Search size={12} strokeWidth={1} style={{ opacity: 0.4, marginRight: 4 }} />}
+				endAdornment={
+					filter ? (
+						<X
+							size={12}
+							strokeWidth={1}
+							style={{ opacity: 0.5, cursor: 'pointer' }}
+							onClick={() => setFilter('')}
+						/>
+					) : null
+				}
+				sx={{ px: 1, py: '1px', fontSize: 12, borderBottom: '1px solid', borderColor: 'divider' }}
+			/>
+
 			<Box sx={listStyle}>
 				<DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToParentElement]}>
 					<SortableContext items={displayedFolders} strategy={verticalListSortingStrategy}>
@@ -268,11 +302,33 @@ export function MainFolderColumn() {
 				</DndContext>
 			</Box>
 
-			<Box sx={{ ...bottomBoxStyle, ...bottomShadowStyle }}>
-				<Button fullWidth onClick={addNewFolder} sx={{ p: 0 }} disabled={isScanning}>
-					import main folder
+			{/* Две кнопки добавления одинаковой ширины. Отдельной кнопки обновления
+			    здесь нет намеренно: у каждой папки своя, на строке при наведении, и
+			    для облачной она заодно обновляет каталог. */}
+			<Box sx={{ ...bottomBoxStyle, ...bottomShadowStyle, display: 'flex', alignItems: 'center' }}>
+				<Button onClick={addNewFolder} sx={{ p: 0, flex: 1, minWidth: 0 }} disabled={isScanning}>
+					+ папка
 				</Button>
+
+				<Tooltip
+					title={storageStatus.connected ? 'Добавить папку из облака' : 'Хранилище не подключено'}
+					placement='top'
+					arrow
+				>
+					<span style={{ flex: 1, display: 'flex' }}>
+						<Button
+							onClick={() => setAddOnlineOpen(true)}
+							sx={{ p: 0, flex: 1, minWidth: 0 }}
+							disabled={isScanning || !storageStatus.connected}
+							startIcon={<Cloud size={13} strokeWidth={1} />}
+						>
+							+ из облака
+						</Button>
+					</span>
+				</Tooltip>
 			</Box>
+
+			<AddOnlineFolderDialog open={addOnlineOpen} onClose={() => setAddOnlineOpen(false)} />
 			<Box sx={{ ...resizeHandleStyle, ...resizeHandleStyleLeft }} onMouseDown={startResizing} />
 		</Box>
 	);

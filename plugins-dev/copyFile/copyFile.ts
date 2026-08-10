@@ -49,31 +49,26 @@ export async function copyFileFunc(_item: any, _description: any): Promise<strin
 			text: `${_description.infoText ?? ''}: [copy file] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 		});
 
-		// destination уже существует? Проверяем через exists (а не existsFile),
-		// потому что inputFile может быть папкой — existsFile вернул бы false
-		// и для проверки overwrite, и для пост-проверки после копирования.
-		const destExists = await fs.exists(fileTo);
+		// Одна команда вместо цепочки «проверить → скачать → скопировать → запомнить».
+		//
+		// Порядок здесь — инвариант: сначала проверяем актуальность по индексу
+		// (ноль запросов, ноль байт), и только если устарело — качаем. Разбей это
+		// на шаги, и однажды кто-то скачает три гигабайта, чтобы выяснить, что
+		// качать было не нужно.
+		//
+		// Для локальных источников поведение прежнее — сравнение по mtime.
+		const res = await fs.copyFromCloud(fileFrom, fileTo, Boolean(_item.overwriteOldest));
 
-		if (destExists) {
-			if (!_item.overwriteOldest) {
-				// overwrite=false — пропускаем (как в оригинальном Electron-плагине).
-				console.log('Destination exists and overwrite=false:', fileTo);
-				finalFile.push(fileTo);
-				continue;
-			}
-
-			// overwriteOldest=true: перезаписываем только если source новее.
-			const newer = await fs.isSourceNewer(fileFrom, fileTo);
-			if (!newer) {
-				console.log('Destination is newer or same age — skip:', path.basename(fileTo));
-				finalFile.push(fileTo);
-				continue;
-			}
+		if (res.action === 'skippedExists') {
+			console.log('Destination exists and overwrite=false:', fileTo);
+			finalFile.push(fileTo);
+			continue;
 		}
-
-		// copy_item в Rust сам создаёт родительские директории.
-		// overwrite:true — мы уже отфильтровали кейсы выше.
-		await fs.copy(fileFrom, fileTo, { overwrite: true });
+		if (res.action === 'skippedUpToDate') {
+			console.log('Destination is up to date — skip:', path.basename(fileTo));
+			finalFile.push(fileTo);
+			continue;
+		}
 
 		// Проверка что результат действительно появился (защита от тихого фейла).
 		// exists — потому что fileFrom может быть папкой.

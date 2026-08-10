@@ -14,9 +14,11 @@ interface DraggableFileItemProps {
 	onMultiSelectRange?: () => void;
 	source: 'gd' | 'local';
 	columnIndex?: number;
+	/** Состояние в облачном зеркале; у локальных записей отсутствует. */
+	storage?: import('@/Store/helpers/readDirContent').FileItem['storage'];
 }
 
-export const DraggableFileItem = memo(function DraggableFileItem({ name, path, isSelected, isActiveSelection, isMultiSelected, onSelect, onMultiSelectToggle, onMultiSelectRange, source, columnIndex }: DraggableFileItemProps) {
+export const DraggableFileItem = memo(function DraggableFileItem({ name, path, isSelected, isActiveSelection, isMultiSelected, onSelect, onMultiSelectToggle, onMultiSelectRange, source, columnIndex, storage }: DraggableFileItemProps) {
 	const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
 		id: `file-${path}`,
 		data: {
@@ -38,6 +40,7 @@ export const DraggableFileItem = memo(function DraggableFileItem({ name, path, i
 		<div ref={setNodeRef} style={style} {...listeners} {...attributes}>
 			<CurrentFileItem
 				name={name}
+				storage={storage}
 				path={path}
 				isSelected={isSelected}
 				isActiveSelection={isActiveSelection}

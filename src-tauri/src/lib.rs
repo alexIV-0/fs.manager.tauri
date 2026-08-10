@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod storage;
 
 use commands::{
     fs_commands::*,
@@ -25,6 +26,7 @@ use commands::{
     youtube_auth_commands::*,
     youtube_upload_commands::*,
     tg_commands::*,
+    storage_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
@@ -198,6 +200,38 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             tg_server_stop,
             tg_server_status,
             tg_cloud_log_out,
+            // Клиент облачного хранилища (см. ideasAndTest/R2_SYNC_PLAN.md)
+            storage_get_config,
+            storage_set_config,
+            storage_connect,
+            storage_connect_mock,
+            storage_disconnect,
+            storage_status,
+            storage_refresh_projects,
+            storage_clients,
+            storage_projects,
+            storage_catch_up,
+            storage_list_dir,
+            storage_browse,
+            storage_ensure_dir,
+            storage_local_files,
+            storage_drop_local,
+            storage_folder_badge,
+            storage_set_pinned,
+            storage_project_synced_at,
+            storage_ensure_local,
+            storage_upload,
+            storage_run_eviction,
+            storage_mirror_bytes,
+            storage_copy_from_mirror,
+            storage_mirror_path,
+            storage_download,
+            storage_detect_local_changes,
+            storage_transfers,
+            storage_cancel_transfer,
+            storage_clear_finished_transfers,
+            storage_subtree_stats,
+            storage_path_info,
         ])
 }
 
@@ -252,6 +286,7 @@ pub fn run() {
         .manage(Mutex::new(commands::preview_bounds::PreviewBoundsState::new()))
         .manage(Mutex::new(AppSettingsState::new()))
         .manage(Mutex::new(DbState::new()))
+        .manage(crate::storage::StorageService::new())
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -629,6 +664,43 @@ pub fn run() {
             tg_server_stop,
             tg_server_status,
             tg_cloud_log_out,
+            // Клиент облачного хранилища (см. ideasAndTest/R2_SYNC_PLAN.md).
+            //
+            // Список ОБЯЗАН совпадать с `collect_commands!` выше. Specta-билдер
+            // только генерирует типы и в рантайм не монтируется — команда, попавшая
+            // лишь туда, компилируется, типизируется и не существует при вызове:
+            // фронтенд получает «command not found», интерфейс молчит.
+            storage_get_config,
+            storage_set_config,
+            storage_connect,
+            storage_connect_mock,
+            storage_disconnect,
+            storage_status,
+            storage_refresh_projects,
+            storage_clients,
+            storage_projects,
+            storage_catch_up,
+            storage_list_dir,
+            storage_browse,
+            storage_ensure_dir,
+            storage_local_files,
+            storage_drop_local,
+            storage_folder_badge,
+            storage_set_pinned,
+            storage_project_synced_at,
+            storage_ensure_local,
+            storage_upload,
+            storage_run_eviction,
+            storage_mirror_bytes,
+            storage_copy_from_mirror,
+            storage_mirror_path,
+            storage_download,
+            storage_detect_local_changes,
+            storage_transfers,
+            storage_cancel_transfer,
+            storage_clear_finished_transfers,
+            storage_subtree_stats,
+            storage_path_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -641,5 +713,44 @@ mod specta_export_tests {
     #[test]
     fn export_bindings() {
         super::export_specta_bindings();
+    }
+
+    /// Команда, попавшая только в `collect_commands!`, компилируется и типизируется,
+    /// но в рантайме не существует — фронтенд получает «command not found».
+    /// Ровно так весь клиент хранилища (26 команд) оказался мёртвым при живых тестах,
+    /// нулевых ошибках типов и успешной сборке. Компилятор такое не ловит, значит
+    /// ловим текстом: списки обязаны совпадать.
+    #[test]
+    fn специта_и_рантайм_знают_одни_и_те_же_команды() {
+        let src = include_str!("lib.rs");
+
+        /// Достаёт имена из `<marker>[ … ]` — по одному идентификатору в строке,
+        /// комментарии и пути вида `commands::mod::name` отбрасываются.
+        fn list(src: &str, marker: &str) -> std::collections::BTreeSet<String> {
+            let start = src.find(marker).unwrap_or_else(|| panic!("не найден {marker}"));
+            let body = &src[start + marker.len()..];
+            let end = body.find("])").expect("не найден конец списка");
+            body[..end]
+                .lines()
+                .map(|l| l.split("//").next().unwrap_or("").trim().trim_end_matches(','))
+                .filter(|l| !l.is_empty())
+                .map(|l| l.rsplit("::").next().unwrap_or(l).to_string())
+                .collect()
+        }
+
+        let specta = list(src, "collect_commands![");
+        let runtime = list(src, "generate_handler![");
+
+        // Без этого тест был бы пустым: разность двух ничего не нашедших списков
+        // тоже пуста, и проверка «проходит», ничего не проверив.
+        assert!(specta.len() > 50, "specta-список разобран не полностью: {}", specta.len());
+        assert!(runtime.len() > 50, "рантайм-список разобран не полностью: {}", runtime.len());
+        assert!(specta.contains("storage_connect_mock"), "парсер не видит storage-команд");
+
+        let missing: Vec<_> = specta.difference(&runtime).collect();
+        assert!(
+            missing.is_empty(),
+            "есть в specta, но НЕ в generate_handler — из интерфейса не вызвать: {missing:?}"
+        );
     }
 }

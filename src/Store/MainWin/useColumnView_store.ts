@@ -109,6 +109,10 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 					...state.instances,
 					[instanceType]: {
 						...state.instances[instanceType],
+						// Колонки ОБНУЛЯЕМ. Раньше при ошибке оставались прежние, и панель
+						// показывала содержимое предыдущей папки под новым заголовком —
+						// самый неприятный вид вранья: данные выглядят настоящими.
+						columns: [{ path: rootPath, items: [] }],
 						error: e.message,
 						loading: false,
 					},

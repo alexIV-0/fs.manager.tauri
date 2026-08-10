@@ -12,6 +12,7 @@ import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemT
 import { joinPath } from '@/Utils/joinPath';
 import { basename } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
+import { ensureLocal, pathInfo } from '@/Utils/storageSeam';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
@@ -61,7 +62,9 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	}
 
 	// ====== проверяем options.json =======
-	const optionsFile = joinPath(projectPathOnGD, 'options', 'options.json');
+	// Проект может лежать в облаке — тогда конфиг надо сначала получить. Это
+	// нужны БАЙТЫ, поэтому здесь гидрация. Вне зеркала вызов — no-op.
+	const optionsFile = await ensureLocal(joinPath(projectPathOnGD, 'options', 'options.json'));
 	if (unwrap(await commands.checkFilePath(optionsFile, null)) == '') {
 		console.log('--- no "options.json" file:\n', optionsFile);
 		return;
@@ -132,10 +135,13 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 			item = item[0];
 		}
 
-		const curSearchProp = structuredClone(currentAutomationProps);
-		curSearchProp.output = [item];
-
-		const fileInfo: any = unwrap(await commands.getFileInfo(item));
+		// МЕТАДАННЫЕ, а не байты: гидратировать здесь нельзя. Этот вызов идёт на
+		// КАЖДЫЙ найденный файл, и скачивание тут означало бы выкачивание всего
+		// архива при первом же обходе проекта.
+		const cloud = await pathInfo(item);
+		const fileInfo: any = cloud
+			? { size: cloud.size ?? 0, is_dir: cloud.isFolder, is_file: !cloud.isFolder }
+			: unwrap(await commands.getFileInfo(item));
 		const curItemName = basename(item);
 
 		// Rust FileInfo сериализуется как snake_case (is_dir/is_file). Раньше тут читали
@@ -163,8 +169,6 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 
 		const objForProcessing = structuredClone(templateObj);
 		objForProcessing.mainSearch.output = [item];
-		curSearchProp.output = [item];
-		objForProcessing.search = curSearchProp;
 		objForProcessing.description = structuredClone(description);
 
 		await sendFindItemToRegistrationProcessDatabase(objForProcessing);

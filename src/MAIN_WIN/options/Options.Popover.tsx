@@ -1,11 +1,12 @@
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
 import { Box, Button, Modal, Tab, Tabs } from '@mui/material';
-import { File, FolderCog, Plug, Save, Settings, Waypoints } from 'lucide-react';
+import { Cloud, File, FolderCog, Plug, Save, Settings, Waypoints } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { PluginSortableList } from './plugin/PluginSortableList';
 import TabMain from './tabs/TabMain';
 import TabNodes from './tabs/TabNodes';
 import TabPaths from './tabs/TabPaths';
+import TabStorage from './tabs/TabStorage';
 import TabTypes from './tabs/TabTypes';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import type { AppSettings } from '@/types/appSettings';
@@ -175,6 +176,7 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 						<Tab disableRipple label='Types' id='tab-2' aria-controls='tabpanel-2' icon={<File strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label='Nodes' id='tab-3' aria-controls='tabpanel-3' icon={<Waypoints strokeWidth={0.8} size={42} />} />
 						<Tab disableRipple label={hasUpdaterPlugin ? 'Plug & Update' : 'Plug'} id='tab-4' aria-controls='tabpanel-4' icon={<Plug strokeWidth={0.8} size={42} />} />
+						<Tab disableRipple label='Storage' id='tab-5' aria-controls='tabpanel-5' icon={<Cloud strokeWidth={0.8} size={42} />} />
 					</Tabs>
 					<Button
 						variant='contained'
@@ -212,6 +214,9 @@ export default function OptionsPopover({ open, handleClose }: OptionsPopoverProp
 					</CustomTabPanel>
 					<CustomTabPanel value={tabIndex} index={4}>
 						<PluginSortableList />
+					</CustomTabPanel>
+					<CustomTabPanel value={tabIndex} index={5}>
+						<TabStorage />
 					</CustomTabPanel>
 				</Box>
 			</Box>

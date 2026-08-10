@@ -1,5 +1,7 @@
 import { joinPath } from '../../Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
+import type { FileState, FolderAggregate } from '@/bindings';
+import { browseMirror } from '@/Utils/storageSeam';
 
 /* ===========================================================
  * 🧩 TYPES
@@ -9,6 +11,17 @@ export interface FileItem {
 	name: string;
 	path: string;
 	isDir: boolean;
+	/** Заполнено только для записей из облачного зеркала — для значка состояния.
+	    Для обычных локальных папок этих полей нет, и всё работает как раньше. */
+	storage?: {
+		fileId: string | null;
+		state: FileState | null;
+		aggregate: FolderAggregate | null;
+		pinned: boolean;
+		progress: number | null;
+		error: string | null;
+		sizeBytes: number | null;
+	};
 }
 
 export interface Column {
@@ -74,6 +87,16 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
 	if (cached) {
 		console.log(`[perf] readDir CACHE: ${folderPath.split('/').pop()}`);
 		return cached;
+	}
+
+	// Папка в облачном зеркале читается из каталога, а не с диска: файл, который
+	// ещё не скачан, физически отсутствует, но существовать в списке ОБЯЗАН —
+	// ровно как папка гуглдиска, где всё видно, а качается по открытию.
+	// Вне зеркала (обычный случай) `browseMirror` не делает ни одного IPC-вызова.
+	const fromMirror = await browseMirror(folderPath);
+	if (fromMirror) {
+		dirCache.set(folderPath, { items: fromMirror, ts: Date.now() });
+		return fromMirror;
 	}
 
 	const t0 = performance.now();

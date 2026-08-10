@@ -1,4 +1,5 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
+import { SyncStatusButton } from './Storage/SyncStatusButton';
 import { commands } from '@/Utils/specta';
 import { AlertTriangle, Blocks, BookOpen, Hammer, Settings, Wrench, Search } from 'lucide-react';
 import OptionsPopover from './options/Options.Popover';
@@ -87,6 +88,10 @@ export function MainTopPanel() {
 
 			{/* Правая группа кнопок */}
 			<Box sx={{ display: 'flex', alignItems: 'center' }}>
+				{/* Синхронизация — перед счётчиком итераций: сначала «что происходит
+				    с файлами», потом «что происходит с обработкой». */}
+				<SyncStatusButton />
+
 				<Tooltip title='iterations / success / errors'>
 					<Box
 						onClick={openLogWindow}

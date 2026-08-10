@@ -1,10 +1,16 @@
 import { commands, unwrap } from '@/Utils/specta';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
 import { hydrateMainFolder } from '@/Utils/folderState';
+import { browseMirror } from '@/Utils/storageSeam';
 
 export async function reloadFolders(_obj: any) {
-	const res = unwrap(await commands.getSomeFromFolder(_obj.path, [{ type: 'folders', ext: [] }])) as any;
-	const foldersArr: string[] = res?.folders ?? [];
+	// Папка клиента в облачном зеркале: список проектов знает каталог, а не диск —
+	// нескачанный проект на диске просто отсутствует. Вне зеркала — ни одного
+	// лишнего вызова, всё как раньше.
+	const fromMirror = await browseMirror(_obj.path);
+	const foldersArr: string[] = fromMirror
+		? fromMirror.filter((e) => e.isDir).map((e) => e.name)
+		: ((unwrap(await commands.getSomeFromFolder(_obj.path, [{ type: 'folders', ext: [] }])) as any)?.folders ?? []);
 	const oldProjects = _obj.projectFolders || [];
 	// 4. Оставляем только те, что есть в новом массиве
 	const kept = oldProjects.filter((name: string) => foldersArr.includes(name));

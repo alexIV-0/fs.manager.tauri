@@ -25,3 +25,4 @@ pub mod vk_auth_commands;
 pub mod youtube_auth_commands;
 pub mod youtube_upload_commands;
 pub mod tg_commands;
+pub mod storage_commands;

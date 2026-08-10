@@ -5,6 +5,7 @@ import { joinPath } from '@/Utils/joinPath';
 import clipboard from 'tauri-plugin-clipboard-api';
 import { basename, dirname } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
+import { ensureLocal, ensureMirrorDir } from '@/Utils/storageSeam';
 
 // ── Определяем тип инстанса по пути ────────────────────────────────────────
 // Сначала пытаемся понять, в какой панели реально открыт путь — сравниваем с
@@ -65,6 +66,10 @@ export async function showInFinder(path: string): Promise<void> {
 // ── Открыть файл дефолтным приложением ─────────────────────────────────────
 export async function openFile(path: string): Promise<void> {
 	try {
+		// Файл из облачного зеркала может быть ещё не скачан. Открытие — это ровно
+		// тот момент, когда он нужен целиком: тянем и только потом отдаём системе.
+		// Вне зеркала `ensureLocal` не делает ничего.
+		await ensureLocal(path);
 		unwrap(await commands.openFileWithDefaultApp(path));
 	} catch (err) {
 		console.error('openFile failed:', err);
@@ -231,6 +236,10 @@ export async function pasteFromClipboardFs(destFolderPath: string): Promise<void
 	}
 
 	const instanceType = getInstanceType(destFolderPath); console.log('[pasteFs] type:', type, 'count:', paths.length, 'dest:', destFolderPath);
+
+	// Папка облачного проекта может существовать только в каталоге — создаём её
+	// перед вставкой. Вне зеркала вызов ничего не делает.
+	await ensureMirrorDir(destFolderPath);
 
 	for (const srcPath of paths) {
 		const name = basename(srcPath);

@@ -16,6 +16,7 @@ import { RotateCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { CurentProjectFolder } from './ProjectFolderColumn/CurentProjectFolder';
+import { storage_store } from '@/Store/MainWin/storage_store';
 
 import { MainTopPanel } from './MainTopPanel';
 import { ProjectFolderColumn } from './ProjectFolderColumn/ProjectFolderColumn';
@@ -36,6 +37,13 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 
 export default function AppMain() {
 	const isRunningRef = useRef(false);
+
+	// Поднимаем хранилище тем же способом, что и в прошлый раз (демо или живое).
+	// Без этого после перезапуска облачная папка молча выглядит обычной локальной:
+	// колонка читает диск, значков нет, синхронизатор простаивает.
+	useEffect(() => {
+		void storage_store.getState().autoConnect();
+	}, []);
 
 	// Tab / Shift+Tab — переключение фокуса между колонками
 	useColumnTabNavigation();
@@ -243,6 +251,12 @@ export default function AppMain() {
 				>
 					<GlobalMenuProvider>
 						<MainFolderColumn />
+						{/* Колонки одни и те же для локальных и облачных папок. Раньше
+						    здесь стояла подмена на отдельные онлайн-колонки — она и
+						    порождала «другой» вид проектов, неменяющиеся заголовки и
+						    пропадающую нижнюю панель. Облачная папка отличается только
+						    источником листинга (каталог вместо диска), а это спрятано
+						    в `readDirContent`. */}
 						<ProjectFolderColumn />
 						<CurentProjectFolder />
 					</GlobalMenuProvider>

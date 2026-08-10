@@ -48,15 +48,74 @@ export interface SearchPattern {
 	ext: string[];
 }
 
+// ─── Шов облачного хранилища ─────────────────────────────────────────────────
+//
+// Файлы могут лежать в облаке и не быть скачанными. Чтобы плагинам НЕ пришлось
+// про это знать, шов встроен прямо сюда — в общий `fs`. Все 34 плагина получают
+// его, не меняя ни строчки.
+//
+// Шов трёх видов, и путать их нельзя:
+//
+//   • нужны БАЙТЫ (read, copy, hash)  → гидратируем, то есть ждём скачивания;
+//   • нужны МЕТАДАННЫЕ (stat, info)   → отвечаем из каталога, НЕ качаем;
+//   • нужно ЗНАТЬ, ЕСТЬ ЛИ (exists)   → отвечаем из каталога, НЕ качаем.
+//
+// Если бы `stat` и `exists` гидратировали, первый же обход проекта скачал бы весь
+// архив: сканирование зовёт их на каждый найденный файл.
+//
+// Вне зеркала всё это — no-op: обычные локальные пути работают ровно как раньше.
+
+interface PathInfoLite {
+	inMirror: boolean;
+	exists: boolean;
+	local: boolean;
+	isFolder: boolean;
+	size: number | null;
+	mtime: number | null;
+	fileId: string | null;
+}
+
+/** Сведения о пути без скачивания. При любой ошибке — молча вниз, на диск. */
+async function pathInfo(p: string): Promise<PathInfoLite | null> {
+	try {
+		return (await api().invoke('storage_path_info', { path: p })) as PathInfoLite;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Убедиться, что по пути лежит актуальный файл, и вернуть этот же путь.
+ *
+ * Вне зеркала — no-op. Поэтому вызов безопасно стоит перед любым обращением к
+ * содержимому, и разбираться «здесь надо или нет» не требуется.
+ */
+async function hydrate(p: string): Promise<string> {
+	try {
+		const r = (await api().invoke('storage_ensure_local', { path: p })) as { path: string };
+		return r?.path ?? p;
+	} catch {
+		// Хранилище не настроено или путь не наш — работаем как раньше.
+		return p;
+	}
+}
+
 export const fs = {
-	/** true если путь существует (файл или папка). Не бросает и не шумит в логи —
-	 * использует Rust-команду path_exists, которая возвращает bool. */
-	exists(p: string): Promise<boolean> {
+	/** true если путь существует (файл или папка).
+	 *
+	 * Для облачного файла возвращает true, даже если он ещё не скачан: он
+	 * существует, просто пока не здесь. Иначе код вида «нет файла — пропускаем»
+	 * молча выбрасывал бы из обработки всё, что лежит в облаке. */
+	async exists(p: string): Promise<boolean> {
+		const info = await pathInfo(p);
+		if (info?.inMirror) return info.exists;
 		return api().invoke('path_exists', { path: p });
 	},
 
 	/** Проверка что путь существует И это файл. */
 	async existsFile(p: string): Promise<boolean> {
+		const info = await pathInfo(p);
+		if (info?.inMirror) return info.exists && !info.isFolder;
 		if (!(await api().invoke('path_exists', { path: p }))) return false;
 		try {
 			const s = await api().invoke('get_stat', { path: p });
@@ -68,6 +127,8 @@ export const fs = {
 
 	/** Проверка что путь существует И это папка. */
 	async existsFolder(p: string): Promise<boolean> {
+		const info = await pathInfo(p);
+		if (info?.inMirror) return info.exists && info.isFolder;
 		if (!(await api().invoke('path_exists', { path: p }))) return false;
 		try {
 			const s = await api().invoke('get_stat', { path: p });
@@ -77,8 +138,9 @@ export const fs = {
 		}
 	},
 
-	read(p: string): Promise<string> {
-		return api().invoke('read_file_sync', { filePath: p });
+	/** Чтение содержимого: здесь нужны байты, поэтому облачный файл скачивается. */
+	async read(p: string): Promise<string> {
+		return api().invoke('read_file_sync', { filePath: await hydrate(p) });
 	},
 
 	write(p: string, content: string): Promise<any> {
@@ -91,12 +153,42 @@ export const fs = {
 		return api().invoke('append_file', { filePath: p, content });
 	},
 
-	copy(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
-		return api().invoke('copy_item', { sourcePath: src, destinationPath: dst, options: opts });
+	/** Копирование: источник нужен целиком, поэтому облачный файл скачивается.
+	 *
+	 * Для режима «переписать устаревший» есть `fs.copyFromCloud` — он сначала
+	 * проверяет, изменился ли источник, и качает только если да. */
+	async copy(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
+		return api().invoke('copy_item', {
+			sourcePath: await hydrate(src),
+			destinationPath: dst,
+			options: opts,
+		});
 	},
 
-	move(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
-		return api().invoke('move_item', { sourcePath: src, destinationPath: dst, options: opts });
+	async move(src: string, dst: string, opts: CopyMoveOptions = { overwrite: true }): Promise<void> {
+		return api().invoke('move_item', {
+			sourcePath: await hydrate(src),
+			destinationPath: dst,
+			options: opts,
+		});
+	},
+
+	/**
+	 * Копирование с режимом «переписать устаревший» — правильный путь для
+	 * облачных источников.
+	 *
+	 * Порядок внутри: проверить актуальность по индексу → скачать ТОЛЬКО если
+	 * устарело → скопировать → запомнить версию. Ни одного байта по сети, если
+	 * источник не менялся, — даже когда зеркальная копия давно вытеснена.
+	 *
+	 * Вне зеркала ведёт себя как раньше: сравнение по mtime.
+	 */
+	copyFromCloud(
+		src: string,
+		dst: string,
+		overwriteOldest = true,
+	): Promise<{ action: 'copied' | 'skippedExists' | 'skippedUpToDate'; bytes: number | null; hydrated: boolean }> {
+		return api().invoke('storage_copy_from_mirror', { src, dest: dst, overwriteOldest });
 	},
 
 	/** Удаляет файл или папку (рекурсивно). Возвращает true если что-то было удалено. */
@@ -109,7 +201,25 @@ export const fs = {
 		return api().invoke('test_and_create_folder', { path: p });
 	},
 
-	stat(p: string): Promise<Stat> {
+	/** Метаданные. Для облачного файла берутся из каталога — НЕ качаем.
+	 *
+	 * Это важно: сканирование зовёт `stat` на каждый найденный файл, и гидрация
+	 * здесь означала бы скачивание всего архива при первом обходе. */
+	async stat(p: string): Promise<Stat> {
+		const info = await pathInfo(p);
+		if (info?.inMirror && !info.local && info.exists) {
+			const ms = (info.mtime ?? 0) * 1000;
+			return {
+				size: info.size ?? 0,
+				mtimeMs: ms,
+				atimeMs: ms,
+				ctimeMs: ms,
+				birthtimeMs: ms,
+				isFile: !info.isFolder,
+				isDir: info.isFolder,
+				isSymlink: false,
+			} as Stat;
+		}
 		return api().invoke('get_stat', { path: p });
 	},
 
@@ -118,8 +228,24 @@ export const fs = {
 	},
 
 	/** Возвращает true если source.mtime > dest.mtime. Используется для overwriteOldest. */
+	/**
+	 * @deprecated Для облачных источников используй `fs.copyFromCloud` — он
+	 * сравнивает ВЕРСИЮ источника, а не время, и не качает лишнего.
+	 *
+	 * Сравнение по mtime плохо работает с облаком по двум причинам: у файла,
+	 * который не скачан, локального времени нет вообще, а `origin_mtime` из
+	 * каталога бэкенд пока не заполняет — там ноль. Поэтому для путей в зеркале
+	 * отвечаем консервативно «да, копировать»: лишняя копия дешевле пропущенной.
+	 */
 	async isSourceNewer(src: string, dst: string): Promise<boolean> {
 		try {
+			const info = await pathInfo(src);
+			if (info?.inMirror) {
+				// Время источника в облаке недостоверно — не притворяемся, что знаем.
+				if (!info.mtime) return true;
+				const d = await fs.stat(dst);
+				return info.mtime * 1000 > d.mtimeMs;
+			}
 			const [s, d] = await Promise.all([fs.stat(src), fs.stat(dst)]);
 			return s.mtimeMs > d.mtimeMs;
 		} catch {
@@ -161,7 +287,12 @@ export const fs = {
 		return result.folders ?? [];
 	},
 
-	hash(p: string, algo: 'sha256' | 'sha1' | 'md5' = 'sha256'): Promise<string> {
+	/** Хэш содержимого — нужны байты, поэтому облачный файл скачивается. */
+	async hash(p: string, algo: 'sha256' | 'sha1' | 'md5' = 'sha256'): Promise<string> {
+		return this._hashRaw(await hydrate(p), algo);
+	},
+
+	_hashRaw(p: string, algo: 'sha256' | 'sha1' | 'md5' = 'sha256'): Promise<string> {
 		return api().invoke('hash_file', { path: p, algo });
 	},
 

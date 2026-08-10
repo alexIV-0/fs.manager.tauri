@@ -48,11 +48,20 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 	// ==============================
 	useEffect(() => {
 		const fetchData = async () => {
-			if (!activeMainFolder || !activeProjectFolder) return;
+			// Показывать нечего — панель обязана опустеть, а не сохранять прошлое.
+			// Раньше здесь был простой `return`, и содержимое предыдущей папки
+			// оставалось на экране под заголовком уже другой папки.
+			if (!activeMainFolder || !activeProjectFolder) {
+				useColumnView_Store.getState().reset(type);
+				return;
+			}
 
 			const { mainFolderArr } = mainFolders_stor.getState();
 			const mainFolder = mainFolderArr.find((f) => f.id === activeMainFolder);
-			if (!mainFolder) return;
+			if (!mainFolder) {
+				useColumnView_Store.getState().reset(type);
+				return;
+			}
 
 			// Защита от рассинхрона стора: при смене главной папки activeMainFolder обновляется
 			// раньше, чем ProjectFolderColumn переставит activeProjectFolder на проект новой папки.
@@ -61,6 +70,13 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			// directory (а в local-ветке ensureDir ещё и создаст мусорную папку). Не открываем чужую
 			// пару: дождёмся, пока выбор переставится на проект текущей папки (эффект перевыполнится).
 			if (!mainFolder.projectFolders.includes(activeProjectFolder)) return;
+
+			// Локальная панель без выбранной папки для обработки: очищаем, иначе в ней
+			// останется дерево от прошлой главной папки.
+			if (type === 'local' && !localFolder) {
+				useColumnView_Store.getState().reset('local');
+				return;
+			}
 
 			if (type === 'gd') {
 				const folderPath = joinPath(mainFolder.path, activeProjectFolder);

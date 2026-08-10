@@ -1,11 +1,13 @@
-import { Checkbox, IconButton, ListItem, ListItemText } from '@mui/material';
-import { ListRestart, X } from 'lucide-react';
+import { Checkbox, IconButton, ListItem, ListItemText, Tooltip } from '@mui/material';
+import { Cloud, ListRestart, X } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { reloadFolders } from '@/PROCESSING/reloadFolders';
 import { loadFromLocalStorage } from '@/Utils/loadSaveToLS';
+import { greenColor } from '@/Store/Color/grayColor';
+import { storage_store } from '@/Store/MainWin/storage_store';
 import { basename } from '@/Utils/path';
 
 type FolderItemProps = {
@@ -64,6 +66,10 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 		// Делаем папку активной, чтобы пересобранный список проектов сразу был виден в колонке.
 		setActiveFolders_store.getState().setMainFolderId(obj.id);
 		try {
+			// У облачной папки список проектов знает каталог, а он обновляется только
+			// запросом к хранилищу. Без этого кнопка перечитывала бы локальный индекс
+			// и новые проекты не появлялись бы никогда.
+			if (obj.online) await storage_store.getState().refreshProjects();
 			const finalArr = await reloadFolders(obj);
 			console.log('[refresh]', basename(obj.path), '→ прочитано с диска:', finalArr.length, finalArr);
 			mainFolders_stor.getState().updateParameters({
@@ -133,6 +139,8 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 			onClick={handleMainClick}
 		>
 			<Checkbox checked={obj.active} onClick={handleChekboxClick} />
+
+
 			<ListItemText
 				sx={{
 					whiteSpace: 'nowrap',
@@ -145,6 +153,26 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 			>
 				{name}
 			</ListItemText>
+			{/* Единственное отличие облачной папки от локальной — значок. Поведение
+			    (чекбокс, on/off all, обход при обработке) полностью общее: меняется
+			    только место, откуда берутся файлы.
+			    Стоит на месте кнопки удаления и раньше неё в разметке — поэтому при
+			    наведении появляющиеся иконки перекрывают его, а не толкают строку. */}
+			{obj.online && (
+				<Tooltip title='Папка в облачном хранилище' placement='left' arrow>
+					<Cloud
+						size={15}
+						strokeWidth={1}
+						style={{
+							position: 'absolute',
+							top: '50%',
+							right: 6,
+							transform: 'translateY(-50%)',
+							color: greenColor(65),
+						}}
+					/>
+				</Tooltip>
+			)}
 			<IconButton
 				className='removeProjectButton'
 				onClick={handleReloadFolders}

@@ -1,0 +1,1323 @@
+// Локальный индекс: копия каталога бэкенда + состояние ЭТОЙ машины.
+//
+// Две группы таблиц, и смешивать их нельзя (R2_SYNC_PLAN.md, раздел 5):
+//   remote_*      — производное от бэкенда. Можно снести и пересобрать через /tree.
+//   local_state, transfers, copied_files, media_probe
+//                 — ТОЛЬКО эта машина. Никуда не уходит: что скачано на конкретном
+//                   диске — дело только этого диска.
+//
+// Ключ везде `file_id` (UUID бэкенда): он СТАБИЛЕН через переименования и переносы.
+// `s3_key` непрозрачный, локальный путь из него не выводится — только из
+// `folder_path` + `name`.
+//
+// Живёт в app data, НЕ внутри синхронизируемой папки: иначе индекс начнёт
+// синхронизировать сам себя.
+
+use std::path::Path;
+
+use rusqlite::{params, Connection, OptionalExtension};
+
+use super::types::*;
+
+/// Версия схемы. Растёт при каждом изменении; миграции идут по `user_version`.
+const SCHEMA_VERSION: i64 = 1;
+
+pub struct Index {
+    conn: Connection,
+}
+
+// ─── Открытие и миграции ─────────────────────────────────────────────────────
+
+impl Index {
+    pub fn open(path: &Path) -> Result<Self, String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
+        }
+        let conn = Connection::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+        let me = Self { conn };
+        me.configure()?;
+        me.migrate()?;
+        Ok(me)
+    }
+
+    /// Для тестов и для проверки миграций без файла на диске.
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self, String> {
+        let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+        let me = Self { conn };
+        me.configure()?;
+        me.migrate()?;
+        Ok(me)
+    }
+
+    fn configure(&self) -> Result<(), String> {
+        // WAL: читатели (UI рисует дерево) не блокируют писателя (поллинг дельт).
+        // NORMAL: на записи не ждём fsync — индекс производный, потеря последних
+        // событий лечится следующей дельтой.
+        self.conn
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+                 PRAGMA synchronous = NORMAL;
+                 PRAGMA foreign_keys = ON;",
+            )
+            .map_err(|e| format!("pragma: {e}"))
+    }
+
+    fn user_version(&self) -> Result<i64, String> {
+        self.conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(|e| format!("user_version: {e}"))
+    }
+
+    fn migrate(&self) -> Result<(), String> {
+        let from = self.user_version()?;
+        if from >= SCHEMA_VERSION {
+            return Ok(());
+        }
+        if from == 0 {
+            self.conn
+                .execute_batch(SCHEMA_V1)
+                .map_err(|e| format!("миграция 0→1: {e}"))?;
+        }
+        self.conn
+            .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
+            .map_err(|e| format!("set user_version: {e}"))
+    }
+}
+
+const SCHEMA_V1: &str = r#"
+-- ══ Производное от бэкенда ══════════════════════════════════════════════════
+
+CREATE TABLE remote_clients (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL
+);
+
+CREATE TABLE remote_projects (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    client_id  TEXT,              -- NULL = проект вне клиента
+    group_name TEXT NOT NULL DEFAULT '',
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    is_paused  INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT
+);
+CREATE INDEX idx_rp_client ON remote_projects(client_id, name);
+
+CREATE TABLE remote_entries (
+    file_id      TEXT PRIMARY KEY,     -- стабилен через переименования и переносы
+    project_id   TEXT NOT NULL,
+    folder_path  TEXT NOT NULL,        -- 'IN', '' = корень проекта
+    name         TEXT NOT NULL,        -- логическое имя; идёт в локальный путь
+    is_folder    INTEGER NOT NULL,
+    s3_key       TEXT,                 -- NULL у папок; непрозрачный у файлов
+    size_bytes   INTEGER,
+    content_type TEXT,
+    etag         TEXT,
+    content_hash TEXT,
+    origin_mtime INTEGER,
+    last_seq     INTEGER,
+    deleted      INTEGER NOT NULL DEFAULT 0
+);
+-- Листинг папки: WHERE project_id, folder_path — мгновенно по индексу.
+CREATE INDEX idx_re_folder ON remote_entries(project_id, folder_path, name);
+-- Поиск по имени во всём дереве (модалка поиска по проектам).
+CREATE INDEX idx_re_name   ON remote_entries(name);
+
+CREATE TABLE project_cursors (
+    project_id TEXT PRIMARY KEY,
+    cursor     INTEGER NOT NULL DEFAULT 0,
+    tree_at    INTEGER               -- unix sec последнего полного /tree
+);
+
+-- ══ ТОЛЬКО эта машина. В облако не уходит никогда ═══════════════════════════
+
+CREATE TABLE local_state (
+    file_id     TEXT PRIMARY KEY,
+    state       TEXT NOT NULL,       -- Cloud|Downloading|Fresh|Stale|LocalOnly
+                                     -- |LocalModified|Uploading|Conflict|Error
+    local_path  TEXT,
+    -- ВАЖНО: local_size и local_mtime — состояние на момент ПОСЛЕДНЕЙ УСПЕШНОЙ
+    -- синхронизации, а НЕ текущее с диска. Текущее берётся stat-ом и сравнивается
+    -- с ними: это baseline, без которого «в облаке новее» не отличить от
+    -- «у меня новее» (R2_SYNC_PLAN.md, 6.3).
+    local_size  INTEGER,
+    local_mtime INTEGER,
+    synced_etag TEXT,
+    hydrated_at INTEGER,
+    last_access INTEGER,
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    error       TEXT
+);
+-- Кандидаты на вытеснение: незапиненные, свежие, давно не тронутые.
+CREATE INDEX idx_ls_evict ON local_state(last_access)
+    WHERE pinned = 0 AND state = 'Fresh';
+
+CREATE TABLE transfers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id     TEXT,
+    project_id  TEXT NOT NULL,
+    direction   TEXT NOT NULL,       -- 'up' | 'down'
+    local_path  TEXT NOT NULL,
+    bytes_total INTEGER,
+    bytes_done  INTEGER NOT NULL DEFAULT 0,
+    strategy    TEXT NOT NULL DEFAULT 'single',   -- 'single' | 'multipart'
+    upload_id   TEXT,                -- для multipart; пока всегда NULL
+    parts_done  TEXT,                -- JSON [[partNumber, etag], …]; пока NULL
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    state       TEXT NOT NULL,       -- queued|active|paused|error|done
+    error       TEXT,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX idx_tr_state ON transfers(state, id);
+
+-- Что и куда копировали: чтобы нода «переписать устаревший» решала БЕЗ скачивания.
+-- Сравнение по content_hash (иначе etag) — не по mtime: часы разъезжаются, а
+-- правка локальной копии меняет её mtime, не меняя источник.
+CREATE TABLE copied_files (
+    dest_path TEXT PRIMARY KEY,
+    file_id   TEXT NOT NULL,
+    src_etag  TEXT,
+    src_hash  TEXT,
+    src_size  INTEGER,
+    copied_at INTEGER NOT NULL
+);
+
+-- Медиа-характеристики облачных файлов: ffprobe по Range читает только заголовок
+-- контейнера — сотни КБ вместо гигабайт. Инвалидация по etag.
+CREATE TABLE media_probe (
+    file_id   TEXT PRIMARY KEY,
+    src_etag  TEXT NOT NULL,
+    duration  REAL,
+    width     INTEGER,
+    height    INTEGER,
+    codec     TEXT,
+    fps       REAL,
+    audio     TEXT,
+    probed_at INTEGER NOT NULL
+);
+
+CREATE TABLE sync_meta (k TEXT PRIMARY KEY, v TEXT);
+"#;
+
+// ─── Клиенты и проекты ───────────────────────────────────────────────────────
+
+impl Index {
+    /// Ответ `/projects` целиком заменяет кэш: бэкенд отдаёт полный видимый список,
+    /// значит исчезнувшее оттуда исчезло и у нас.
+    pub fn replace_projects(&mut self, resp: &ProjectsResponse) -> Result<(), String> {
+        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM remote_clients", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM remote_projects", [])
+            .map_err(|e| e.to_string())?;
+
+        for c in &resp.clients {
+            tx.execute(
+                "INSERT INTO remote_clients (id, display_name) VALUES (?1, ?2)",
+                params![c.id, c.display_name],
+            )
+            .map_err(|e| format!("insert client {}: {e}", c.id))?;
+        }
+        for p in &resp.projects {
+            tx.execute(
+                "INSERT INTO remote_projects
+                    (id, name, client_id, group_name, is_active, is_paused, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    p.id,
+                    p.name,
+                    p.client_id,
+                    p.group_name,
+                    p.is_active as i64,
+                    p.is_paused as i64,
+                    p.updated_at
+                ],
+            )
+            .map_err(|e| format!("insert project {}: {e}", p.id))?;
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    pub fn clients(&self) -> Result<Vec<RemoteClient>, String> {
+        let mut st = self
+            .conn
+            .prepare("SELECT id, display_name FROM remote_clients ORDER BY display_name")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(RemoteClient {
+                    id: r.get(0)?,
+                    display_name: r.get(1)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// `client_id = None` → все проекты; `Some(id)` → проекты этого клиента.
+    pub fn projects(&self, client_id: Option<&str>) -> Result<Vec<RemoteProject>, String> {
+        let sql = "SELECT id, name, client_id, group_name, is_active, is_paused, updated_at
+                     FROM remote_projects
+                    WHERE (?1 IS NULL OR client_id = ?1)
+                    ORDER BY name";
+        let mut st = self.conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![client_id], |r| {
+                Ok(RemoteProject {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    client_id: r.get(2)?,
+                    group_name: r.get(3)?,
+                    is_active: r.get::<_, i64>(4)? != 0,
+                    is_paused: r.get::<_, i64>(5)? != 0,
+                    updated_at: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+}
+
+// ─── Дерево: bootstrap и дельты ───────────────────────────────────────────────
+
+/// Что сделала дельта. `needs_resync` — сигнал, что применить не удалось и нужен
+/// полный `/tree`: молча продолжать с дырой в индексе нельзя.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyStats {
+    pub upserted: usize,
+    pub deleted: usize,
+    pub skipped: usize,
+    pub needs_resync: bool,
+}
+
+impl Index {
+    /// Bootstrap: `/tree` отдаёт ПОЛНОЕ поддерево, поэтому старые строки проекта
+    /// удаляем — иначе исчезнувшее на бэкенде останется у нас навсегда.
+    ///
+    /// `local_state` при этом НЕ трогаем: скачанные файлы принадлежат машине, а не
+    /// каталогу, и их судьбу решает вытеснение.
+    pub fn apply_tree(
+        &mut self,
+        project_id: &str,
+        entries: &[TreeEntry],
+        cursor: i64,
+    ) -> Result<ApplyStats, String> {
+        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM remote_entries WHERE project_id = ?1",
+            params![project_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let mut n = 0usize;
+        for e in entries {
+            tx.execute(
+                "INSERT INTO remote_entries
+                    (file_id, project_id, folder_path, name, is_folder, s3_key,
+                     size_bytes, content_type, etag, content_hash, origin_mtime,
+                     last_seq, deleted)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,0)",
+                params![
+                    e.id,
+                    e.project_id,
+                    e.folder_path,
+                    e.name,
+                    e.is_folder as i64,
+                    e.s3_key,
+                    e.size_bytes,
+                    e.content_type,
+                    e.etag,
+                    e.content_hash,
+                    e.origin_mtime,
+                    e.last_seq,
+                ],
+            )
+            .map_err(|e2| format!("insert entry {}: {e2}", e.id))?;
+            n += 1;
+        }
+
+        tx.execute(
+            "INSERT INTO project_cursors (project_id, cursor, tree_at)
+                  VALUES (?1, ?2, ?3)
+             ON CONFLICT(project_id) DO UPDATE SET cursor = ?2, tree_at = ?3",
+            params![project_id, cursor, now_sec()],
+        )
+        .map_err(|e| e.to_string())?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(ApplyStats {
+            upserted: n,
+            ..Default::default()
+        })
+    }
+
+    /// Инкрементальное применение журнала.
+    ///
+    /// Переименование приходит парой delete+put с ОДНИМ `file_id`. Поэтому delete
+    /// ставит `deleted = 1` (tombstone), а не удаляет строку: следующий put тем же
+    /// `file_id` её оживит с новым именем. Удали мы строку — потеряли бы связь с
+    /// `local_state`, и файл на диске пришлось бы перекачивать вместо переименования.
+    pub fn apply_delta(
+        &mut self,
+        project_id: &str,
+        changes: &[Change],
+        cursor: i64,
+    ) -> Result<ApplyStats, String> {
+        let tx = self.conn.transaction().map_err(|e| e.to_string())?;
+        let mut st = ApplyStats::default();
+
+        for c in changes {
+            let Some(file_id) = c.file_id.as_deref() else {
+                // Без file_id событие неприменимо: ключ у нас именно он.
+                st.skipped += 1;
+                st.needs_resync = true;
+                continue;
+            };
+
+            match c.op {
+                ChangeOp::Delete => {
+                    let n = tx
+                        .execute(
+                            "UPDATE remote_entries SET deleted = 1, last_seq = ?2
+                              WHERE file_id = ?1",
+                            params![file_id, c.seq],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        // Удалили то, чего мы и не знали — не ошибка, просто нечего гасить.
+                        st.skipped += 1;
+                    } else {
+                        st.deleted += 1;
+                    }
+                }
+                ChangeOp::Put => {
+                    let (Some(name), Some(folder_path)) =
+                        (c.name.as_deref(), c.folder_path.as_deref())
+                    else {
+                        // Put без логического пути применить нельзя: локальный путь
+                        // строится именно из folder_path + name.
+                        st.skipped += 1;
+                        st.needs_resync = true;
+                        continue;
+                    };
+
+                    tx.execute(
+                        "INSERT INTO remote_entries
+                            (file_id, project_id, folder_path, name, is_folder, s3_key,
+                             size_bytes, content_type, etag, content_hash, last_seq, deleted)
+                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,0)
+                         ON CONFLICT(file_id) DO UPDATE SET
+                            project_id   = ?2,
+                            folder_path  = ?3,
+                            name         = ?4,
+                            is_folder    = ?5,
+                            s3_key       = COALESCE(?6, remote_entries.s3_key),
+                            size_bytes   = COALESCE(?7, remote_entries.size_bytes),
+                            content_type = COALESCE(?8, remote_entries.content_type),
+                            etag         = COALESCE(?9, remote_entries.etag),
+                            content_hash = COALESCE(?10, remote_entries.content_hash),
+                            last_seq     = ?11,
+                            deleted      = 0",
+                        params![
+                            file_id,
+                            project_id,
+                            folder_path,
+                            name,
+                            c.is_folder.unwrap_or(false) as i64,
+                            // Журнал отдаёт логический `key`, а не s3_key: для папок
+                            // s3_key вообще не существует. Оставляем то, что знали.
+                            Option::<String>::None,
+                            c.size,
+                            c.content_type,
+                            c.etag,
+                            c.content_hash,
+                            c.seq,
+                        ],
+                    )
+                    .map_err(|e| format!("upsert {file_id}: {e}"))?;
+                    st.upserted += 1;
+                }
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO project_cursors (project_id, cursor) VALUES (?1, ?2)
+             ON CONFLICT(project_id) DO UPDATE SET cursor = ?2",
+            params![project_id, cursor],
+        )
+        .map_err(|e| e.to_string())?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(st)
+    }
+
+    /// Вписать запись из ответа мутации (`notify`, `mkdir`, `rename`).
+    ///
+    /// Нужно, чтобы только что залитый файл появился в дереве СРАЗУ, а не ждал
+    /// следующей дельты: иначе после заливки он на секунды исчезает из интерфейса.
+    pub fn upsert_from_file(&self, f: &ProjectFile) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO remote_entries
+                    (file_id, project_id, folder_path, name, is_folder, s3_key,
+                     size_bytes, content_type, deleted)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)
+                 ON CONFLICT(file_id) DO UPDATE SET
+                    folder_path  = ?3,
+                    name         = ?4,
+                    is_folder    = ?5,
+                    s3_key       = COALESCE(?6, remote_entries.s3_key),
+                    size_bytes   = COALESCE(?7, remote_entries.size_bytes),
+                    content_type = COALESCE(?8, remote_entries.content_type),
+                    deleted      = 0",
+                params![
+                    f.id,
+                    f.project_id,
+                    f.folder_path,
+                    f.name,
+                    f.is_folder as i64,
+                    f.s3_key,
+                    f.size_bytes,
+                    f.content_type,
+                ],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("upsert_from_file {}: {e}", f.id))
+    }
+
+    pub fn cursor(&self, project_id: &str) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                "SELECT cursor FROM project_cursors WHERE project_id = ?1",
+                params![project_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+            .map(|v| v.unwrap_or(0))
+    }
+
+    /// `None` — полного `/tree` по этому проекту ещё не делали. Отличать от
+    /// «сделали, и там пусто» обязательно: иначе пустая папка и неизвестная папка
+    /// выглядят одинаково.
+    pub fn tree_at(&self, project_id: &str) -> Result<Option<i64>, String> {
+        self.conn
+            .query_row(
+                "SELECT tree_at FROM project_cursors WHERE project_id = ?1",
+                params![project_id],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+            .map(|v| v.flatten())
+    }
+
+    /// Содержимое папки: папки сначала, потом файлы, внутри — по имени.
+    pub fn list_dir(&self, project_id: &str, folder_path: &str) -> Result<Vec<TreeEntry>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT file_id, project_id, folder_path, name, is_folder, s3_key,
+                        size_bytes, content_type, etag, content_hash, origin_mtime, last_seq
+                   FROM remote_entries
+                  WHERE project_id = ?1 AND folder_path = ?2 AND deleted = 0
+                  ORDER BY is_folder DESC, name COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![project_id, folder_path], |r| {
+                Ok(TreeEntry {
+                    id: r.get(0)?,
+                    project_id: r.get(1)?,
+                    folder_path: r.get(2)?,
+                    name: r.get(3)?,
+                    is_folder: r.get::<_, i64>(4)? != 0,
+                    s3_key: r.get(5)?,
+                    size_bytes: r.get(6)?,
+                    content_type: r.get(7)?,
+                    etag: r.get(8)?,
+                    content_hash: r.get(9)?,
+                    origin_mtime: r.get(10)?,
+                    created_at: None,
+                    updated_at: None,
+                    last_seq: r.get(11)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Логические пути всех папок проекта — для создания их на диске.
+    ///
+    /// Папка в каталоге лежит отдельной записью, поэтому её путь — это
+    /// `folder_path` + `name`, а не путь какого-то файла внутри.
+    pub fn folder_paths(&self, project_id: &str) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT folder_path, name FROM remote_entries
+                  WHERE project_id = ?1 AND is_folder = 1 AND deleted = 0",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![project_id], |r| {
+                let folder: String = r.get(0)?;
+                let name: String = r.get(1)?;
+                Ok(if folder.is_empty() {
+                    name
+                } else {
+                    format!("{folder}/{name}")
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Одна запись по `file_id` (включая tombstone — вызывающий решает сам).
+    pub fn entry(&self, file_id: &str) -> Result<Option<TreeEntry>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT file_id, project_id, folder_path, name, is_folder, s3_key,
+                        size_bytes, content_type, etag, content_hash, origin_mtime, last_seq
+                   FROM remote_entries WHERE file_id = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        st.query_row(params![file_id], |r| {
+            Ok(TreeEntry {
+                id: r.get(0)?,
+                project_id: r.get(1)?,
+                folder_path: r.get(2)?,
+                name: r.get(3)?,
+                is_folder: r.get::<_, i64>(4)? != 0,
+                s3_key: r.get(5)?,
+                size_bytes: r.get(6)?,
+                content_type: r.get(7)?,
+                etag: r.get(8)?,
+                content_hash: r.get(9)?,
+                origin_mtime: r.get(10)?,
+                created_at: None,
+                updated_at: None,
+                last_seq: r.get(11)?,
+            })
+        })
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
+    /// Обратное отображение «логический путь → запись». Нужно шву гидрации:
+    /// код приходит с путём, а не с `file_id`.
+    pub fn entry_by_path(
+        &self,
+        project_id: &str,
+        folder_path: &str,
+        name: &str,
+    ) -> Result<Option<TreeEntry>, String> {
+        let id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT file_id FROM remote_entries
+                  WHERE project_id = ?1 AND folder_path = ?2 AND name = ?3 AND deleted = 0",
+                params![project_id, folder_path, name],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        match id {
+            Some(id) => self.entry(&id),
+            None => Ok(None),
+        }
+    }
+}
+
+// ─── Состояние локальных копий ───────────────────────────────────────────────
+
+impl Index {
+    /// Доступ к соединению для соседних модулей (`state.rs` считает по нему значки).
+    pub(super) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    #[cfg(test)]
+    pub fn conn_for_test(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// Зафиксировать успешную синхронизацию: файл лёг на диск и соответствует
+    /// версии `synced_etag`.
+    ///
+    /// `size`/`mtime` пишем как **baseline** — состояние на этот момент, а не
+    /// «текущее с диска». Без этого «в облаке новее» не отличить от «у меня новее»
+    /// (см. 6.3 плана).
+    #[allow(clippy::too_many_arguments)]
+    pub fn mark_synced(
+        &self,
+        file_id: &str,
+        state: &str,
+        local_path: &str,
+        size: i64,
+        mtime: i64,
+        synced_etag: Option<&str>,
+    ) -> Result<(), String> {
+        let now = now_sec();
+        self.conn
+            .execute(
+                "INSERT INTO local_state
+                    (file_id, state, local_path, local_size, local_mtime,
+                     synced_etag, hydrated_at, last_access, pinned, error)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?7,0,NULL)
+                 ON CONFLICT(file_id) DO UPDATE SET
+                    state       = ?2,
+                    local_path  = ?3,
+                    local_size  = ?4,
+                    local_mtime = ?5,
+                    synced_etag = ?6,
+                    hydrated_at = ?7,
+                    last_access = ?7,
+                    error       = NULL",
+                params![file_id, state, local_path, size, mtime, synced_etag, now],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("mark_synced {file_id}: {e}"))
+    }
+
+    /// Сменить состояние, не трогая baseline (переходы вида Fresh → Downloading,
+    /// Fresh → LocalModified, что угодно → Error).
+    pub fn set_state(&self, file_id: &str, state: &str, error: Option<&str>) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO local_state (file_id, state, error, last_access)
+                      VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(file_id) DO UPDATE SET state = ?2, error = ?3",
+                params![file_id, state, error, now_sec()],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("set_state {file_id}: {e}"))
+    }
+
+    /// «Оставить оффлайн»: файл не вытесняется по таймеру. Локальный флаг —
+    /// в облако не уходит, у каждой машины свой.
+    pub fn set_pinned(&self, file_id: &str, pinned: bool) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO local_state (file_id, state, pinned)
+                      VALUES (?1, 'Cloud', ?2)
+                 ON CONFLICT(file_id) DO UPDATE SET pinned = ?2",
+                params![file_id, pinned as i64],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("set_pinned {file_id}: {e}"))
+    }
+
+    /// Отметить обращение — по этому полю работает вытеснение по TTL.
+    pub fn touch_access(&self, file_id: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE local_state SET last_access = ?2 WHERE file_id = ?1",
+                params![file_id, now_sec()],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("touch_access {file_id}: {e}"))
+    }
+
+    /// Состояние, путь и baseline одной записи — всё, что нужно для сверки с диском.
+    pub fn local_baseline(
+        &self,
+        file_id: &str,
+    ) -> Result<Option<(String, String, Option<i64>, Option<i64>)>, String> {
+        self.conn
+            .query_row(
+                "SELECT state, local_path, local_size, local_mtime
+                   FROM local_state WHERE file_id = ?1 AND local_path IS NOT NULL",
+                params![file_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Все записи, у которых есть локальная копия.
+    pub fn local_file_ids(&self) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare("SELECT file_id FROM local_state WHERE local_path IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    #[cfg(test)]
+    pub fn local_state(&self, file_id: &str) -> Result<Option<(String, Option<String>)>, String> {
+        self.conn
+            .query_row(
+                "SELECT state, local_path FROM local_state WHERE file_id = ?1",
+                params![file_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Кандидаты на вытеснение: всё, у чего есть локальная копия. Самые давно не
+    /// тронутые — первыми, чтобы давление по размеру снимало сначала холодное.
+    pub fn eviction_candidates(&self) -> Result<Vec<super::evict::Candidate>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT ls.file_id, re.folder_path, re.name, ls.local_path,
+                        IFNULL(ls.local_size, 0), IFNULL(ls.last_access, 0),
+                        ls.state, ls.pinned, re.etag, re.content_hash, ls.synced_etag
+                   FROM local_state ls
+                   JOIN remote_entries re ON re.file_id = ls.file_id
+                  WHERE ls.local_path IS NOT NULL
+                  ORDER BY IFNULL(ls.last_access, 0) ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = st
+            .query_map([], |r| {
+                let stored: String = r.get(6)?;
+                let synced_etag: Option<String> = r.get(10)?;
+                let etag: Option<String> = r.get(8)?;
+                let hash: Option<String> = r.get(9)?;
+                // Состояние выводим тем же движком, что и значки: иначе вытеснение
+                // и интерфейс разойдутся в оценке одного и того же файла.
+                let state = super::state::derive_state_pub(
+                    Some(&stored),
+                    synced_etag.as_deref(),
+                    etag.as_deref(),
+                    hash.as_deref(),
+                    false,
+                );
+                Ok(super::evict::Candidate {
+                    file_id: r.get(0)?,
+                    folder_path: r.get(1)?,
+                    name: r.get(2)?,
+                    local_path: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    local_size: r.get(4)?,
+                    last_access: r.get(5)?,
+                    state,
+                    pinned: r.get::<_, i64>(7)? != 0,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Сколько байт занимают локальные копии сейчас.
+    pub fn mirror_bytes(&self) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                "SELECT IFNULL(SUM(IFNULL(local_size,0)),0) FROM local_state
+                  WHERE local_path IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    /// Локальной копии больше нет — файл снова только в облаке.
+    ///
+    /// Baseline (`local_size`/`local_mtime`/`synced_etag`) обнуляем: иначе после
+    /// повторного скачивания сравнение версий возьмёт старое значение и решит, что
+    /// файл «локально изменён».
+    pub fn mark_evicted(&self, file_id: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE local_state
+                    SET state = 'Cloud', local_path = NULL, local_size = NULL,
+                        local_mtime = NULL, synced_etag = NULL, hydrated_at = NULL,
+                        error = NULL
+                  WHERE file_id = ?1",
+                params![file_id],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("mark_evicted {file_id}: {e}"))
+    }
+
+    /// Из какой версии сделана копия по этому пути. `None` — записи нет.
+    /// Прямые дети папки с глубокими итогами — данные для модалки «Информация».
+    ///
+    /// Один агрегирующий запрос на уровень: диапазон по логическому пути плюс
+    /// `GROUP BY` первого сегмента. Рекурсивный CTE тут не нужен, а
+    /// материализованные `n_bytes_deep` пришлось бы пересчитывать вверх по всей
+    /// цепочке предков на каждый файл — и однажды пропустить обновление, получив
+    /// навсегда врущие цифры без всякого сигнала.
+    pub fn subtree_stats(
+        &self,
+        project_id: &str,
+        folder_path: &str,
+    ) -> Result<super::SubtreeStats, String> {
+        let known = self.tree_at(project_id)?.is_some();
+
+        // Файлы поддерева: сам путь плюс всё, что под ним.
+        let (where_sql, like) = if folder_path.is_empty() {
+            ("1 = 1".to_string(), String::new())
+        } else {
+            (
+                "(re.folder_path = ?2 OR re.folder_path LIKE ?3)".to_string(),
+                format!("{folder_path}/%"),
+            )
+        };
+
+        // Относительный путь внутри поддерева → первый сегмент = имя ребёнка.
+        let rel_sql = if folder_path.is_empty() {
+            "re.folder_path".to_string()
+        } else {
+            "CASE WHEN re.folder_path = ?2 THEN '' \
+                  ELSE substr(re.folder_path, length(?2) + 2) END".to_string()
+        };
+
+        let sql = format!(
+            "SELECT
+               CASE WHEN rel = '' THEN ''
+                    WHEN instr(rel, '/') > 0 THEN substr(rel, 1, instr(rel, '/') - 1)
+                    ELSE rel END AS child,
+               COUNT(*),
+               IFNULL(SUM(size), 0),
+               IFNULL(SUM(is_local), 0),
+               IFNULL(SUM(CASE WHEN is_local = 1 THEN size ELSE 0 END), 0)
+             FROM (
+               SELECT {rel_sql} AS rel,
+                      IFNULL(re.size_bytes, 0) AS size,
+                      CASE WHEN ls.local_path IS NOT NULL
+                            AND ls.state IN ('Fresh','Stale','LocalModified','Conflict')
+                           THEN 1 ELSE 0 END AS is_local
+                 FROM remote_entries re
+                 LEFT JOIN local_state ls ON ls.file_id = re.file_id
+                WHERE re.project_id = ?1 AND re.deleted = 0 AND re.is_folder = 0
+                  AND {where_sql}
+             )
+             GROUP BY child
+             ORDER BY child"
+        );
+
+        let mut st = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let map = |r: &rusqlite::Row| -> rusqlite::Result<super::SubtreeChild> {
+            let name: String = r.get(0)?;
+            Ok(super::SubtreeChild {
+                internal: is_internal(&name),
+                is_folder: !name.is_empty(),
+                name,
+                files: r.get(1)?,
+                bytes: r.get(2)?,
+                local_files: r.get(3)?,
+                local_bytes: r.get(4)?,
+            })
+        };
+
+        let children: Vec<super::SubtreeChild> = if folder_path.is_empty() {
+            st.query_map(params![project_id], map)
+        } else {
+            st.query_map(params![project_id, folder_path, like], map)
+        }
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+
+        // Пустые папки в группировке не появятся (в них нет файлов), но человек
+        // должен их видеть: иначе созданная папка выглядит как несуществующая.
+        let mut children = children;
+        for e in self.list_dir(project_id, folder_path)? {
+            if e.is_folder && !children.iter().any(|c| c.name == e.name) {
+                children.push(super::SubtreeChild {
+                    internal: is_internal(&e.name),
+                    name: e.name,
+                    is_folder: true,
+                    files: 0,
+                    bytes: 0,
+                    local_files: 0,
+                    local_bytes: 0,
+                });
+            }
+        }
+        children.sort_by(|a, b| {
+            b.is_folder
+                .cmp(&a.is_folder)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+
+        let files = children.iter().map(|c| c.files).sum();
+        let bytes = children.iter().map(|c| c.bytes).sum();
+        let local_files = children.iter().map(|c| c.local_files).sum();
+        let local_bytes = children.iter().map(|c| c.local_bytes).sum();
+
+        Ok(super::SubtreeStats {
+            project_id: project_id.to_string(),
+            folder_path: folder_path.to_string(),
+            known,
+            files,
+            bytes,
+            local_files,
+            local_bytes,
+            children,
+        })
+    }
+
+    pub fn copy_record(
+        &self,
+        dest_path: &str,
+    ) -> Result<Option<(String, Option<String>, Option<String>, Option<i64>)>, String> {
+        self.conn
+            .query_row(
+                "SELECT file_id, src_etag, src_hash, src_size FROM copied_files
+                  WHERE dest_path = ?1",
+                params![dest_path],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// Запомнить, из какой версии скопировали. Без этой записи следующий виток
+    /// перекопирует файл заново — то есть вся экономия исчезнет.
+    pub fn record_copy(
+        &self,
+        dest_path: &str,
+        file_id: &str,
+        src_etag: Option<&str>,
+        src_hash: Option<&str>,
+        src_size: Option<i64>,
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO copied_files
+                    (dest_path, file_id, src_etag, src_hash, src_size, copied_at)
+                 VALUES (?1,?2,?3,?4,?5,?6)
+                 ON CONFLICT(dest_path) DO UPDATE SET
+                    file_id = ?2, src_etag = ?3, src_hash = ?4,
+                    src_size = ?5, copied_at = ?6",
+                params![dest_path, file_id, src_etag, src_hash, src_size, now_sec()],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("record_copy {dest_path}: {e}"))
+    }
+
+    /// Поставить передачу в очередь. Возвращает её id.
+    ///
+    /// `strategy` = `single` пока: multipart-эндпоинтов на бэкенде нет, но поля
+    /// `upload_id`/`parts_done` в схеме уже есть, чтобы потом не менять её.
+    pub fn enqueue_transfer(
+        &self,
+        file_id: Option<&str>,
+        project_id: &str,
+        direction: &str,
+        local_path: &str,
+        bytes_total: Option<i64>,
+    ) -> Result<i64, String> {
+        self.conn
+            .execute(
+                "INSERT INTO transfers
+                    (file_id, project_id, direction, local_path, bytes_total,
+                     bytes_done, strategy, state, updated_at)
+                 VALUES (?1,?2,?3,?4,?5,0,'single','queued',?6)",
+                params![file_id, project_id, direction, local_path, bytes_total, now_sec()],
+            )
+            .map_err(|e| format!("enqueue_transfer: {e}"))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Активные передачи первыми, затем недавно завершённые.
+    ///
+    /// Завершённые тоже показываем: ошибка, о которой никто не узнал, — это
+    /// ошибка, которая повторится.
+    pub fn list_transfers(&self, limit: i64) -> Result<Vec<super::TransferRow>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT t.id, t.file_id, t.project_id, t.direction, t.local_path,
+                        t.bytes_total, t.bytes_done, t.state, t.error, t.updated_at,
+                        re.name
+                   FROM transfers t
+                   LEFT JOIN remote_entries re ON re.file_id = t.file_id
+                  ORDER BY
+                    CASE t.state WHEN 'active' THEN 0 WHEN 'queued' THEN 1
+                                 WHEN 'error' THEN 2 ELSE 3 END,
+                    t.id DESC
+                  LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![limit], |r| {
+                let local_path: String = r.get(4)?;
+                let name: Option<String> = r.get(10)?;
+                Ok(super::TransferRow {
+                    id: r.get(0)?,
+                    file_id: r.get(1)?,
+                    project_id: r.get(2)?,
+                    direction: r.get(3)?,
+                    // Имя берём из каталога, а если файла там ещё нет (заливка
+                    // нового) — из пути на диске.
+                    name: name.unwrap_or_else(|| {
+                        std::path::Path::new(&local_path)
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| local_path.clone())
+                    }),
+                    bytes_total: r.get(5)?,
+                    bytes_done: r.get(6)?,
+                    state: r.get(7)?,
+                    error: r.get(8)?,
+                    updated_at: r.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Убрать из истории всё завершённое — кнопка «очистить».
+    pub fn clear_finished_transfers(&self) -> Result<i64, String> {
+        self.conn
+            .execute("DELETE FROM transfers WHERE state IN ('done','error')", [])
+            .map(|n| n as i64)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn set_transfer_progress(&self, id: i64, bytes_done: i64) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE transfers SET bytes_done = ?2, state = 'active', updated_at = ?3
+                  WHERE id = ?1",
+                params![id, bytes_done, now_sec()],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("set_transfer_progress {id}: {e}"))
+    }
+
+    pub fn finish_transfer(&self, id: i64, error: Option<&str>) -> Result<(), String> {
+        let state = if error.is_some() { "error" } else { "done" };
+        self.conn
+            .execute(
+                "UPDATE transfers SET state = ?2, error = ?3, updated_at = ?4 WHERE id = ?1",
+                params![id, state, error, now_sec()],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("finish_transfer {id}: {e}"))
+    }
+}
+
+/// `options` и всё с подчёркиванием — служебное. Правило по существующей
+/// конвенции проекта (`_stats`, `_post`, `_collect_pending.json`), одно на
+/// программу и бэкенд.
+pub fn is_internal(name: &str) -> bool {
+    name.starts_with('_') || name == "options"
+}
+
+fn now_sec() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+// ─── Тесты ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, folder: &str, name: &str, is_folder: bool, size: i64) -> TreeEntry {
+        TreeEntry {
+            id: id.into(),
+            project_id: "p1".into(),
+            folder_path: folder.into(),
+            name: name.into(),
+            is_folder,
+            s3_key: if is_folder {
+                None
+            } else {
+                Some(format!("innohub/projects/p1/{folder}/uuid-{name}"))
+            },
+            size_bytes: Some(size),
+            content_type: Some("video/mp4".into()),
+            etag: Some("e1".into()),
+            content_hash: None,
+            origin_mtime: None,
+            created_at: None,
+            updated_at: None,
+            last_seq: Some(1),
+        }
+    }
+
+    fn change(seq: i64, op: ChangeOp, file_id: &str, folder: &str, name: &str) -> Change {
+        Change {
+            seq,
+            op,
+            key: format!("innohub/projects/p1/{folder}/{name}"),
+            project_id: "p1".into(),
+            file_id: Some(file_id.into()),
+            name: Some(name.into()),
+            folder_path: Some(folder.into()),
+            is_folder: Some(false),
+            size: Some(10),
+            etag: Some("e2".into()),
+            content_hash: None,
+            content_type: None,
+            event_time: None,
+        }
+    }
+
+    #[test]
+    fn миграция_идемпотентна() {
+        let idx = Index::open_in_memory().unwrap();
+        assert_eq!(idx.user_version().unwrap(), SCHEMA_VERSION);
+        // Повторный прогон не должен падать на «table already exists».
+        idx.migrate().unwrap();
+        assert_eq!(idx.user_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn tree_заменяет_проект_целиком() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.apply_tree("p1", &[entry("f1", "IN", "a.mov", false, 100)], 10)
+            .unwrap();
+        assert_eq!(idx.list_dir("p1", "IN").unwrap().len(), 1);
+
+        // Во втором /tree файла больше нет → он должен исчезнуть и у нас.
+        idx.apply_tree("p1", &[entry("f2", "IN", "b.mov", false, 200)], 20)
+            .unwrap();
+        let list = idx.list_dir("p1", "IN").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "b.mov");
+        assert_eq!(idx.cursor("p1").unwrap(), 20);
+    }
+
+    #[test]
+    fn папки_идут_перед_файлами() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.apply_tree(
+            "p1",
+            &[
+                entry("f1", "", "zzz.mov", false, 1),
+                entry("d1", "", "OUT", true, 0),
+                entry("f2", "", "aaa.mov", false, 1),
+            ],
+            1,
+        )
+        .unwrap();
+        let names: Vec<_> = idx
+            .list_dir("p1", "")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, vec!["OUT", "aaa.mov", "zzz.mov"]);
+    }
+
+    #[test]
+    fn переименование_сохраняет_file_id() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.apply_tree("p1", &[entry("f1", "IN", "old.mov", false, 100)], 1)
+            .unwrap();
+
+        // Так это приходит от бэкенда: delete старого ключа + put нового, ОДИН file_id.
+        let st = idx
+            .apply_delta(
+                "p1",
+                &[
+                    change(2, ChangeOp::Delete, "f1", "IN", "old.mov"),
+                    change(3, ChangeOp::Put, "f1", "OUT", "new.mov"),
+                ],
+                3,
+            )
+            .unwrap();
+        assert!(!st.needs_resync);
+
+        // Файл переехал, но это ТА ЖЕ запись — значит на диске переименование,
+        // а не перекачивание.
+        assert!(idx.list_dir("p1", "IN").unwrap().is_empty());
+        let out = idx.list_dir("p1", "OUT").unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "f1");
+        assert_eq!(out[0].name, "new.mov");
+    }
+
+    #[test]
+    fn put_без_логического_пути_требует_resync() {
+        let mut idx = Index::open_in_memory().unwrap();
+        let mut c = change(2, ChangeOp::Put, "f9", "IN", "x.mov");
+        c.folder_path = None;
+        let st = idx.apply_delta("p1", &[c], 2).unwrap();
+        assert!(st.needs_resync, "молча пропускать такое нельзя");
+        assert_eq!(st.upserted, 0);
+        // Курсор всё равно продвинулся — иначе будем крутить одну и ту же страницу.
+        assert_eq!(idx.cursor("p1").unwrap(), 2);
+    }
+
+    #[test]
+    fn удаление_ставит_tombstone_а_не_рвёт_строку() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.apply_tree("p1", &[entry("f1", "IN", "a.mov", false, 1)], 1)
+            .unwrap();
+        idx.apply_delta("p1", &[change(2, ChangeOp::Delete, "f1", "IN", "a.mov")], 2)
+            .unwrap();
+
+        assert!(idx.list_dir("p1", "IN").unwrap().is_empty());
+        // Строка на месте: связь с local_state не потеряна.
+        assert!(idx.entry("f1").unwrap().is_some());
+    }
+
+    #[test]
+    fn пустой_индекс_отличим_от_несинхронизированного() {
+        let mut idx = Index::open_in_memory().unwrap();
+        assert_eq!(idx.tree_at("p1").unwrap(), None, "ещё не синхронизировали");
+
+        idx.apply_tree("p1", &[], 0).unwrap();
+        assert!(
+            idx.tree_at("p1").unwrap().is_some(),
+            "синхронизировали, и там правда пусто"
+        );
+    }
+
+    #[test]
+    fn поиск_записи_по_логическому_пути() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.apply_tree("p1", &[entry("f1", "IN", "a.mov", false, 1)], 1)
+            .unwrap();
+        let found = idx.entry_by_path("p1", "IN", "a.mov").unwrap();
+        assert_eq!(found.map(|e| e.id), Some("f1".into()));
+        assert!(idx.entry_by_path("p1", "IN", "нет.mov").unwrap().is_none());
+    }
+
+    #[test]
+    fn проекты_фильтруются_по_клиенту() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.replace_projects(&ProjectsResponse {
+            clients: vec![RemoteClient {
+                id: "c1".into(),
+                display_name: "Мегафон".into(),
+            }],
+            projects: vec![
+                RemoteProject {
+                    id: "p1".into(),
+                    name: "Реклама Q3".into(),
+                    client_id: Some("c1".into()),
+                    group_name: "personal".into(),
+                    is_active: true,
+                    is_paused: false,
+                    updated_at: "2026-08-07T00:00:00.000Z".into(),
+                },
+                RemoteProject {
+                    id: "p2".into(),
+                    name: "Без клиента".into(),
+                    client_id: None,
+                    group_name: "personal".into(),
+                    is_active: true,
+                    is_paused: false,
+                    updated_at: "2026-08-07T00:00:00.000Z".into(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(idx.clients().unwrap().len(), 1);
+        assert_eq!(idx.projects(None).unwrap().len(), 2);
+        let of_c1 = idx.projects(Some("c1")).unwrap();
+        assert_eq!(of_c1.len(), 1);
+        assert_eq!(of_c1[0].id, "p1");
+    }
+}
