@@ -56,7 +56,7 @@ fn ensure_launchable(cmd: &str) {
 #[cfg(not(unix))]
 fn ensure_launchable(_cmd: &str) {}
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecCommandArgs {
     pub cmd: String,
@@ -67,9 +67,16 @@ pub struct ExecCommandArgs {
     pub node_id: Option<String>,
     #[serde(default)]
     pub env: Option<Vec<(String, String)>>,
+    /// Полоса прогона (`processing` / `posting`) — чей стоп убивает этот процесс.
+    ///
+    /// `None` = обработка: столько же, сколько было до появления полос, когда флаг
+    /// прерывания был один. Так продолжают работать старые установленные бандлы
+    /// плагинов, которые про полосы не знают.
+    #[serde(default)]
+    pub run_lane: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct ExecOutput {
     pub exit_code: i32,
     pub stdout: String,
@@ -80,31 +87,46 @@ pub struct ExecOutput {
 // Глобальное состояние для активных процессов
 pub struct ExecState {
     pub running: Arc<Mutex<Vec<RunningProcess>>>,
-    pub abort_flag: Arc<AtomicBool>,
 }
 
 pub struct RunningProcess {
     #[allow(dead_code)]
     pub node_id: String,
-    pub killed: bool,
     pub pid: Option<u32>,
 }
 
 impl ExecState {
-    pub fn new(processing_abort: Arc<AtomicBool>) -> Self {
+    pub fn new() -> Self {
         Self {
             running: Arc::new(Mutex::new(Vec::new())),
-            abort_flag: processing_abort,
         }
     }
+}
 
-    pub fn kill_all(&self) {
-        // Устанавливаем глобальный флаг abort
-        self.abort_flag.store(true, Ordering::Relaxed);
+/// Убирает процесс из реестра. Возвращает `true`, если реестр опустел.
+///
+/// Раньше удаление стояло ТОЛЬКО в ветке убийства: успешный путь делал `return Ok`
+/// мимо него, и каждый завершённый процесс оставался в списке навсегда. Список
+/// перестал означать «запущенные» — в нём лежали PID'ы, которые ОС давно
+/// переиспользовала.
+fn unregister_process(running: &Mutex<Vec<RunningProcess>>, pid: u32) -> bool {
+    match running.lock() {
+        Ok(mut processes) => {
+            processes.retain(|p| p.pid != Some(pid));
+            processes.is_empty()
+        }
+        // Отравленный мьютекс не повод валить весь exec: реестр — учётная запись,
+        // а не источник истины о процессе.
+        Err(poisoned) => {
+            let mut processes = poisoned.into_inner();
+            processes.retain(|p| p.pid != Some(pid));
+            processes.is_empty()
+        }
     }
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn exec_command(
     args: ExecCommandArgs,
     app: tauri::AppHandle,
@@ -116,15 +138,18 @@ pub async fn exec_command(
     // поэтому всю долгую работу (spawn процесса, чтение stdout/stderr, ожидание) —
     // в tokio::task::spawn_blocking.
     let running = exec_state.running.clone();
-    let abort_flag = exec_state.abort_flag.clone();
-    let processing_abort = processing_state
+
+    // Флаг СВОЕЙ полосы. Раньше здесь брались два флага (`ExecState::abort_flag` и
+    // `ProcessingState::abort_signal`), но это был один и тот же `Arc` — цикл
+    // ожидания ниже проверял одно и то же значение дважды.
+    let lane = args.run_lane.clone();
+    let abort_flag = processing_state
         .lock()
         .map_err(|e| format!("ProcessingState lock poisoned: {}", e))?
-        .abort_signal
-        .clone();
+        .lane_flag(&super::processing_commands::lane_name(lane));
 
     tokio::task::spawn_blocking(move || {
-        exec_command_blocking(args, app, running, abort_flag, processing_abort)
+        exec_command_blocking(args, app, running, abort_flag)
     })
     .await
     .map_err(|e| format!("exec task panicked: {}", e))?
@@ -136,7 +161,6 @@ fn exec_command_blocking(
     app: tauri::AppHandle,
     running: Arc<Mutex<Vec<RunningProcess>>>,
     abort_flag: Arc<AtomicBool>,
-    processing_abort: Arc<AtomicBool>,
 ) -> Result<ExecOutput, String> {
     let cmd = &args.cmd;
     let cmd_args = &args.args;
@@ -194,7 +218,6 @@ fn exec_command_blocking(
         let mut processes = running.lock().unwrap();
         processes.push(RunningProcess {
             node_id: args.node_id.clone().unwrap_or_default(),
-            killed: false,
             pid: Some(child_pid),
         });
     }
@@ -306,7 +329,7 @@ fn exec_command_blocking(
     loop {
         // Проверяем abort-флаги напрямую — без отдельного monitor-потока,
         // он создавал deadlock при normal completion (бесконечный loop без выхода).
-        if abort_flag.load(Ordering::Relaxed) || processing_abort.load(Ordering::Relaxed) {
+        if abort_flag.load(Ordering::Relaxed) {
             println!("[Exec] Abort signal received, killing process {}", child_pid);
 
             // Отправляем событие отмены
@@ -351,6 +374,9 @@ fn exec_command_blocking(
                     );
                 }
 
+                // Успешное завершение тоже обязано убрать процесс из реестра.
+                unregister_process(&running, child_pid);
+
                 return Ok(ExecOutput {
                     exit_code,
                     stdout: stdout_output,
@@ -372,19 +398,17 @@ fn exec_command_blocking(
     let stdout_output = stdout_handle.join().unwrap_or_default();
     let stderr_output = stderr_handle.join().unwrap_or_default();
 
-    // Убираем из списка запущенных
-    {
-        let mut processes = running.lock().unwrap();
-        for proc in processes.iter_mut() {
-            if proc.pid == Some(child_pid) {
-                proc.killed = true;
-            }
-        }
-        processes.retain(|p| !p.killed);
-    }
-
-    // Сбрасываем флаг abort
-    abort_flag.store(false, Ordering::Relaxed);
+    // Процесс убит — убираем из реестра. Флаг abort НЕ трогаем.
+    //
+    // Раньше здесь стоял `abort_flag.store(false)`, и это был не локальный сброс:
+    // флаг общий на всю полосу, поэтому первый убитый процесс снимал стоп со всех
+    // остальных параллельных — они его в своём цикле уже не видели и продолжали
+    // работать. (Тогда флаг был вообще один на процесс, то есть снимался стоп и у
+    // другого раннера; теперь флаги по полосам, но снимать его здесь всё так же нельзя.)
+    //
+    // Снимать сигнал — дело инициатора нового прогона: `startProcessContext()`
+    // в src/PROCESSING/utils/processingAbort.ts зовёт `resetProcessingSignal`.
+    unregister_process(&running, child_pid);
 
     Ok(ExecOutput {
         exit_code: -1,
@@ -395,8 +419,22 @@ fn exec_command_blocking(
 }
 
 #[tauri::command]
-pub fn kill_all_exec_processes(state: tauri::State<ExecState>) -> Result<bool, String> {
-    println!("[Exec] Killing all running processes...");
-    state.kill_all();
+#[specta::specta]
+pub fn kill_all_exec_processes(
+    lane: Option<String>,
+    state: tauri::State<'_, std::sync::Mutex<super::processing_commands::ProcessingState>>,
+) -> Result<bool, String> {
+    let lane = super::processing_commands::lane_name(lane);
+    println!("[Exec] Killing all running processes on lane {}...", lane);
+    // Сам не убивает: каждый exec опрашивает флаг своей полосы в цикле ожидания
+    // (шаг 50 мс) и там вызывает child.kill(). Флаг гасит старт прогона
+    // (`reset_processing_signal`) — раньше здесь было сказано, что его снимает уход
+    // последнего процесса из реестра, но тот побочный сброс убран: он снимал стоп
+    // для всех ещё живых процессов.
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .lane_flag(&lane)
+        .store(true, Ordering::Relaxed);
     Ok(true)
 }

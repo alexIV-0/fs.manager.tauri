@@ -41,13 +41,19 @@ fn tg_server_slot() -> &'static Mutex<Option<std::process::Child>> {
 
 /// GET к Bot API. Возвращает `result` при `ok:true`, иначе Err с `description` Telegram.
 async fn tg_call(method_url: &str, query: &[(&str, &str)]) -> Result<Value, String> {
-    let res = reqwest::Client::new()
+    // `without_url()` обязателен: Display у reqwest::Error дописывает ` for url (...)`,
+    // а URL Telegram — это `.../bot<ТОКЕН>/метод`. Текст ошибки уходит в окно логов и
+    // оттуда в СУТОЧНЫЙ АРХИВ НА ДИСКЕ — то есть токен бота ложился в файл открытым текстом.
+    let res = super::http_client::api()
         .get(method_url)
         .query(query)
         .send()
         .await
-        .map_err(|e| format!("request: {}", e))?;
-    let body = res.text().await.map_err(|e| format!("read body: {}", e))?;
+        .map_err(|e| format!("request: {}", e.without_url()))?;
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("read body: {}", e.without_url()))?;
     let json: Value = serde_json::from_str(&body).map_err(|e| format!("parse: {}", e))?;
 
     if json.get("ok").and_then(|v| v.as_bool()) == Some(true) {
@@ -357,15 +363,16 @@ pub async fn tg_fetch_file(token: String, file_id: String, dest_path: String) ->
     }
 
     let url = format!("{}/file/bot{}/{}", tg_base(), token, file_path);
-    let res = reqwest::Client::new()
+    // Скачивание файла — профиль transfer: без полного таймаута, с таймаутом простоя.
+    let res = super::http_client::transfer()
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("download request: {}", e))?;
+        .map_err(|e| format!("download request: {}", e.without_url()))?;
     if !res.status().is_success() {
         return Err(format!("download: HTTP {}", res.status()));
     }
-    let bytes = res.bytes().await.map_err(|e| format!("download body: {}", e))?;
+    let bytes = res.bytes().await.map_err(|e| format!("download body: {}", e.without_url()))?;
     std::fs::write(&dest_path, &bytes).map_err(|e| format!("write file: {}", e))?;
     Ok(dest_path)
 }
@@ -395,7 +402,7 @@ pub async fn tg_set_reaction(token: String, chat_id: i64, message_id: i64, emoji
         "message_id": message_id,
         "reaction": [{ "type": "emoji", "emoji": emoji }],
     });
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .post(&format!("{}/bot{}/setMessageReaction", tg_base(), token))
         .json(&body)
         .send()
@@ -420,7 +427,7 @@ pub async fn tg_set_reaction(token: String, chat_id: i64, message_id: i64, emoji
 #[specta::specta]
 pub async fn tg_create_forum_topic(token: String, chat_id: i64, name: String) -> Result<Value, String> {
     let body = json!({ "chat_id": chat_id, "name": &name });
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .post(&format!("{}/bot{}/createForumTopic", tg_base(), token))
         .json(&body)
         .send()

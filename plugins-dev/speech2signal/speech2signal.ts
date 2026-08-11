@@ -1,9 +1,8 @@
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { parseAstatsEnvelope, presentIntervals, energyPeak, arousal } from '../../src/Utils/audioEnvelope';
 import path from 'path';
 
-export { onLoad } from '../_template/tauri';
 
 // ── speech2signal ───────────────────────────────────────────────────────────────────
 // Анализ голосового стема → сигнальный JSON:
@@ -18,7 +17,8 @@ function clampBlock(v: number): number {
 	return Number.isFinite(v) && v >= 250 && v <= 4000 ? Math.round(v) : 1000;
 }
 
-export async function speech2signalFunc(_item: any, _description: any, _ctx?: any): Promise<string[]> {
+export async function speech2signalFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFiles: string[] = [];
 	const windowMs = clampWindow(Number(_item.windowMs));
 	const blockMs = clampBlock(Number(_item.arousalBlockMs));

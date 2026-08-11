@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -31,8 +32,19 @@ pub struct MoveToErrorsResult {
     pub error: Option<String>,
 }
 
+/// Полоса прогона по умолчанию — обработка.
+///
+/// Полос ДВЕ (`processing` и `posting`), и это не украшение: раннеры независимы,
+/// запускаются своими кнопками и могут работать одновременно. Пока флаг прерывания
+/// был ОДИН на процесс, выходило две поломки. Первая: постинг, запущенный после
+/// остановленной обработки, наследовал чужой выставленный флаг — и каждый его
+/// `exec` умирал сразу, потому что гасил флаг только старт обработки. Вторая: Stop
+/// на обработке убивал ffmpeg постинга. Имена полос совпадают с `src/PROCESSING/runLanes.ts`.
+pub const LANE_PROCESSING: &str = "processing";
+
 pub struct ProcessingState {
-    pub abort_signal: Arc<AtomicBool>,
+    /// Флаг прерывания НА ПОЛОСУ. Создаётся лениво при первом обращении.
+    abort_lanes: Mutex<HashMap<String, Arc<AtomicBool>>>,
     pub current_step: Mutex<Option<String>>,
     pub total_steps: Mutex<usize>,
     pub completed_steps: Mutex<usize>,
@@ -42,43 +54,92 @@ pub struct ProcessingState {
 impl ProcessingState {
     pub fn new() -> Self {
         Self {
-            abort_signal: Arc::new(AtomicBool::new(false)),
+            abort_lanes: Mutex::new(HashMap::new()),
             current_step: Mutex::new(None),
             total_steps: Mutex::new(0),
             completed_steps: Mutex::new(0),
             errors: Mutex::new(Vec::new()),
         }
     }
+
+    /// Флаг полосы, с созданием при первом обращении.
+    ///
+    /// Возвращает `Arc`, а не значение: `exec_command` держит его весь свой цикл
+    /// ожидания и опрашивает каждые 50 мс, не трогая мьютекс карты.
+    pub fn lane_flag(&self, lane: &str) -> Arc<AtomicBool> {
+        let mut lanes = match self.abort_lanes.lock() {
+            Ok(l) => l,
+            // Отравленный мьютекс не повод терять управление процессами: карта —
+            // учётная запись флагов, а не источник истины о них.
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        lanes
+            .entry(lane.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
+    }
+}
+
+/// Имя полосы из аргумента команды: пусто → обработка.
+///
+/// Старые установленные бандлы плагинов зовут `exec_command` без полосы — для них
+/// это ровно прежнее поведение (единственный флаг был флагом обработки).
+pub fn lane_name(lane: Option<String>) -> String {
+    lane.filter(|l| !l.is_empty()).unwrap_or_else(|| LANE_PROCESSING.to_string())
 }
 
 // ==================== COMMANDS ====================
 
 #[tauri::command]
 #[specta::specta]
-pub fn abort_processing(state: tauri::State<'_, Mutex<ProcessingState>>) -> Result<(), String> {
+pub fn abort_processing(
+    lane: Option<String>,
+    state: tauri::State<'_, Mutex<ProcessingState>>,
+) -> Result<(), String> {
     let state = state.lock().map_err(|e| e.to_string())?;
-    state.abort_signal.store(true, Ordering::SeqCst);
+    state.lane_flag(&lane_name(lane)).store(true, Ordering::SeqCst);
     Ok(())
 }
 
 #[tauri::command]
-pub fn is_processing_aborted(state: tauri::State<'_, Mutex<ProcessingState>>) -> Result<bool, String> {
+#[specta::specta]
+pub fn is_processing_aborted(
+    lane: Option<String>,
+    state: tauri::State<'_, Mutex<ProcessingState>>,
+) -> Result<bool, String> {
     let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(state.abort_signal.load(Ordering::SeqCst))
+    Ok(state.lane_flag(&lane_name(lane)).load(Ordering::SeqCst))
 }
 
+/// Снимает сигнал прерывания и обнуляет счётчики прогона.
+///
+/// Зовётся из `startProcessContext()` (src/PROCESSING/utils/processingAbort.ts) на
+/// старте каждого прогона. До этого команда была мёртвой, а флаг гасился побочным
+/// эффектом внутри `exec_command` — из-за чего первый убитый процесс снимал стоп
+/// для всех остальных.
 #[tauri::command]
-pub fn reset_processing_signal(state: tauri::State<'_, Mutex<ProcessingState>>) -> Result<(), String> {
+#[specta::specta]
+pub fn reset_processing_signal(
+    lane: Option<String>,
+    state: tauri::State<'_, Mutex<ProcessingState>>,
+) -> Result<(), String> {
+    let lane = lane_name(lane);
     let state = state.lock().map_err(|e| e.to_string())?;
-    state.abort_signal.store(false, Ordering::SeqCst);
-    state.current_step.lock().map_err(|e| e.to_string())?.take();
-    *state.total_steps.lock().map_err(|e| e.to_string())? = 0;
-    *state.completed_steps.lock().map_err(|e| e.to_string())? = 0;
-    state.errors.lock().map_err(|e| e.to_string())?.clear();
+    state.lane_flag(&lane).store(false, Ordering::SeqCst);
+
+    // Счётчики прогресса принадлежат ОБРАБОТКЕ: постинг, стартуя, не должен
+    // обнулять её шаги и список ошибок.
+    if lane == LANE_PROCESSING {
+        state.current_step.lock().map_err(|e| e.to_string())?.take();
+        *state.total_steps.lock().map_err(|e| e.to_string())? = 0;
+        *state.completed_steps.lock().map_err(|e| e.to_string())? = 0;
+        state.errors.lock().map_err(|e| e.to_string())?.clear();
+    }
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_processing_progress(
     current_step: String,
     total_steps: usize,
@@ -93,6 +154,7 @@ pub fn set_processing_progress(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_processing_progress(
     state: tauri::State<'_, Mutex<ProcessingState>>,
 ) -> Result<serde_json::Value, String> {
@@ -101,12 +163,13 @@ pub fn get_processing_progress(
         "currentStep": *state.current_step.lock().map_err(|e| e.to_string())?,
         "totalSteps": *state.total_steps.lock().map_err(|e| e.to_string())?,
         "completedSteps": *state.completed_steps.lock().map_err(|e| e.to_string())?,
-        "aborted": state.abort_signal.load(Ordering::SeqCst),
+        "aborted": state.lane_flag(LANE_PROCESSING).load(Ordering::SeqCst),
         "errors": *state.errors.lock().map_err(|e| e.to_string())?,
     }))
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn add_processing_error(error: String, state: tauri::State<'_, Mutex<ProcessingState>>) -> Result<(), String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     state.errors.lock().map_err(|e| e.to_string())?.push(error);
@@ -256,6 +319,7 @@ fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Pat
 
 /// Удалить файл/папку (processing)
 #[tauri::command]
+#[specta::specta]
 pub fn processing_delete_item(item_path: String) -> Result<bool, String> {
     use std::fs;
     use std::path::Path;
@@ -286,6 +350,7 @@ pub fn path_exists(path: String) -> Result<bool, String> {
 
 /// Получить информацию о файле/папке
 #[tauri::command]
+#[specta::specta]
 pub fn get_item_info(path: String) -> Result<serde_json::Value, String> {
     use std::fs;
     use std::path::Path;
@@ -325,6 +390,7 @@ pub fn get_item_info(path: String) -> Result<serde_json::Value, String> {
 
 // Заглушка для process-item - полная реализация будет через фронтенд
 #[tauri::command]
+#[specta::specta]
 pub async fn process_item(
     _app: tauri::AppHandle,
     _item: serde_json::Value,
@@ -353,6 +419,7 @@ pub fn emit_processing_event(
 // ==================== STATUS BAR ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_status_bar(text: String, app: tauri::AppHandle) -> Result<(), String> {
     app.emit("processing-event", &ProcessingEvent {
         event_type: "statusbar".to_string(),
@@ -362,6 +429,7 @@ pub fn set_status_bar(text: String, app: tauri::AppHandle) -> Result<(), String>
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn send_log(
     level: String,
     text: String,
@@ -423,4 +491,71 @@ pub fn send_process_complete(app: tauri::AppHandle) -> Result<(), String> {
         payload: serde_json::json!(null),
     }).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::{lane_name, ProcessingState, LANE_PROCESSING};
+    use std::sync::atomic::Ordering;
+
+    /// ГЛАВНОЕ свойство: полосы независимы. Пока флаг был один на процесс, стоп
+    /// обработки убивал дочерние процессы постинга (Moho, whisper-cli), а постинг,
+    /// запущенный после остановленной обработки, умирал сразу на каждом `exec` —
+    /// гасил флаг только старт обработки.
+    #[test]
+    fn полосы_не_видят_прерывание_друг_друга() {
+        let state = ProcessingState::new();
+
+        state.lane_flag(LANE_PROCESSING).store(true, Ordering::SeqCst);
+
+        assert!(state.lane_flag(LANE_PROCESSING).load(Ordering::SeqCst));
+        assert!(
+            !state.lane_flag("posting").load(Ordering::SeqCst),
+            "стоп обработки не должен прерывать постинг"
+        );
+
+        // И наоборот: сброс одной полосы не снимает стоп с другой.
+        state.lane_flag("posting").store(true, Ordering::SeqCst);
+        state.lane_flag(LANE_PROCESSING).store(false, Ordering::SeqCst);
+        assert!(state.lane_flag("posting").load(Ordering::SeqCst));
+    }
+
+    /// Флаг полосы — один и тот же объект при повторных обращениях: `exec_command`
+    /// держит `Arc` весь свой цикл ожидания, и новый флаг на каждый вызов означал бы,
+    /// что процесс не видит стопа вообще.
+    #[test]
+    fn флаг_полосы_переиспользуется() {
+        let state = ProcessingState::new();
+        let a = state.lane_flag(LANE_PROCESSING);
+        let b = state.lane_flag(LANE_PROCESSING);
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
+
+        a.store(true, Ordering::SeqCst);
+        assert!(b.load(Ordering::SeqCst), "флаг должен быть общим");
+    }
+
+    /// Пустая полоса = обработка: так зовут `exec_command` старые установленные
+    /// бандлы плагинов, которые про полосы не знают. Для них поведение прежнее.
+    #[test]
+    fn пустая_полоса_это_обработка() {
+        assert_eq!(lane_name(None), LANE_PROCESSING);
+        assert_eq!(lane_name(Some(String::new())), LANE_PROCESSING);
+        assert_eq!(lane_name(Some("posting".into())), "posting");
+    }
+
+    /// Счётчики прогресса принадлежат обработке: старт постинга не должен обнулять
+    /// её шаги и список ошибок.
+    #[test]
+    fn сброс_постинга_не_трогает_счётчики_обработки() {
+        let state = ProcessingState::new();
+        *state.total_steps.lock().unwrap() = 7;
+        state.errors.lock().unwrap().push("боль".into());
+
+        // Повторяем то, что делает reset_processing_signal для НЕ-обработки:
+        // гасит только свой флаг.
+        state.lane_flag("posting").store(false, Ordering::SeqCst);
+
+        assert_eq!(*state.total_steps.lock().unwrap(), 7);
+        assert_eq!(state.errors.lock().unwrap().len(), 1);
+    }
 }

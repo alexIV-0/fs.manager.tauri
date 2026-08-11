@@ -1,9 +1,8 @@
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { parseTranscript, buildSentences } from '../../src/Utils/whisperTranscript';
 import path from 'path';
 
-export { onLoad } from '../_template/tauri';
 
 // ── Transcript JSON normalize ──────────────────────────────────────────────────────
 // Облегчает пословный jsonFull whisper (--output-json-full --max-len 1) в сигнальный вид:
@@ -14,7 +13,8 @@ export { onLoad } from '../_template/tauri';
 // В режиме «без words» из предложений убираем указатель w (ссылаться не на что).
 // Разбор/сборка — в src/Utils/whisperTranscript.ts (bundled esbuild'ом). transcribeVA не трогаем.
 
-export async function transcriptJSONnormalizeFunc(_item: any, _description: any, _ctx?: any): Promise<string[]> {
+export async function transcriptJSONnormalizeFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFiles: string[] = [];
 
 	const includeWords = !(_item.words === false || _item.words === 'false');

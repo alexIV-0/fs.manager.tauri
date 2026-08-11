@@ -2,7 +2,10 @@
 //   video  → мягко (есть видеопоток, ≤2 GB)
 //   clip/both → 9:16 (±допуск), ≤3 мин, ≤100 MB
 
-import { ffmpeg, fs } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// Сервисы приходят параметром из ctx точки входа через границу модуля —
+// у файла не остаётся собственного состояния, плагин кэшируется.
 
 export type PostMode = 'video' | 'clip' | 'both';
 
@@ -14,7 +17,8 @@ export interface CheckResult {
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
 
-export async function videoCheck(file: string, mode: PostMode): Promise<CheckResult> {
+export async function videoCheck(file: string, mode: PostMode, ctx: PluginContext): Promise<CheckResult> {
+	const { ffmpeg, fs } = ctx;
 	let size = 0;
 	try {
 		size = (await fs.stat(file)).size;

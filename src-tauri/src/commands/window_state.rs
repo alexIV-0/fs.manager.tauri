@@ -41,7 +41,7 @@ pub fn save_window_state(
     states.insert(label.clone(), state.clone());
     
     let content = serde_json::to_string_pretty(&states).map_err(|e| e.to_string())?;
-    fs::write(&path, content).map_err(|e| e.to_string())?;
+    super::fs_commands::write_atomic(&path, content.as_bytes())?;
     
     println!("[WindowState] Saved {}: {:?}", label, state);
     Ok(())

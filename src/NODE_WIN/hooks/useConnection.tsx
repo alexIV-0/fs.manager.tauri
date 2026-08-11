@@ -93,11 +93,45 @@ export const useConnection = () => {
 			);
 			if (existingActive) return false;
 
-			// Если один из участников — Loop нода с loop хэндлером — разрешаем
+			// Если один из участников — Loop нода с loop хэндлером — разрешаем.
+			//
+			// ВАЖНО: проверять на цикл эти рёбра нельзя. Loop-нода соединяется со своими
+			// детьми в обе стороны (`inputInLoop` → первый ребёнок, последний ребёнок →
+			// `outputInLoop`), то есть по рёбрам L→…→L замкнуто ЗАКОННО. Сборка очереди
+			// этого не видит, потому что Kahn там работает только по нодам одного уровня
+			// (у детей есть parentId, и такие рёбра из графа верхнего уровня исключены).
 			const targetIsLoop = isLoopNode(targetNode) && LOOP_HANDLES.has(connection.targetHandle ?? '');
 			const sourceIsLoop = isLoopNode(sourceNode) && LOOP_HANDLES.has(connection.sourceHandle ?? '');
 
 			if (targetIsLoop || sourceIsLoop) return true;
+
+			// ── Цикл ────────────────────────────────────────────────────────
+			// Замыкать цикл нельзя: в очереди исполнения узел, входящий в цикл, не
+			// доходит до нулевой входящей степени и просто выпадает — граф исполнялся
+			// частично и МОЛЧА. Проверяем только рёбра ОДНОГО уровня (тот же parentId),
+			// ровно как их видит сборщик очереди, и только активные — выключенные в
+			// исполнение не попадают.
+			if ((sourceNode.parentId ?? null) === (targetNode.parentId ?? null)) {
+				const level = sourceNode.parentId ?? null;
+				const edges = reactFlow.getEdges().filter((e) => {
+					if (!isEdgeActive(e)) return false;
+					const s = reactFlow.getNode(e.source);
+					const t = reactFlow.getNode(e.target);
+					return (s?.parentId ?? null) === level && (t?.parentId ?? null) === level;
+				});
+
+				// Есть ли путь target → … → source? Если есть, новое ребро source→target
+				// его замкнёт.
+				const seen = new Set<string>();
+				const stack = [connection.target];
+				while (stack.length) {
+					const id = stack.pop()!;
+					if (id === connection.source) return false;
+					if (seen.has(id)) continue;
+					seen.add(id);
+					for (const e of edges) if (e.source === id) stack.push(e.target);
+				}
+			}
 
 			// ── SPY как target: принимает любой тип на 'in' ──────────────────
 			if (isSpyNode(targetNode) && connection.targetHandle === 'in') return true;

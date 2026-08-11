@@ -2,10 +2,9 @@
 // HTTP-запросы выполняются через Rust (http_upload / http_fetch) — нет CORS.
 
 import path from 'path';
-import { fs, http, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 const BASE_URL = 'https://ai-video-parse-xiprk.ondigitalocean.app';
 const UPLOAD_URL = `${BASE_URL}/api/upload`;
@@ -13,7 +12,8 @@ const STATUS_URL_BASE = `${BASE_URL}/api/job_status/`;
 const MAX_ATTEMPTS = 3;
 const POLL_INTERVAL_MS = 5000;
 
-export async function AIparserFunc(_item: any, _description: any): Promise<string[]> {
+export async function AIparserFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const inputFiles: string[] = _item.import?.inputFile ?? [];
@@ -55,13 +55,13 @@ export async function AIparserFunc(_item: any, _description: any): Promise<strin
 
 			await fs.mkdir(targetDir);
 
-			const resultPath = await parseVideoWithRetry({ videoFile, prompt, model, targetDir, targetBaseName });
+			const resultPath = await parseVideoWithRetry({ videoFile, prompt, model, targetDir, targetBaseName }, ctx);
 			if (!resultPath) {
 				throw new Error(`${_description.curItem} — не удалось обработать: ${path.basename(videoFile)}`);
 			}
 			finalFile.push(resultPath);
 		} else {
-			const resultText = await parseVideoToStringWithRetry({ videoFile, prompt, model });
+			const resultText = await parseVideoToStringWithRetry({ videoFile, prompt, model }, ctx);
 			if (resultText === null) {
 				throw new Error(`${_description.curItem} — не удалось обработать: ${path.basename(videoFile)}`);
 			}
@@ -73,7 +73,9 @@ export async function AIparserFunc(_item: any, _description: any): Promise<strin
 	return finalFile;
 }
 
-async function uploadVideoAndPoll(videoFile: string, prompt: string, model: string): Promise<{ result: any; costUsd: number | null }> {
+// ctx последним параметром: host-сервисы живут в нём, у модуля состояния нет → кэшируется.
+async function uploadVideoAndPoll(videoFile: string, prompt: string, model: string, ctx: PluginContext): Promise<{ result: any; costUsd: number | null }> {
+	const { http, sendToMW } = ctx;
 	sendToMW('log', { text: `🌐 POST ${UPLOAD_URL}` });
 
 	const res = await http.upload(UPLOAD_URL, {
@@ -96,7 +98,7 @@ async function uploadVideoAndPoll(videoFile: string, prompt: string, model: stri
 	if (!jobData.job_id) throw new Error(`No job_id in response: ${res.body}`);
 
 	sendToMW('log', { text: `📦 Job accepted: ${jobData.job_id}` });
-	return await pollJobStatus(jobData.job_id);
+	return await pollJobStatus(jobData.job_id, ctx);
 }
 
 async function parseVideoWithRetry(opts: {
@@ -105,11 +107,12 @@ async function parseVideoWithRetry(opts: {
 	model: string;
 	targetDir: string;
 	targetBaseName: string;
-}): Promise<string | null> {
+}, ctx: PluginContext): Promise<string | null> {
+	const { fs, sendToMW } = ctx;
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
 			sendToMW('log', { text: `🚀 AIparser attempt ${attempt}/${MAX_ATTEMPTS}: ${path.basename(opts.videoFile)}` });
-			const { result: jobResult, costUsd } = await uploadVideoAndPoll(opts.videoFile, opts.prompt, opts.model);
+			const { result: jobResult, costUsd } = await uploadVideoAndPoll(opts.videoFile, opts.prompt, opts.model, ctx);
 
 			const resultStr = typeof jobResult === 'string' ? jobResult : JSON.stringify(jobResult);
 			if (resultStr.trimStart().startsWith('<HttpError') || resultStr.trimStart().startsWith('"<HttpError')) {
@@ -138,11 +141,12 @@ async function parseVideoWithRetry(opts: {
 	return null;
 }
 
-async function parseVideoToStringWithRetry(opts: { videoFile: string; prompt: string; model: string }): Promise<string | null> {
+async function parseVideoToStringWithRetry(opts: { videoFile: string; prompt: string; model: string }, ctx: PluginContext): Promise<string | null> {
+	const { sendToMW } = ctx;
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
 			sendToMW('log', { text: `🚀 AIparser attempt ${attempt}/${MAX_ATTEMPTS}: ${path.basename(opts.videoFile)}` });
-			const { result: jobResult, costUsd } = await uploadVideoAndPoll(opts.videoFile, opts.prompt, opts.model);
+			const { result: jobResult, costUsd } = await uploadVideoAndPoll(opts.videoFile, opts.prompt, opts.model, ctx);
 
 			const resultStr = typeof jobResult === 'string' ? jobResult : JSON.stringify(jobResult, null, 2);
 			if (resultStr.trimStart().startsWith('<HttpError') || resultStr.trimStart().startsWith('"<HttpError')) {
@@ -170,7 +174,8 @@ interface JobStatusResult {
 	costUsd: number | null;
 }
 
-async function pollJobStatus(jobId: string): Promise<JobStatusResult> {
+async function pollJobStatus(jobId: string, ctx: PluginContext): Promise<JobStatusResult> {
+	const { http, sendToMW } = ctx;
 	const statusUrl = `${STATUS_URL_BASE}${jobId}`;
 	let lastStatus = '';
 	while (true) {

@@ -3,17 +3,17 @@
 // ffmpeg.detectScenes / ffmpeg.detectBlackFrames из helper'а.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 function getRandomInRange(min: number, max: number): number {
 	if (min === max) return min;
 	return min + Math.random() * (max - min);
 }
 
-export async function splitFileFunc(_item: any, _description: any): Promise<string[]> {
+export async function splitFileFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const sceneDetect: boolean = _item.sceneDetection || false;

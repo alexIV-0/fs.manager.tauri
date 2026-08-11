@@ -112,7 +112,7 @@ export async function syncPostSourcesSidecar(path: string, flow: any): Promise<v
 		});
 
 		const sidecar = { baseDescription, finders };
-		await commands.writeFile(sidecarPath, JSON.stringify(sidecar, null, 2));
+		await commands.writeFileAtomic(sidecarPath, JSON.stringify(sidecar, null, 2));
 
 		// Создаём папки-источники, чтобы юзеру было куда складывать файлы.
 		for (const f of finders) {

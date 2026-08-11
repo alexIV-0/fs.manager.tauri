@@ -260,7 +260,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 			const dir = await getPressetDir();
 			const finalName = await getUniqueName(dir, name);
 			const filePath = joinPath(dir, `${finalName}.json`);
-			unwrap(await commands.writeFile(filePath, JSON.stringify(flow, null, 2)));
+			unwrap(await commands.writeFileAtomic(filePath, JSON.stringify(flow, null, 2)));
 			setSaveModalOpen(false);
 			loadPresets();
 		},
@@ -336,7 +336,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 		async (preset: PresetItem) => {
 			try {
 				const flow = reactFlow.toObject();
-				unwrap(await commands.writeFile(preset.filePath, JSON.stringify(flow, null, 2)));
+				unwrap(await commands.writeFileAtomic(preset.filePath, JSON.stringify(flow, null, 2)));
 				onClose();
 			} catch {
 				/* skip on write error */
@@ -362,7 +362,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 				const baseName = basename(filePath, '.json');
 				const finalName = await getUniqueName(dir, baseName);
 				const destPath = joinPath(dir, `${finalName}.json`);
-				unwrap(await commands.writeFile(destPath, JSON.stringify(flow, null, 2)));
+				unwrap(await commands.writeFileAtomic(destPath, JSON.stringify(flow, null, 2)));
 				imported++;
 			} catch {
 				/* skip invalid */

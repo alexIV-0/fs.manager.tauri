@@ -1,9 +1,9 @@
 import path from 'path';
-import { sendToMW } from '../_template/pluginSender';
+import type { PluginContext } from '../../src/PluginAPI/host';
 
-export { onLoad } from '../_template/pluginSender';
 
-export async function selectFileFunc(_item: any, _description: any) {
+export async function selectFileFunc(_item: any, _description: any, ctx: PluginContext) {
+	const { sendToMW } = ctx;
 	const rawPath: string = _item.pathNavigator;
 	const filePath = path.isAbsolute(rawPath) ? rawPath : path.join(_description.projectPathGD, rawPath);
 

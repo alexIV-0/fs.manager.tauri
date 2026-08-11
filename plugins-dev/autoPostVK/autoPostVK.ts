@@ -9,14 +9,13 @@
 // постинга. Здесь только публикация одного полученного файла.
 
 import path from 'path';
-import { sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { videoCheck } from './_videoCheck';
 import { publishVideo, VkApiError } from './_publisher';
-import { appendRecord, writeCooldown, PostRecord } from './_postLog';
+import { appendRecord, writeCooldown } from '../../src/PROCESSING/autoPost/postLog';
+import type { PostRecord } from '../../src/PROCESSING/autoPost/types';
 
-export { onLoad } from '../_template/tauri';
 
-const api = () => (window as any).tauriAPI;
 const PLATFORM = 'vk';
 
 function toArr(v: any): string[] {
@@ -59,7 +58,8 @@ function cooldownSecForCode(code: number): number {
 	}
 }
 
-export async function autoPostVKFunc(_item: any, _description: any): Promise<string[]> {
+export async function autoPostVKFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, http, sendToMW, accounts, invoke } = ctx;
 	const file = toArr(_item?.import?.inputFile)[0];
 	if (!file) {
 		sendToMW('log', { level: 'error', text: '[autoPostVK] нет входного файла (inputFile)' });
@@ -81,7 +81,7 @@ export async function autoPostVKFunc(_item: any, _description: any): Promise<str
 	}
 
 	// Проверка пригодности (мягкая для video: есть видеопоток, ≤2 ГБ).
-	const check = await videoCheck(file, 'video');
+	const check = await videoCheck(file, 'video', ctx);
 	if (!check.ok) {
 		sendToMW('log', { level: 'error', text: `[autoPostVK] ${path.basename(file)} не подходит: ${check.reason}` });
 		return [];
@@ -89,7 +89,7 @@ export async function autoPostVKFunc(_item: any, _description: any): Promise<str
 
 	let token: string;
 	try {
-		token = await api().invoke('account_get_token', { mainFolderName, platform: PLATFORM, name: account });
+		token = await accounts.getToken(mainFolderName, PLATFORM, account);
 	} catch (e) {
 		sendToMW('log', { level: 'error', text: '[autoPostVK] токен: ' + String(e) });
 		return [];
@@ -99,7 +99,7 @@ export async function autoPostVKFunc(_item: any, _description: any): Promise<str
 	let groupId: number | undefined;
 	if (target && target !== 'Profile') {
 		try {
-			const groups = await api().invoke('vk_groups_get', { token });
+			const groups = await invoke('vk_groups_get', { token });
 			const g = (Array.isArray(groups) ? groups : []).find((x: any) => String(x.name) === target);
 			if (!g) {
 				sendToMW('log', { level: 'error', text: `[autoPostVK] сообщество "${target}" не найдено среди админ-групп` });
@@ -119,7 +119,7 @@ export async function autoPostVKFunc(_item: any, _description: any): Promise<str
 			description: descText,
 			groupId,
 			onLog: (msg) => sendToMW('log', { level: 'info', text: `[autoPostVK] ${msg}` }),
-		});
+		}, http);
 
 		// Запись в _post-лог (дедуп + тайминг интервала драйвера).
 		const ts = Math.floor(Date.now() / 1000);

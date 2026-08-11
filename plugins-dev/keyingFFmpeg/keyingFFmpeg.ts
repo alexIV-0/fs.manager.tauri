@@ -2,11 +2,10 @@
 // Tauri-port: spawnFFmpegCommand → ffmpeg.run, getFullInfoFromVideoFile → ffmpeg.getInfo.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 interface ChromakeySettings {
 	enabled: boolean;
@@ -118,8 +117,12 @@ async function processFile(
 	index: number,
 	total: number,
 	_description: any,
+	// ctx перед необязательным nodeId: host-сервисы приходят из него, поэтому у
+	// модуля не остаётся состояния и загрузчик его кэширует.
+	ctx: PluginContext,
 	nodeId?: string,
 ): Promise<string> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const label = `${_description.infoText}: [keying ${index}/${total}]`;
 	sendToMW('statusbar', { text: `${label}\n${path.basename(fileFrom)}` });
 
@@ -148,7 +151,8 @@ async function processFile(
 	return fileTo;
 }
 
-export async function keyingFFmpegFunc(_item: any, _description: any): Promise<string[]> {
+export async function keyingFFmpegFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { sendToMW } = ctx;
 	const finalFiles: string[] = [];
 
 	if (!_item.keyingFFmpeg) {
@@ -184,7 +188,7 @@ export async function keyingFFmpegFunc(_item: any, _description: any): Promise<s
 		const ext = isImageFile(fileFrom, _description.typeOfFile) ? '.png' : '.mov';
 		const fileTo = path.join(path.dirname(basePath), path.basename(basePath, path.extname(basePath)) + ext);
 
-		const result = await processFile(fileFrom, fileTo, settings, i + 1, inputFiles.length, _description, _item.id);
+		const result = await processFile(fileFrom, fileTo, settings, i + 1, inputFiles.length, _description, ctx, _item.id);
 		finalFiles.push(result);
 	}
 

@@ -8,14 +8,14 @@
 // Расписание/дедуп — те же принципы, что в autoPostVK (позже общий _template/posting/).
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { videoCheck } from './_videoCheck';
 import { publishToChannels, SendAs, PostTarget } from './_publisher';
-import { readAllRecords, lastPublishedAt, postedFileSet, appendRecord, PostRecord } from './_postLog';
+import { resolveTgTargets } from '../../src/Utils/telegramTargets';
+import { readAllRecords, lastPublishedAt, postedFileSet, appendRecord } from '../../src/PROCESSING/autoPost/postLog';
+import type { PostRecord } from '../../src/PROCESSING/autoPost/types';
 
-export { onLoad } from '../_template/tauri';
 
-const api = () => (window as any).tauriAPI;
 const PLATFORM = 'telegram';
 
 // getDay(): 0=Sun..6=Sat
@@ -36,7 +36,7 @@ function windowAllowed(now: Date, win: any): boolean {
 	return cur >= start && cur < end;
 }
 
-async function sortByOrder(files: string[], order: string): Promise<string[]> {
+async function sortByOrder(files: string[], order: string, fs: PluginContext['fs']): Promise<string[]> {
 	const arr = [...files];
 	if (order === 'by Name') {
 		return arr.sort((a, b) => path.basename(a).toLowerCase().localeCompare(path.basename(b).toLowerCase()));
@@ -64,7 +64,8 @@ function toArr(v: any): string[] {
 	return v ? [String(v)] : [];
 }
 
-export async function autoPostTGFunc(_item: any, _description: any): Promise<string[]> {
+export async function autoPostTGFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, http, sendToMW, accounts, telegram } = ctx;
 	const inputs = toArr(_item?.import?.inputFile);
 	if (inputs.length === 0) return [];
 
@@ -86,7 +87,7 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 
 	let token: string;
 	try {
-		token = await api().invoke('account_get_token', { mainFolderName, platform: PLATFORM, name: accountName });
+		token = await accounts.getToken(mainFolderName, PLATFORM, accountName);
 	} catch (e) {
 		sendToMW('log', { level: 'error', text: '[autoPostTG] токен: ' + String(e) });
 		return [];
@@ -112,9 +113,9 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 	}
 
 	// ── Выбор кандидата: дедуп + order ───────────────────────────────────────
-	const posted = postedFileSet(records);
+	const posted = postedFileSet(records, PLATFORM);
 	let candidates = inputs.filter((f) => !posted.has(path.basename(f)));
-	candidates = await sortByOrder(candidates, order);
+	candidates = await sortByOrder(candidates, order, fs);
 	if (candidates.length === 0) {
 		sendToMW('log', { level: 'info', text: '[autoPostTG] все файлы уже запощены' });
 		return [];
@@ -127,42 +128,28 @@ export async function autoPostTGFunc(_item: any, _description: any): Promise<str
 	// Имя может быть title канала ИЛИ имя темы форум-группы → цель {chatId, threadId}.
 	let targets: PostTarget[] = channels.map((c) => ({ chatId: c }));
 	try {
-		const accs = await api().invoke('account_list', { mainFolderName, platform: PLATFORM });
-		const acc = (Array.isArray(accs) ? accs : []).find((a: any) => a?.name === accountName);
-		const catalog: any[] = Array.isArray(acc?.channels) ? acc.channels : [];
-		const labelToTarget = new Map<string, PostTarget>();
-		for (const c of catalog) {
-			const chatId = c?.username ? `@${c.username}` : c?.id != null ? String(c.id) : '';
-			if (!chatId) continue;
-			const label = c?.title || (c?.username ? `@${c.username}` : String(c?.id ?? ''));
-			if (label) labelToTarget.set(label, { chatId, threadId: null });
-			for (const t of Array.isArray(c?.topics) ? c.topics : []) {
-				const tl = t?.name || (t?.threadId != null ? `Topic #${t.threadId}` : '');
-				if (tl && t?.threadId != null) labelToTarget.set(tl, { chatId, threadId: Number(t.threadId) });
-			}
-		}
-		targets = channels.map((lbl) => labelToTarget.get(lbl) ?? { chatId: lbl });
+		targets = resolveTgTargets(await accounts.list(mainFolderName, PLATFORM), accountName, channels);
 	} catch (e) {
 		sendToMW('log', { level: 'warn', text: '[autoPostTG] не удалось прочитать каталог: ' + String(e) });
 	}
 
 	// ── Итерация до первого валидного → пост во все каналы ───────────────────
 	for (const file of candidates) {
-		const check = await videoCheck(file);
+		const check = await videoCheck(file, ctx);
 		if (!check.ok) {
 			sendToMW('log', { level: 'warn', text: `[autoPostTG] ${path.basename(file)} не подходит: ${check.reason} — пропускаю` });
 			continue;
 		}
 
 		sendToMW('statusbar', { text: `Постинг в Telegram: ${path.basename(file)}…` });
-		const baseUrl = (await api().invoke('tg_base_url').catch(() => 'https://api.telegram.org')) as string;
+		const baseUrl = await telegram.baseUrl();
 		const results = await publishToChannels(token, file, {
 			caption: captionText,
 			targets,
 			sendAs,
 			baseUrl,
 			onStatus: (text) => sendToMW('statusbar', { text }),
-		});
+		}, http);
 
 		// запись по строке на канал
 		const ts = Math.floor(Date.now() / 1000);

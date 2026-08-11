@@ -27,7 +27,6 @@ export const isValueValid = (property: Property): boolean => {
 			return Array.isArray(value) ? value.join('/') !== '' : false;
 		}
 		if (property.outputType === 'timecode') {
-			console.log('value', value);
 			return Array.isArray(value) ? value.length > 0 : false;
 		}
 	}
@@ -71,5 +70,21 @@ export const isValueValid = (property: Property): boolean => {
 		return typeof value === 'object' && value !== null && typeof (value as any).type === 'string' && (value as any).type !== '';
 	}
 
+	// Числовые/диапазонные контролы: значение есть (проверено выше) — значит валидно.
+	//
+	// Раньше их здесь не было, и они падали в финальный `return false`. Не стреляло
+	// только потому, что ни один из них не помечен `required` ни в одном ui.json:
+	// поставь галочку — и нода стала бы невалидной НАВСЕГДА, без единого сообщения.
+	if (property.controlType === 'slider' || property.controlType === 'valueRange' || property.controlType === 'timecode') {
+		return Array.isArray(value) ? value.length > 0 : value !== '' && value !== undefined;
+	}
+
+	// Незнакомый controlType. Возвращаем false (как раньше), но ГРОМКО: иначе новый
+	// тип контрола с `required` превращается в ноду, которая не валидна никогда, и
+	// причину приходится искать на ощупь.
+	console.warn(
+		`[isValueValid] controlType "${property.controlType}" не обработан — property "${property.id}" ` +
+			`считается невалидным. Добавьте ветку в src/NODE_WIN/utils/validation.ts.`,
+	);
 	return false;
 };

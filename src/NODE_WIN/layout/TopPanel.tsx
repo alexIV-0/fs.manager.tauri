@@ -4,6 +4,7 @@ import { usePathStore } from '@/Store/Node/usePathStore';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { runProcessingForSingleFolder } from '@/PROCESSING/runProcessingForSingleFolder';
 import { abortNow } from '@/PROCESSING/utils/processingAbort';
+import { RUN_PROCESSING } from '@/PROCESSING/runLanes';
 import { Box, Button, Divider, IconButton, Stack, Typography } from '@mui/material';
 import { useReactFlow } from '@xyflow/react';
 import { Play, Square } from 'lucide-react';
@@ -46,7 +47,8 @@ function TopPanel({ title }: TopPanelProps) {
 
 	const handleStop = useCallback(() => {
 		abortNow();
-		commands.abortProcessing();
+		// Полоса обработки: постинг — отдельный прогон, его процессы этот стоп не касается.
+		commands.abortProcessing(RUN_PROCESSING);
 		const { setIsScanning, setIsScanningProcess } = isScanningStore.getState();
 		setIsScanningProcess(false);
 		setIsScanning(false);

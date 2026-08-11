@@ -12,12 +12,17 @@ import { joinPath } from '@/Utils/joinPath';
 import { usePosting_store } from '@/Store/Processing/usePosting_store';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { reloadFolders } from '../reloadFolders';
-import { initResourcePools } from '../ResourcePool';
+import { createRunPools, disposeRunPools } from '../ResourcePool';
+import { RUN_POSTING } from '../runLanes';
+import { commands } from '@/Utils/specta';
 import { clearPostRoutes, addPostRouteFromProject, runAutoPost } from './index';
 
-// Инициализация ресурсных пулов (как в startProcessing): processItem захватывает слоты пула
-// по pluginId/colorType. Без init пулы — no-op (не блокируют), но для корректных лимитов
-// (напр. online=5) инициализируем из настроек + манифестов плагинов.
+// Ресурсные пулы ЭТОГО прогона (полоса `posting`) — свой набор, не общий с обработкой.
+// processItem захватывает слоты по pluginId/colorType; без набора пулы не ограничивают.
+//
+// Заодно гасим флаг прерывания своей полосы. Без этого постинг, запущенный после
+// остановленной обработки, наследовал выставленный флаг — и каждый его `exec`
+// умирал мгновенно, потому что гасил флаг только старт обработки.
 async function initPools(): Promise<void> {
 	let pluginPools: Array<{ id: string; pool: string }> = [];
 	try {
@@ -28,7 +33,8 @@ async function initPools(): Promise<void> {
 	} catch (e) {
 		console.warn('[postScheduler] cannot read plugin resourcePools:', e);
 	}
-	initResourcePools(getAppSettings().resourcePools ?? {}, pluginPools);
+	createRunPools(RUN_POSTING, getAppSettings().resourcePools ?? {}, pluginPools);
+	await commands.resetProcessingSignal(RUN_POSTING).catch(() => {});
 }
 
 // Интервал обхода папок постингом — из настроек (posting.scanWaitMin), дефолт 30 c.
@@ -111,6 +117,8 @@ export function startPostScheduler(): void {
 export function stopPostScheduler(): void {
 	controller?.abort();
 	controller = null;
+	// Прерывание СВОЕЙ полосы: убивает exec'и постинга и не касается обработки.
+	void commands.abortProcessing(RUN_POSTING).catch(() => {});
 	const st = usePosting_store.getState();
 	st.setIsPosting(false);
 	st.resetStatus();

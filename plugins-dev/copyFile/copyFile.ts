@@ -4,13 +4,16 @@
 // заменена на copy_item в Rust (там же создаются родительские директории).
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 
-export { onLoad } from '../_template/tauri';
-
-export async function copyFileFunc(_item: any, _description: any): Promise<string[]> {
+// `fs`/`sendToMW` приходят третьим аргументом (ctx), а не импортом из _template:
+// у плагина не остаётся module-local состояния, поэтому загрузчик кэширует модуль
+// вместо пересоздания на каждый вызов. Отсутствие экспорта `onLoad` — признак
+// нового стиля, по нему loader.ts и различает режимы.
+export async function copyFileFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	// Сегменты, заданные пользователем (папка/имя), либо дефолтное имя.

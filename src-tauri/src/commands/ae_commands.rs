@@ -41,6 +41,9 @@ pub struct RunScriptInAEArgs {
     pub keep_temp_files: Option<bool>,
     /// Таймаут ожидания результата в секундах (по умолчанию 120)
     pub timeout_sec: Option<u64>,
+    /// Полоса прогона (`processing`/`posting`) — чей стоп прерывает ОЖИДАНИЕ AE.
+    #[serde(default)]
+    pub run_lane: Option<String>,
     /// Убивать предыдущий процесс AE перед запуском (Windows), чтобы "-r" гарантированно
     /// попал в холодный старт — AE не подхватывает "-r", если уже открыт. По умолчанию true;
     /// выключается галкой в ноде, если вдруг понадобится оставить AE открытым вручную.
@@ -51,17 +54,31 @@ pub struct RunScriptInAEArgs {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn run_script_in_ae(args: RunScriptInAEArgs) -> Result<AEResult, String> {
+pub async fn run_script_in_ae(
+    args: RunScriptInAEArgs,
+    processing_state: tauri::State<'_, std::sync::Mutex<super::processing_commands::ProcessingState>>,
+) -> Result<AEResult, String> {
+    // Флаг СВОЕЙ полосы. Раньше ожидание AE не смотрело прерывание вообще: жёсткий
+    // стоп не выходил из polling-цикла, и пайплайн продолжал ждать result-файл до
+    // `timeout_sec` — то есть часами.
+    let abort_flag = processing_state
+        .lock()
+        .map_err(|e| format!("ProcessingState lock poisoned: {}", e))?
+        .lane_flag(&super::processing_commands::lane_name(args.run_lane.clone()));
+
     // Sync-команды Tauri выполняются на главном потоке и блокируют WebView event-loop.
     // Ожидание результата AE — это polling-цикл со sleep (до timeout, т.е. часы),
     // поэтому всю блокирующую работу уносим в tokio::task::spawn_blocking — иначе
     // весь интерфейс замерзает на время рендера.
-    tokio::task::spawn_blocking(move || run_script_in_ae_blocking(args))
+    tokio::task::spawn_blocking(move || run_script_in_ae_blocking(args, abort_flag))
         .await
         .map_err(|e| format!("AE task panicked: {}", e))?
 }
 
-fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String> {
+fn run_script_in_ae_blocking(
+    args: RunScriptInAEArgs,
+    abort_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<AEResult, String> {
     let temp_dir = args
         .temp_dir
         .as_deref()
@@ -104,7 +121,7 @@ fn run_script_in_ae_blocking(args: RunScriptInAEArgs) -> Result<AEResult, String
     // Ждём результата
     let timeout = Duration::from_secs(args.timeout_sec.unwrap_or(120));
     println!("[aeProcess] ожидание результата (до {}s): {}", timeout.as_secs(), result_path.display());
-    let mut result = wait_for_result(&result_path, &lock_path, timeout)?;
+    let mut result = wait_for_result(&result_path, &lock_path, timeout, &abort_flag)?;
     // Возвращаем путь сохранённого скрипта в плагин (для лога в окне приложения)
     result.temp_script_path = Some(temp_script_path.to_string_lossy().replace('\\', "/"));
 
@@ -358,11 +375,20 @@ fn wait_for_result(
     result_path: &Path,
     lock_path: &Path,
     timeout: Duration,
+    abort_flag: &std::sync::atomic::AtomicBool,
 ) -> Result<AEResult, String> {
     let start = Instant::now();
     let poll = Duration::from_millis(200);
 
     loop {
+        // Прерывание. Сам AfterFX НЕ убиваем: рендер принадлежит чужому приложению, и
+        // пользователь может захотеть его достроить. Прекращаем ЖДАТЬ — этого хватает,
+        // чтобы пайплайн остановился, а не висел до таймаута.
+        if abort_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[aeProcess] ожидание прервано пользователем");
+            return Err("AE wait aborted by user".to_string());
+        }
+
         if start.elapsed() > timeout {
             eprintln!(
                 "[aeProcess] TIMEOUT после {}s — result-файл не появился: {}",

@@ -1,17 +1,18 @@
 // convertFile_v1 — ручная конвертация ffmpeg-аргументами. Tauri-port.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
-
+// `fs` протаскивается параметром: host-сервисы приходят в ctx (третий аргумент
+// точки входа), у модуля не остаётся состояния → загрузчик его кэширует.
+//
 // Резолвит ffmpeg-команду по приоритету. Три источника (в порядке приоритета):
 //   1. Вход из другой ноды (_item.import.ffmpegCommand) — если что-то пришло, оно главнее поля.
 //      • пришёл путь к существующему файлу → читаем его содержимое;
 //      • пришла строка → используем как есть.
 //   2. Текст в самом поле ноды (_item.ffmpegCommand).
-async function resolveFfmpegCommand(_item: any): Promise<string> {
+async function resolveFfmpegCommand(_item: any, fs: any): Promise<string> {
 	const imported: string[] = _item.import?.ffmpegCommand ?? [];
 	if (imported.length > 0) {
 		const src = imported[0];
@@ -21,13 +22,14 @@ async function resolveFfmpegCommand(_item: any): Promise<string> {
 	return _item.ffmpegCommand ?? '';
 }
 
-export async function convertFileFunc(_item: any, _description: any): Promise<string[]> {
+export async function convertFileFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 	let iteration = 1;
 	const inputs: string[] = _item.import.inputFile;
 
 	// Команда одна на всю ноду — резолвим до цикла (файл читаем один раз).
-	const ffmpegCommandStr = await resolveFfmpegCommand(_item);
+	const ffmpegCommandStr = await resolveFfmpegCommand(_item, fs);
 	const ffmpegArgs = ffmpegCommandStr ? ffmpegCommandStr.trim().split(/\s+/).filter(Boolean) : [];
 
 	for (const fileFrom of inputs) {

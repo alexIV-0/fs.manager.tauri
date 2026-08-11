@@ -4,11 +4,11 @@
 // показывает старт/финиш).
 
 import path from 'path';
-import { fs, exec, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
-
+// host-сервисы приходят в ctx (третий аргумент). Хелперы ниже чистые — им ничего
+// протаскивать не нужно.
 function extractExtension(format: string): string {
 	const match = format.match(/^([A-Za-z0-9]+)/);
 	return match ? match[1].toLowerCase() : format.toLowerCase();
@@ -29,7 +29,8 @@ function getMohoFormat(ext: string): string {
 	return map[ext.toLowerCase()] || ext.toUpperCase();
 }
 
-export async function mohoRenderFunc(_item: any, _description: any): Promise<string[]> {
+export async function mohoRenderFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, exec, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];

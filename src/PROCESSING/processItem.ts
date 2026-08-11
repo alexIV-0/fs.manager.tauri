@@ -8,12 +8,13 @@
 
 import { basename, dirname, join } from '@plugin-api/path';
 import { loadPlugin } from '@/PluginAPI/loader';
+// Host-API плагинов: единственная живая копия обёрток. Раньше они инлайнились в
+// каждый бандл из plugins-dev/_template/tauri.ts — см. шапку host.ts.
+import { hostServices, invokeHost, execOnLane, type PluginContext } from '@/PluginAPI/host';
 import { acquirePool, releasePool, resolvePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
 import { pathExists as seamPathExists } from '@/Utils/storageSeam';
-
-const api = () => (window as any).tauriAPI;
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
@@ -26,19 +27,24 @@ export interface ExecutionContext {
 	itemId: string;
 	send: SendFn;
 	accumulatedCost: number;
+	/** Прогон, которому принадлежит item: ключ набора семафоров и токена
+	 *  прерывания в Rust. Обработка и постинг — РАЗНЫЕ прогоны, и делить эти
+	 *  ресурсы им нельзя (см. шапку ResourcePool.ts). */
+	runId: string;
 }
 
-export interface PluginCtx {
-	itemId: string;
-	stepId?: string;
-	signal: AbortSignal;
-	pluginId: string;
-	pluginVersion: string;
-	pluginPath?: string;
-	log: (level: 'info' | 'warn' | 'error' | 'debug', text: string, meta?: any) => void;
-	send: SendFn;
-	sendToMW: (type: string, payload: any) => void;
-}
+/**
+ * Третий аргумент плагина. Помимо служебных полей несёт host-сервисы
+ * (`fs`, `ffmpeg`, `http`, `exec`, `ae`, `paths`, `system`, `fonts`) — плагин
+ * достаёт их деструктуризацией вместо импорта из `_template/tauri`:
+ *
+ *   export async function myFunc(_item, _description, ctx) {
+ *     const { fs, ffmpeg, sendToMW } = ctx;
+ *
+ * Так у плагина не остаётся module-local состояния, и loader.ts может кэшировать
+ * модуль вместо пересоздания на каждый вызов.
+ */
+export type PluginCtx = PluginContext;
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
@@ -64,11 +70,11 @@ async function markFolderAsError(
 	itemId: string,
 ): Promise<void> {
 	try {
-		send('log', { level: 'warn', text: `[markFolderAsError] ENTER: ${folderPath}`, itemId });
+		send('log', { level: 'debug', text: `[markFolderAsError] ENTER: ${folderPath}`, itemId });
 		const name = basename(folderPath);
 		if (name.startsWith('-')) {
 			send('log', {
-				level: 'warn',
+				level: 'debug',
 				text: `[processItem] Folder already marked with "-": ${name}`,
 				itemId,
 			});
@@ -78,9 +84,9 @@ async function markFolderAsError(
 		const newName = `-${name}`;
 		const newPath = join(dirname(folderPath), newName);
 
-		send('log', { level: 'warn', text: `[markFolderAsError] invoke renameFolder: ${folderPath} -> ${newPath}`, itemId });
+		send('log', { level: 'debug', text: `[markFolderAsError] invoke renameFolder: ${folderPath} -> ${newPath}`, itemId });
 		const renameResult = unwrap(await commands.renameFolder(folderPath, newPath));
-		send('log', { level: 'warn', text: `[markFolderAsError] renameFolder result: ${JSON.stringify(renameResult)}`, itemId });
+		send('log', { level: 'debug', text: `[markFolderAsError] renameFolder result: ${JSON.stringify(renameResult)}`, itemId });
 
 		send('log', {
 			level: 'warn',
@@ -105,7 +111,7 @@ async function moveToErrorsFolder(
 ): Promise<void> {
 	try {
 		send('log', {
-			level: 'warn',
+			level: 'debug',
 			text: `[moveToErrorsFolder] ENTER: pathForDelete=${pathForDelete} projectPath=${projectPath}`,
 			itemId,
 		});
@@ -114,7 +120,7 @@ async function moveToErrorsFolder(
 		// исторически (порт из Electron), но дублировала логику и ломалась на
 		// несоответствии формы ответа `getSomeFromFolder`.
 		const res = unwrap(await commands.moveToErrors(pathForDelete, projectPath));
-		send('log', { level: 'warn', text: `[moveToErrorsFolder] moveToErrors result: ${JSON.stringify(res)}`, itemId });
+		send('log', { level: 'debug', text: `[moveToErrorsFolder] moveToErrors result: ${JSON.stringify(res)}`, itemId });
 
 		if (!res?.success) {
 			send('log', {
@@ -140,7 +146,7 @@ async function moveToErrorsFolder(
 
 // ─── Главный orchestrator ────────────────────────────────────────────────────
 
-export async function processItem(item: any, signal: AbortSignal): Promise<string> {
+export async function processItem(item: any, signal: AbortSignal, runId: string): Promise<string> {
 	const desc = item.description ?? {};
 	const itemId: string =
 		desc.dbItemId ??
@@ -257,7 +263,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 				})
 				.catch(() => {});
 		} else if (type === 'statusbar') {
-			api().invoke('set_status_bar', { text: payload.text ?? '' }).catch(() => {});
+			void commands.setStatusBar(payload.text ?? '').catch(() => {});
 		}
 	};
 
@@ -270,6 +276,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 		itemId,
 		send,
 		accumulatedCost: 0,
+		runId,
 	};
 
 	// Главный поиск (первый элемент queue) уже имеет output из findItemAndCreateProps
@@ -307,7 +314,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 
 	// [DIAG v2] Полная картина значений на момент принятия решения.
 	send('log', {
-		level: 'warn',
+		level: 'debug',
 		text:
 			`[processItem.postProcess v2] allStepsSucceeded=${allStepsSucceeded} ` +
 			`aborted=${ctx.signal.aborted} ` +
@@ -321,7 +328,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 
 	if (pathForDelete && pathForDeleteExists) {
 		if (allStepsSucceeded && !ctx.signal.aborted && deleteAfter) {
-			send('log', { level: 'warn', text: `[processItem.postProcess] → DELETE branch`, itemId });
+			send('log', { level: 'debug', text: `[processItem.postProcess] → DELETE branch`, itemId });
 			try {
 				unwrap(await commands.deleteItem(pathForDelete));
 				send('log', { level: 'info', text: `[processItem] Deleted original: ${basename(pathForDelete)}`, itemId });
@@ -332,21 +339,21 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 			// Папку не двигаем в errors/ — просто префиксуем имя `-`, чтобы mainSearch
 			// её пропустил на следующей итерации. Для файла — обычный перенос в errors/.
 			if (isFolder) {
-				send('log', { level: 'warn', text: `[processItem.postProcess] → MARK-FOLDER branch`, itemId });
+				send('log', { level: 'debug', text: `[processItem.postProcess] → MARK-FOLDER branch`, itemId });
 				await markFolderAsError(pathForDelete, send, itemId);
 			} else if (projectPath) {
-				send('log', { level: 'warn', text: `[processItem.postProcess] → MOVE-TO-ERRORS branch`, itemId });
+				send('log', { level: 'debug', text: `[processItem.postProcess] → MOVE-TO-ERRORS branch`, itemId });
 				await moveToErrorsFolder(pathForDelete, projectPath, send, itemId);
 			} else {
 				send('log', {
-					level: 'warn',
+					level: 'debug',
 					text: `[processItem.postProcess] → NO-OP: file error but projectPath is empty`,
 					itemId,
 				});
 			}
 		} else {
 			send('log', {
-				level: 'warn',
+				level: 'debug',
 				text:
 					`[processItem.postProcess] → NO-OP: no branch matched ` +
 					`(allStepsSucceeded=${allStepsSucceeded}, aborted=${ctx.signal.aborted}, deleteAfter=${deleteAfter})`,
@@ -355,7 +362,7 @@ export async function processItem(item: any, signal: AbortSignal): Promise<strin
 		}
 	} else {
 		send('log', {
-			level: 'warn',
+			level: 'debug',
 			text:
 				`[processItem.postProcess] → SKIPPED outer if: ` +
 				`pathForDelete=${pathForDelete ?? '<empty>'} exists=${pathForDeleteExists}`,
@@ -403,8 +410,13 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 	// Захватываем слот ресурсного пула. Пул резолвится по pluginId (manifest.resourcePool)
 	// → дефолт по colorType → fallback. Live по pluginId, поэтому собранные флоу
 	// подхватывают текущее назначение. Если лимит исчерпан — ждём освобождения слота.
-	const pool = resolvePool(execObj.pluginId, execObj.colorType);
-	await acquirePool(pool);
+	const pool = resolvePool(ctx.runId, execObj.pluginId, execObj.colorType);
+	// Ждём слот прерываемо. `false` = прогон закрыт или пользователь остановил всё,
+	// пока шаг стоял в очереди: раньше такой шаг всё равно запускал плагин.
+	if (!(await acquirePool(ctx.runId, pool, ctx.signal))) {
+		send('aborted', null);
+		return false;
+	}
 
 	send('node:start', { nodeId: logStepId, graphNodeId: stepId, itemId: ctx.itemId });
 	send('log', { level: 'info', text: `→ ${stepId} (${execObj.pluginId}@${execObj.pluginVersion})`, itemId: ctx.itemId, stepId: logStepId });
@@ -446,6 +458,25 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		};
 
 		const pluginCtx: PluginCtx = {
+			// Host-сервисы (fs/ffmpeg/http/exec/ae/paths/system/fonts): один и тот же
+			// объект на все вызовы — состояния в нём нет, делить безопасно.
+			...hostServices,
+
+			// ...кроме запуска процессов: он привязывается к ПОЛОСЕ прогона, чтобы
+			// стоп обработки не убивал процессы постинга и наоборот. Сам host остаётся
+			// без состояния — полосу подставляем здесь, где прогон известен.
+			exec: (cmd, args, opts) => execOnLane(ctx.runId, cmd, args, opts),
+			ffmpeg: {
+				...hostServices.ffmpeg,
+				exec: (args, opts = {}) => hostServices.ffmpeg.exec(args, { ...opts, runLane: ctx.runId }),
+			},
+			ae: {
+				...hostServices.ae,
+				// AE сам не убиваем — прерываем ОЖИДАНИЕ result-файла, иначе пайплайн
+				// висел бы до timeout_sec (часы) уже после стопа.
+				runScript: (a) => hostServices.ae.runScript({ ...a, runLane: ctx.runId }),
+			},
+
 			itemId: ctx.itemId,
 			stepId,
 			signal: ctx.signal,
@@ -454,6 +485,9 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			log: (level, text, meta) => send('log', { level, text, meta, itemId: ctx.itemId, stepId: logStepId }),
 			send,
 			sendToMW,
+			// Шов для команд своей площадки (vk_*/youtube_*): раньше плагины ходили за
+			// ними в `(window as any).tauriAPI` напрямую. Условия — в PluginContext.
+			invoke: (command, args) => invokeHost(command, args),
 		};
 
 		// pluginSender.ts / tauri.ts (inlined в каждый плагин-бандл) хранят
@@ -480,7 +514,7 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 			ctx.accumulatedCost += costNum;
 		}
 
-		send('log', { level: 'info', text: `[costDebug] costUnit=${costUnit} capturedSiteCost=${capturedSiteCost} finalCost=${finalCost}`, itemId: ctx.itemId, stepId: logStepId });
+		send('log', { level: 'debug', text: `[costDebug] costUnit=${costUnit} capturedSiteCost=${capturedSiteCost} finalCost=${finalCost}`, itemId: ctx.itemId, stepId: logStepId });
 		send('node:done', { nodeId: logStepId, graphNodeId: stepId, output, itemId: ctx.itemId, finalCost });
 		return true;
 	} catch (e: any) {
@@ -490,7 +524,7 @@ async function executeDefault(stepId: string, stepObj: any, ctx: ExecutionContex
 		return false;
 	} finally {
 		// Всегда освобождаем слот — даже при ошибке
-		releasePool(pool);
+		releasePool(ctx.runId, pool);
 	}
 }
 
@@ -541,6 +575,8 @@ async function executeLoop(stepId: string, stepObj: any, ctx: ExecutionContext, 
 			itemId: ctx.itemId,
 			send,
 			accumulatedCost: 0,
+			// Итерации loop'а принадлежат тому же прогону: слоты берутся из его набора.
+			runId: ctx.runId,
 		};
 		innerCtx.results.set(`${stepId}__inputInLoop`, [currentItem]);
 
@@ -708,7 +744,7 @@ async function collectOutputInfo(
 			const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
 			if (!mediaExts.has(ext)) continue; // хронометраж — только по медиа
 			try {
-				const infoJson: string = await api().invoke('ffprobe_get_info', filePath);
+				const infoJson = unwrap(await commands.ffprobeGetInfo(filePath));
 				const streams: any[] = JSON.parse(infoJson).streams ?? [];
 				const stream = streams.find((s: any) => s.codec_type === 'video')
 				            ?? streams.find((s: any) => s.codec_type === 'audio');

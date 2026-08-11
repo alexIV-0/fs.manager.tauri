@@ -13,7 +13,7 @@ fn default_cost_unit() -> String {
     "run".to_string()
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct PluginManifest {
     pub id: String,
     pub name: String,
@@ -39,7 +39,7 @@ pub struct PluginManifest {
     pub resource_pool: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct PluginInfo {
     pub id: String,
     pub version: String,
@@ -60,7 +60,7 @@ pub struct PluginInfo {
     pub cost_unit: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, specta::Type)]
 pub struct PluginUINode {
     pub id: String,
     #[serde(rename = "type")]
@@ -126,6 +126,7 @@ impl PluginManagerState {
 // ==================== INITIALIZATION ====================
 
 #[tauri::command]
+#[specta::specta]
 #[allow(unused_variables)]
 pub fn plugin_manager_init(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
@@ -268,15 +269,44 @@ fn load_plugin_internal(
     Ok(())
 }
 
+
+/// Проверяет, что строка — ОДИН компонент пути, годный как имя папки плагина.
+///
+/// Имя папки плагина всегда имеет вид `<id>@<version>`, то есть ровно один компонент.
+/// Но собиралось оно из строк, пришедших по IPC, и уходило в `plugins_path.join(...)`
+/// без всякой проверки — в том числе в `plugin_manager_delete`, где дальше стоит
+/// `fs::remove_dir_all`.
+///
+/// Произвольное удаление через это не выходит: `@` между id и версией всегда попадает
+/// внутрь одного из компонентов и ломает traversal, так что понадобилась бы реально
+/// существующая папка с `@` в имени. То есть подтверждённой уязвимости здесь нет.
+/// Но непроверенная склейка пути, ведущая в рекурсивное удаление, — плохая ставка:
+/// инвариант очевиден, а проверка стоит пять строк.
+fn validate_path_component(value: &str, what: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{} пустой", what));
+    }
+    if value.contains('/') || value.contains('\\') {
+        return Err(format!("{} не может содержать разделители пути: {:?}", what, value));
+    }
+    if value == ".." || value == "." {
+        return Err(format!("{} недопустим: {:?}", what, value));
+    }
+    Ok(())
+}
+
 // ==================== LOAD SINGLE PLUGIN ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_load_plugin(
     folder_name: String,
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<bool, String> {
+    validate_path_component(&folder_name, "folder_name")?;
+
     let mut state = state.lock().map_err(|e| e.to_string())?;
-    
+
     let plugin_path = state.plugins_path.join(&folder_name);
     
     if !plugin_path.exists() {
@@ -292,6 +322,7 @@ pub fn plugin_manager_load_plugin(
 // ==================== UNLOAD PLUGIN ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_unload_plugin(
     plugin_id: String,
     version: String,
@@ -311,6 +342,7 @@ pub fn plugin_manager_unload_plugin(
 // ==================== GET ALL PLUGINS INFO ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_all_plugins(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<Vec<PluginInfo>, String> {
@@ -339,6 +371,7 @@ pub fn plugin_manager_get_all_plugins(
 // ==================== GET PLUGINS BY TYPE ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_plugins_by_type(
     plugin_type: String,
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
@@ -353,6 +386,7 @@ pub fn plugin_manager_get_plugins_by_type(
 // ==================== GET PLUGIN ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_plugin(
     plugin_id: String,
     version: Option<String>,
@@ -403,6 +437,7 @@ pub fn plugin_manager_get_plugin(
 /// plugin.json (plugin.path) — то, что читает менеджер; читаем JSON как Value и правим
 /// только два поля, чтобы не потерять остальные/порядок ключей.
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_set_cost(
     plugin_id: String,
     version: String,
@@ -427,7 +462,7 @@ pub fn plugin_manager_set_cost(
     }
 
     let pretty = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
-    fs::write(&manifest_path, pretty).map_err(|e| e.to_string())?;
+    super::fs_commands::write_atomic(&manifest_path, pretty.as_bytes())?;
 
     // Обновляем in-memory manifest, чтобы get_all_plugins/get_all_ui_nodes сразу
     // отдавали свежее значение без перезагрузки плагинов.
@@ -440,6 +475,7 @@ pub fn plugin_manager_set_cost(
 // ==================== GET PLUGIN UI DATA ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_plugin_ui(
     plugin_id: String,
     version: String,
@@ -493,6 +529,7 @@ pub fn plugin_manager_get_plugin_ui(
 // ==================== GET ALL UI NODES ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_all_ui_nodes(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<Vec<PluginUINode>, String> {
@@ -562,6 +599,7 @@ pub fn plugin_manager_get_all_ui_nodes(
 // ==================== GET UI NODES (deprecated) ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_ui_nodes(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<Vec<PluginUINode>, String> {
@@ -572,6 +610,7 @@ pub fn plugin_manager_get_ui_nodes(
 // ==================== LIST PLUGINS ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_list(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -593,6 +632,7 @@ pub fn plugin_manager_list(
 // ==================== GET STATE ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_get_state(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<serde_json::Value, String> {
@@ -618,6 +658,7 @@ pub fn plugin_manager_get_state(
 // ==================== CALL PLUGIN METHOD ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_call(
     plugin_id: String,
     version: String,
@@ -653,6 +694,7 @@ pub fn plugin_manager_call(
 // ==================== INSTALL PLUGIN FROM .fsmplug ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_install(
     file_path: String,
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
@@ -720,33 +762,13 @@ pub fn plugin_manager_install(
     // Определяем префикс (корневая папка в архиве)
     let prefix = manifest_name.replace("plugin.json", "");
 
-    // Извлекаем все файлы
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-        
-        if file.is_dir() {
-            continue;
-        }
-
-        let relative_path = if file.name().starts_with(&prefix) {
-            file.name()[prefix.len()..].to_string()
-        } else {
-            file.name().to_string()
-        };
-
-        if relative_path.is_empty() {
-            continue;
-        }
-
-        let out_path = dest_path.join(&relative_path);
-        
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-
-        let mut contents = Vec::new();
-        std::io::Read::read_to_end(&mut file, &mut contents).map_err(|e| e.to_string())?;
-        fs::write(&out_path, contents).map_err(|e| e.to_string())?;
+    // Распаковка вынесена отдельной функцией ровно ради строки ниже: любой отказ
+    // внутри (traversal, бомба, ошибка записи) обязан убрать НЕДОраспакованную
+    // папку. Иначе прерванная установка оставляет полуплагин, который менеджер
+    // при следующем запуске увидит как установленный.
+    if let Err(e) = extract_plugin_archive(&mut archive, &dest_path, &prefix, &ArchiveLimits::DEFAULT) {
+        let _ = fs::remove_dir_all(&dest_path);
+        return Err(e);
     }
 
     println!("[PluginManager] Extracted to: {:?}", dest_path);
@@ -761,14 +783,142 @@ pub fn plugin_manager_install(
     info.ok_or_else(|| format!("PluginInfo not found after install: {}", folder_name))
 }
 
+
+/// Потолки на распаковку архива плагина.
+///
+/// Параметром, а не константой внутри: иначе проверку не проверить — тест на
+/// настоящий предел потребовал бы собрать двухгигабайтный архив. Тесты подставляют
+/// крошечные значения и убеждаются, что обе границы реально срабатывают.
+pub(crate) struct ArchiveLimits {
+    /// Максимум записей в архиве.
+    pub entries: usize,
+    /// Максимум суммарного РАСПАКОВАННОГО размера.
+    pub unpacked_total: u64,
+}
+
+impl ArchiveLimits {
+    /// Запас большой: плагин — это собранный esbuild'ом файл плюс, в редких
+    /// случаях, бинарник-хелпер (whisper-cli ~150 МБ). Если законный плагин
+    /// однажды упрётся в потолок, в тексте ошибки будет и он, и сам предел.
+    pub(crate) const DEFAULT: Self = Self {
+        entries: 5_000,
+        unpacked_total: 2 * 1024 * 1024 * 1024,
+    };
+}
+
+/// Распаковывает архив плагина в `dest_path`, проверяя каждое имя и держа потолок
+/// на объём. Вызывающий обязан снести `dest_path` при ошибке.
+fn extract_plugin_archive(
+    archive: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>,
+    dest_path: &Path,
+    prefix: &str,
+    limits: &ArchiveLimits,
+) -> Result<(), String> {
+    // ZIP-БОМБА. Размер архива ничего не говорит о размере распакованного: 42 КБ
+    // разворачиваются в терабайты, потому что степень сжатия нулей неограниченна.
+    // Traversal мы закрыли, но без потолка остаётся второй способ навредить —
+    // забить диск досуха. Считаем и записи, и распакованные байты.
+    //
+    // Значения с большим запасом: плагин — это собранный esbuild'ом файл плюс,
+    // в редких случаях, бинарник-хелпер (whisper-cli ~150 МБ). Если законный
+    // плагин однажды упрётся в потолок, в тексте ошибки будет и он, и сам предел.
+    if archive.len() > limits.entries {
+        return Err(format!(
+            "в архиве {} записей при пределе {} — установка отменена",
+            archive.len(),
+            limits.entries
+        ));
+    }
+    let mut unpacked_total: u64 = 0;
+
+    // Извлекаем все файлы
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+
+        if file.is_dir() {
+            continue;
+        }
+
+        // Объявленный в заголовке размер — быстрый отказ, ещё не читая запись.
+        if file.size() > limits.unpacked_total {
+            return Err(format!(
+                "запись {:?} объявляет {} байт при пределе {} — установка отменена",
+                file.name(),
+                file.size(),
+                limits.unpacked_total
+            ));
+        }
+
+        // ZIP SLIP. Имя записи в архиве — внешние данные, и раньше оно уходило в
+        // `dest_path.join(...)` как есть. Запись с именем `../../../Library/LaunchAgents/x`
+        // писалась КУДА УГОДНО, куда есть доступ у приложения (а capability даёт
+        // `fs:write-all` и `scope-home`). Канал доставки плагинов — zip-архивы, то есть
+        // подменённый в пути архив означал произвольную запись файлов.
+        //
+        // Проверяем той же функцией, что и протокол `plugin://` — опасность одна и та
+        // же, а держать две копии проверки нельзя.
+        let entry_name = file.name().to_string();
+        let stripped = entry_name.strip_prefix(prefix).unwrap_or(&entry_name);
+        let Some(relative_path) = super::plugin_protocol::sanitize_relative(stripped) else {
+            return Err(format!(
+                "архив содержит небезопасное имя файла: {:?} — установка отменена",
+                entry_name
+            ));
+        };
+
+        let out_path = dest_path.join(&relative_path);
+
+        // Двойная защита: даже если проверка выше однажды ослабнет, результат обязан
+        // остаться внутри папки плагина.
+        if !out_path.starts_with(dest_path) {
+            return Err(format!(
+                "путь из архива уходит за пределы папки плагина: {:?}",
+                entry_name
+            ));
+        }
+
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        // Заголовок может врать, поэтому читаем через `take` с остатком бюджета +1
+        // байт: перебор обнаружится по факту, а не по обещанию архива.
+        let remaining = limits.unpacked_total - unpacked_total;
+        let mut contents = Vec::new();
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(&mut file, remaining + 1),
+            &mut contents,
+        )
+        .map_err(|e| e.to_string())?;
+
+        if contents.len() as u64 > remaining {
+            return Err(format!(
+                "суммарный распакованный размер превысил предел {} байт — установка отменена",
+                limits.unpacked_total
+            ));
+        }
+        unpacked_total += contents.len() as u64;
+
+        fs::write(&out_path, contents).map_err(|e| e.to_string())?;
+    }
+
+
+    Ok(())
+}
+
 // ==================== DELETE PLUGIN ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_delete(
     plugin_id: String,
     version: String,
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<(), String> {
+    // Проверяем ДО склейки: дальше по коду стоит fs::remove_dir_all.
+    validate_path_component(&plugin_id, "plugin_id")?;
+    validate_path_component(&version, "version")?;
+
     let key = format!("{}@{}", plugin_id, version);
 
     // Выгружаем если загружен
@@ -791,6 +941,7 @@ pub fn plugin_manager_delete(
 // ==================== DESTROY ====================
 
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_manager_destroy(
     state: tauri::State<'_, std::sync::Mutex<PluginManagerState>>,
 ) -> Result<(), String> {
@@ -804,7 +955,7 @@ pub fn plugin_manager_destroy(
 
 /// Результат сборки плагина. Форма совпадает с тем, что ждёт фронтовый handleBuild
 /// (success/stdout/stderr/error).
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginBuildResult {
     pub success: bool,
@@ -821,6 +972,7 @@ pub struct PluginBuildResult {
 /// GUI-процесс на macOS не наследует PATH из шелла, поэтому node запускается через
 /// login-shell (`$SHELL -lc`), который подтягивает PATH из профиля (homebrew/nvm).
 #[tauri::command]
+#[specta::specta]
 pub fn plugin_build(plugin_id: String) -> Result<PluginBuildResult, String> {
     // id уходит в shell-строку — пускаем только безопасные символы.
     if plugin_id.is_empty()
@@ -906,4 +1058,128 @@ fn run_plugin_build(
 #[cfg(not(target_os = "windows"))]
 fn sh_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod path_component_tests {
+    use super::validate_path_component;
+
+    #[test]
+    fn нормальные_имена_папок_проходят() {
+        for ok in ["copyFile@0.1", "autoPostVK@0.1", "updater@1.0.0", "a", "x-y_z@1.2.3"] {
+            assert!(validate_path_component(ok, "id").is_ok(), "должно проходить: {ok}");
+        }
+    }
+
+    /// Эти значения уходили в `plugins_path.join(...)`, а в delete — дальше в
+    /// `fs::remove_dir_all`. Проверки не было вообще.
+    #[test]
+    fn разделители_и_traversal_не_проходят() {
+        for bad in ["..", ".", "", "../x", "a/b", "a\\b", "../../Documents", "/etc"] {
+            assert!(validate_path_component(bad, "id").is_err(), "должно отвергаться: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn текст_ошибки_называет_поле() {
+        let e = validate_path_component("../x", "plugin_id").unwrap_err();
+        assert!(e.contains("plugin_id"), "в ошибке должно быть имя поля: {e}");
+    }
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::{extract_plugin_archive, ArchiveLimits};
+    use std::io::{Cursor, Write};
+    use std::path::{Path, PathBuf};
+
+    /// Собирает настоящий zip в памяти из пар (имя записи, содержимое).
+    fn архив(entries: &[(&str, &[u8])]) -> zip::ZipArchive<Cursor<Vec<u8>>> {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut buf);
+            for (name, data) in entries {
+                w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+                w.write_all(data).unwrap();
+            }
+            w.finish().unwrap();
+        }
+        zip::ZipArchive::new(buf).unwrap()
+    }
+
+    /// Отдельная папка на каждый тест: тесты в одном процессе идут параллельно.
+    fn песочница(имя: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("fsm_zip_test_{имя}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn обычный_архив_распаковывается() {
+        let dir = песочница("ok");
+        let mut a = архив(&[("plugin.json", b"{}"), ("copyFile.js", b"export {}")]);
+        extract_plugin_archive(&mut a, &dir, "", &ArchiveLimits::DEFAULT).unwrap();
+
+        assert_eq!(std::fs::read(dir.join("plugin.json")).unwrap(), b"{}");
+        assert!(dir.join("copyFile.js").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ZIP SLIP на настоящем архиве. Раньше имя записи уходило в `join` как есть,
+    /// а capability даёт `fs:write-all` + `scope-home` — то есть запись куда угодно.
+    #[test]
+    fn запись_с_traversal_не_пишет_наружу() {
+        let dir = песочница("slip");
+        let наружу = dir.parent().unwrap().join("fsm_zip_test_ESCAPED.txt");
+        let _ = std::fs::remove_file(&наружу);
+
+        let mut a = архив(&[
+            ("plugin.json", b"{}"),
+            ("../fsm_zip_test_ESCAPED.txt", b"pwned"),
+        ]);
+        let err = extract_plugin_archive(&mut a, &dir, "", &ArchiveLimits::DEFAULT).unwrap_err();
+
+        assert!(err.contains("небезопасное"), "ошибка должна называть причину: {err}");
+        assert!(!наружу.exists(), "файл записан ЗА пределы папки плагина: {наружу:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn слишком_много_записей_отвергается() {
+        let dir = песочница("entries");
+        let mut a = архив(&[("a", b"1"), ("b", b"2"), ("c", b"3")]);
+        let limits = ArchiveLimits { entries: 2, unpacked_total: 1024 };
+
+        let err = extract_plugin_archive(&mut a, &dir, "", &limits).unwrap_err();
+        assert!(err.contains("записей"), "ошибка должна называть записи: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ZIP-БОМБА: сжатие нулей неограниченно, поэтому маленький архив может
+    /// распаковаться в терабайты и забить диск досуха.
+    #[test]
+    fn превышение_суммарного_размера_отвергается() {
+        let dir = песочница("bomb");
+        let mut a = архив(&[("zeros.bin", &[0u8; 4096])]);
+        let limits = ArchiveLimits { entries: 10, unpacked_total: 64 };
+
+        let err = extract_plugin_archive(&mut a, &dir, "", &limits).unwrap_err();
+        assert!(err.contains("64"), "ошибка должна называть предел: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Потолок именно СУММАРНЫЙ: каждая запись по отдельности в предел влезает.
+    #[test]
+    fn сумма_по_записям_копится() {
+        let dir = песочница("sum");
+        let mut a = архив(&[("a", &[1u8; 40]), ("b", &[2u8; 40])]);
+        let limits = ArchiveLimits { entries: 10, unpacked_total: 64 };
+
+        let err = extract_plugin_archive(&mut a, &dir, "", &limits).unwrap_err();
+        assert!(err.contains("суммарный"), "должен упасть на сумме: {err}");
+        // первая запись успела лечь — потому вызывающий и сносит папку целиком
+        assert!(Path::new(&dir.join("a")).is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

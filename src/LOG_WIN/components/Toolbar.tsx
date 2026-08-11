@@ -33,7 +33,6 @@ export function Toolbar({
 	onLoadArchiveDays,
 	onClearArchive,
 }: ToolbarProps) {
-	const api = (window as any).tauriAPI;
 	return (
 		<Box sx={{ px: 1.5, py: 0.75, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}>
 			<Stack direction='row' alignItems='center' spacing={0.75} flexWrap='nowrap'>

@@ -7,7 +7,6 @@
 import { runUserCode } from '../../src/Utils/runUserCode';
 import defaultUi from './ui.json';
 
-export { onLoad } from '../_template/tauri';
 
 // Встроенные id из ui.json (code, inputs) — это НЕ пользовательские входы.
 const DEFAULT_PROP_IDS = new Set<string>(((defaultUi as any)?.data?.properties ?? []).map((p: any) => p.id));

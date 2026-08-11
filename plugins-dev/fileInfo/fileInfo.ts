@@ -3,11 +3,12 @@
 // Rust-команду ffprobe_get_info из @plugin-api/tauri helper.
 
 import path from 'path';
-import { ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { convertSecondsToTimecode } from '../../src/Utils/convertSecondsToTimecode';
 
-export { onLoad } from '../_template/tauri';
+// host-сервисы приходят в ctx (третий аргумент точки входа) и протаскиваются
+// параметром в хелперы — у модуля не остаётся состояния, загрузчик его кэширует.
 
 // ── Filename helpers ─────────────────────────────────────────────────────────
 
@@ -60,45 +61,30 @@ interface VideoInfo {
 	fps: number;
 }
 
-async function getVideoInfo(filePath: string): Promise<VideoInfo> {
-	const streams = await ffmpeg.probe(filePath);
-	const video = ffmpeg.pickVideo(streams);
-	const audio = ffmpeg.pickAudio(streams);
-	if (!video && !audio) throw new Error(`No video/audio streams found in file: ${filePath}`);
-
-	const parseFps = (str?: string): number => {
-		if (!str || str === '0/0') return 0;
-		const [n, d] = str.split('/').map(Number);
-		return d ? n / d : 0;
-	};
-
-	let fps = parseFps(video?.avg_frame_rate);
-	if (fps === 0) fps = parseFps(video?.r_frame_rate);
-	fps = Number(fps.toFixed(3));
-
-	let durationSec = Number(video?.duration);
-	if (!durationSec || durationSec === 0) {
-		const ts = Number(video?.duration_ts);
-		const tbStr = video?.time_base;
-		if (ts && tbStr) {
-			const [num, den] = tbStr.split('/').map(Number);
-			durationSec = ts * (num / den);
-		}
-	}
-	if (!durationSec && audio?.duration) durationSec = Number(audio.duration);
-
+/**
+ * Раньше здесь лежала своя копия разбора ffprobe — вместе с двумя дефектами,
+ * которые уже исправлены в `host.ts`: деление на ноль при `time_base: "0/0"`
+ * (давало NaN в длительности) и `fps.toFixed` без проверки на конечность.
+ *
+ * Теперь считает `ffmpeg.getInfo`, а локальным остался только таймкод: host-версия
+ * при неизвестном fps честно отдаёт миллисекунды, а здесь исторически всегда кадры
+ * по `fps || 25`. Это поле видно пользователю, поэтому формат не меняем.
+ */
+async function getVideoInfo(filePath: string, ffmpeg: PluginContext['ffmpeg']): Promise<VideoInfo> {
+	const info = await ffmpeg.getInfo(filePath);
 	return {
-		width: video?.width || 0,
-		height: video?.height || 0,
-		fps,
-		durationInSeconds: durationSec || 0,
-		durationInTimcode: convertSecondsToTimecode(durationSec || 0, fps || 25),
+		width: info.width,
+		height: info.height,
+		fps: info.fps,
+		durationInSeconds: info.durationInSeconds,
+		durationInTimcode: convertSecondsToTimecode(info.durationInSeconds, info.fps || 25),
 	};
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
 
-export async function fileInfoFunc(_item: any, _description: any): Promise<string> {
+export async function fileInfoFunc(_item: any, _description: any, ctx: PluginContext): Promise<string> {
+	const { ffmpeg, sendToMW } = ctx;
 	sendToMW('statusbar', { text: `${_description.infoText ?? ''}: [File Info]` });
 
 	const extractType: string = _item.getInfo ?? 'frameFormat';
@@ -136,7 +122,7 @@ export async function fileInfoFunc(_item: any, _description: any): Promise<strin
 		case 'width':
 		case 'height': {
 			if (!['video', 'image'].includes(fileType)) return '';
-			const info = await getVideoInfo(input);
+			const info = await getVideoInfo(input, ffmpeg);
 			if (extractType === 'frameFormat') result = frameFormat(info.width, info.height);
 			else if (extractType === 'width') result = String(info.width);
 			else result = String(info.height);
@@ -147,7 +133,7 @@ export async function fileInfoFunc(_item: any, _description: any): Promise<strin
 		case 'duration in Timecode':
 		case 'frame Rate': {
 			if (fileType !== 'video') return '';
-			const info = await getVideoInfo(input);
+			const info = await getVideoInfo(input, ffmpeg);
 			if (extractType === 'duration In Seconds') result = String(info.durationInSeconds);
 			else if (extractType === 'duration in Timecode') result = info.durationInTimcode;
 			else result = String(info.fps);

@@ -3,13 +3,13 @@
 // Tauri-port: getFullInfoFromVideoFile/detectSceneCuts через helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { convertTimecodeToSeconds } from '../../src/Utils/convertTimecodeToSeconds';
 
-export { onLoad } from '../_template/tauri';
 
-export async function getTimecodeFunc(_item: any, _description: any): Promise<(number | string)[]> {
+export async function getTimecodeFunc(_item: any, _description: any, ctx: PluginContext): Promise<(number | string)[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	let timeCodes: (number | string)[] = [];
 
 	const op = (Array.isArray(_item.operation) ? _item.operation[0] : _item.operation) ?? 'set';

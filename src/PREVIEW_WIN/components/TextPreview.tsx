@@ -121,9 +121,15 @@ export function TextPreview({ filePath }: { filePath: string }) {
 		if (!editorInstRef.current || !modified) return;
 		const content = editorInstRef.current.getValue();
 		try {
-			unwrap(await commands.writeFile(filePath, content));
+			// Атомарно (временный файл + rename), а не поверх исходного: здесь юзер
+			// правит СВОЙ файл — субтитры, конфиг, скрипт. Обычная перезапись
+			// усекает файл до нуля и лишь потом пишет содержимое: падение или
+			// закрытие приложения в этот зазор оставляет пустой файл, а прежнего
+			// текста уже нет. Общий `writeFile` намеренно оставлен неатомарным —
+			// на него опираются плагины (дописывание, симлинки).
+			unwrap(await commands.writeFileAtomic(filePath, content));
 		} catch (e) {
-			console.error('[TextPreview] writeFile failed:', e, '\n  path:', filePath);
+			console.error('[TextPreview] writeFileAtomic failed:', e, '\n  path:', filePath);
 			return;
 		}
 		setModified(false);

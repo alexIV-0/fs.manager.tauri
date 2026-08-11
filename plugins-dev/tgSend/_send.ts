@@ -5,7 +5,9 @@
 // Все HTTP — через http.* (Rust/reqwest, без CORS). Зеркалит _publisher.ts autoPostTG.
 
 import path from 'path';
-import { http } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// `http` параметром: приходит из ctx точки входа через границу модуля.
 
 export type SendAs = 'video' | 'document';
 
@@ -93,6 +95,7 @@ export async function sendFileToTargets(
 	token: string,
 	file: string,
 	opts: { caption: string; sendAs: SendAs; targets: SendTarget[]; baseUrl: string; onStatus?: (text: string) => void },
+	http: PluginContext['http'],
 ): Promise<SendResult[]> {
 	const base = opts.baseUrl || 'https://api.telegram.org';
 	const { method, field, mime } = pickMethod(file, opts.sendAs);

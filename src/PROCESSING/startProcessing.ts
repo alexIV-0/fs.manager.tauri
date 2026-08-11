@@ -6,9 +6,8 @@ import { getSignal } from './utils/processingAbort';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { processItem } from './processItem';
-import { initResourcePools } from './ResourcePool';
-
-let isSubscribed = false;
+import { createRunPools, disposeRunPools } from './ResourcePool';
+import { RUN_PROCESSING } from './runLanes';
 
 export async function startProcessing() {
 	const signal = getSignal();
@@ -19,10 +18,14 @@ export async function startProcessing() {
 	const { maxParallel } = settings.processing;
 	const MAX_PARALLEL = Math.max(1, maxParallel);
 
-	// Инициализируем семафоры ресурсных пулов. Слоты = лимит из settings.resourcePools
-	// (с fallback на RESOURCE_POOL_DEFAULT_LIMITS). Карта pluginId→пул берётся из
-	// манифестов текущих плагинов → собранные флоу подхватывают актуальное назначение
-	// (резолв пула вживую по pluginId). Пересоздаём на каждый старт.
+	// Семафоры ресурсных пулов — набор ЭТОГО прогона (полоса `processing`). Слоты =
+	// лимит из settings.resourcePools (с fallback на RESOURCE_POOL_DEFAULT_LIMITS).
+	// Карта pluginId→пул берётся из манифестов текущих плагинов → собранные флоу
+	// подхватывают актуальное назначение (резолв вживую по pluginId).
+	//
+	// Именно набором прогона, а не процессным синглтоном: постинг — независимый
+	// раннер со своей кнопкой, и его старт посреди обработки раньше выбрасывал
+	// семафоры вместе с очередью ожидающих, после чего обработка висла навсегда.
 	let pluginPools: Array<{ id: string; pool: string }> = [];
 	try {
 		const all = (await window.plugins.getAllPlugins()) ?? [];
@@ -32,7 +35,7 @@ export async function startProcessing() {
 	} catch (e) {
 		console.warn('[startProcessing] cannot read plugin resourcePools:', e);
 	}
-	initResourcePools(settings.resourcePools ?? {}, pluginPools);
+	createRunPools(RUN_PROCESSING, settings.resourcePools ?? {}, pluginPools);
 
 	// Processing events are now routed to logWindow in main process.
 	// Only handle aborted/error here for status bar feedback.
@@ -42,10 +45,11 @@ export async function startProcessing() {
 		}
 	};
 
-	if (!isSubscribed) {
-		window.tauriAPI.onProcessingEvent(handleProcessingEvent);
-		isSubscribed = true;
-	}
+	// Подписка на весь прогон. Модульный флаг `isSubscribed` здесь был бесполезен:
+	// в конце функции он сбрасывался, поэтому на входе всегда был false. Хуже того,
+	// исключение между подпиской и отпиской оставляло слушателя навсегда, а флаг —
+	// поднятым, и следующий прогон уже не подписывался. Снятие теперь в finally.
+	window.tauriAPI.onProcessingEvent(handleProcessingEvent);
 
 	isScanningStore.getState().setIsScanningProcess(true);
 
@@ -55,7 +59,7 @@ export async function startProcessing() {
 		try {
 			// Прямой вызов в renderer'е — никаких IPC. processItem импортирует плагины
 			// через plugin:// протокол, вызывает их как JS-функции, прокидывает ctx.
-			const status: string = await processItem(item, signal);
+			const status: string = await processItem(item, signal, RUN_PROCESSING);
 			totalProcessedFile++;
 			const { incSuccess, incErrorItems } = useProcessingStats_store.getState();
 			if (status === 'done') incSuccess();
@@ -65,48 +69,53 @@ export async function startProcessing() {
 		}
 	};
 
-	while (isScanningStore.getState().isScanning) {
-		if (signal.aborted) break;
+	try {
+		while (isScanningStore.getState().isScanning) {
+			if (signal.aborted) break;
 
-		// Мягкая остановка: ждём текущие items, ставим isScanning=false и выходим.
-		if (!isScanningStore.getState().isScanningProcess) {
-			if (running.size > 0) await Promise.allSettled(running);
-			isScanningStore.getState().setIsScanning(false);
-			break;
+			// Мягкая остановка: ждём текущие items, ставим isScanning=false и выходим.
+			if (!isScanningStore.getState().isScanningProcess) {
+				if (running.size > 0) await Promise.allSettled(running);
+				isScanningStore.getState().setIsScanning(false);
+				break;
+			}
+
+			while (running.size < MAX_PARALLEL && isScanningStore.getState().isScanningProcess) {
+				const item = useWorkProject_Store.getState().takeNextItem();
+				if (!item) break;
+
+				let promise: Promise<void>;
+				promise = processOne(item).finally(() => running.delete(promise));
+				running.add(promise);
+			}
+
+			// Очередь пуста и нечего обрабатывать — выходим. Управление возвращается
+			// в runProcessing, который сам решит, ждать или сканировать дальше.
+			if (running.size === 0) break;
+
+			await Promise.race(running);
 		}
 
-		while (running.size < MAX_PARALLEL && isScanningStore.getState().isScanningProcess) {
-			const item = useWorkProject_Store.getState().takeNextItem();
-			if (!item) break;
-
-			let promise: Promise<void>;
-			promise = processOne(item).finally(() => running.delete(promise));
-			running.add(promise);
+		if (running.size > 0) {
+			await Promise.allSettled(running);
 		}
 
-		// Очередь пуста и нечего обрабатывать — выходим. Управление возвращается
-		// в runProcessing, который сам решит, ждать или сканировать дальше.
-		if (running.size === 0) break;
+		// Queued-записи в окне логов, которые так и не стартовали (стоп/abort), переводим в aborted.
+		commands.logWindowEmitAbortQueued().catch(() => {});
 
-		await Promise.race(running);
+		// Сбрасываем statusBar в idle. Локальный set обновляет стор в этом окне (nodeWin),
+		// а IPC `setStatusBar` транслирует событие в main window — там стор отдельный.
+		useStatusBar_Store.getState().setStatusBarState('waiting starting');
+		void commands.setStatusBar('waiting starting').catch(() => {});
+
+		// Финальный broadcast: node_win получит 'process:complete' и сбросит подсветку
+		// активной ноды через 2 секунды (см. ProcessingEventListener).
+		commands.sendProcessComplete().catch(() => {});
+	} finally {
+		// Снятие подписки и закрытие пулов — обязательно, даже если из цикла вылетело
+		// исключение. Иначе слушатель остаётся навсегда, а ожидающие слот (жёсткий стоп
+		// посреди ожидания) висят вечно.
+		window.tauriAPI.removeProcessingEvent(handleProcessingEvent);
+		disposeRunPools(RUN_PROCESSING);
 	}
-
-	if (running.size > 0) {
-		await Promise.allSettled(running);
-	}
-
-	// Queued-записи в окне логов, которые так и не стартовали (стоп/abort), переводим в aborted.
-	commands.logWindowEmitAbortQueued().catch(() => {});
-
-	// Сбрасываем statusBar в idle. Локальный set обновляет стор в этом окне (nodeWin),
-	// а IPC `setStatusBar` транслирует событие в main window — там стор отдельный.
-	useStatusBar_Store.getState().setStatusBarState('waiting starting');
-	window.tauriAPI.invoke('set_status_bar', { text: 'waiting starting' }).catch(() => {});
-
-	// Финальный broadcast: node_win получит 'process:complete' и сбросит подсветку
-	// активной ноды через 2 секунды (см. ProcessingEventListener).
-	commands.sendProcessComplete().catch(() => {});
-
-	window.tauriAPI.removeProcessingEvent(handleProcessingEvent);
-	isSubscribed = false;
 }

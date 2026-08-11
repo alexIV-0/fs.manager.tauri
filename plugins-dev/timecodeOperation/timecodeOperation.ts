@@ -1,8 +1,8 @@
-import { sendToMW } from '../_template/pluginSender';
+import type { PluginContext } from '../../src/PluginAPI/host';
 
-export { onLoad } from '../_template/pluginSender';
 
-export async function timecodeOperationFunc(_item: any, _description: any) {
+export async function timecodeOperationFunc(_item: any, _description: any, ctx: PluginContext) {
+	const { sendToMW } = ctx;
 	const inputTc: unknown[] = _item.import?.inputFile ?? [];
 
 	if (inputTc.length === 0) {

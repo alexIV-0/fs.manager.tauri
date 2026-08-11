@@ -1,6 +1,6 @@
 [package]
 name = "fs-manager-tauri"
-version = "0.2.0"
+version = "0.3.0"
 description = "fsManager - File System Manager with Tauri"
 authors = ["alexIV"]
 edition = "2021"
@@ -29,7 +29,10 @@ uuid = { version = "1", features = ["v4"] }
 pathdiff = "0.2"
 dirs = "5"
 url = "2"
-zip = "0.6"
+# default-features выключены: у zip 4 в дефолте aes/bzip2/lzma/ppmd/zstd — целый набор
+# C-зависимостей, из которых нам не нужна ни одна. Архивы плагинов и сборок ffmpeg —
+# deflate или stored.
+zip = { version = "4", default-features = false, features = ["deflate"] }
 tokio = { version = "1", features = ["time", "rt", "rt-multi-thread", "net", "io-util", "fs", "sync"] }
 # `stream` — тело запроса потоком: заливка мастера не должна читаться в память целиком.
 reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }

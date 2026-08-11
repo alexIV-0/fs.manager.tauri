@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { ErrorBoundary } from './Utils/ErrorBoundary';
 import NodeApp from './NODE_WIN/index';
 import { initTauriAPI } from './Utils/tauri-api';
 import { disableNativeAutofill } from './Utils/disableNativeAutofill';
@@ -13,7 +14,9 @@ async function bootstrap() {
 
 	ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 		<React.StrictMode>
-			<NodeApp />
+			<ErrorBoundary window='nodeWin'>
+				<NodeApp />
+			</ErrorBoundary>
 		</React.StrictMode>,
 	);
 }

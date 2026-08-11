@@ -2,10 +2,9 @@
 // HTTP-запросы выполняются через Rust (http_upload / http_fetch / http_download) — нет CORS.
 
 import path from 'path';
-import { fs, ffmpeg, http, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 const BASE_URL = 'https://api.video-transformer.tsp.ai';
 const UPLOAD_URL = `${BASE_URL}/api/job/add`;
@@ -60,7 +59,8 @@ function getLatestUrl(urls: string[]): string | null {
 	return latestUrl;
 }
 
-export async function AIstyledVidFunc(_item: any, _description: any): Promise<string[]> {
+export async function AIstyledVidFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const inputFiles: string[] = _item.import?.inputFile ?? [];
@@ -100,7 +100,7 @@ export async function AIstyledVidFunc(_item: any, _description: any): Promise<st
 			resolution,
 			videoLength,
 			targetDir,
-		});
+		}, ctx);
 
 		if (!resultPath) {
 			throw new Error(`${_description.curItem} — не удалось обработать: ${path.basename(videoFile)}`);
@@ -118,7 +118,8 @@ async function styleVideo(opts: {
 	resolution: string;
 	videoLength: number;
 	targetDir: string;
-}): Promise<string | null> {
+}, ctx: PluginContext): Promise<string | null> {
+	const { http, sendToMW } = ctx;
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		sendToMW('log', { text: `🚀 AIstyledVid attempt ${attempt}/${MAX_ATTEMPTS}: ${path.basename(opts.videoFile)}` });
 		sendToMW('log', { text: `🌐 POST ${UPLOAD_URL}` });
@@ -156,7 +157,7 @@ async function styleVideo(opts: {
 		}
 
 		try {
-			const resultUrls = await pollJobStatus(jobId);
+			const resultUrls = await pollJobStatus(jobId, ctx);
 			const latestUrl = getLatestUrl(resultUrls);
 			if (!latestUrl) throw new Error('Result file URL not found in job result');
 
@@ -189,7 +190,8 @@ async function styleVideo(opts: {
 	return null;
 }
 
-async function pollJobStatus(jobId: string): Promise<string[]> {
+async function pollJobStatus(jobId: string, ctx: PluginContext): Promise<string[]> {
+	const { http, sendToMW } = ctx;
 	const statusUrl = `${STATUS_URL_BASE}${jobId}/status`;
 	let lastStatus = '';
 

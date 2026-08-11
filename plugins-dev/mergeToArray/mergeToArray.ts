@@ -1,9 +1,9 @@
 import { mergeAndFilterByType } from '../../src/Utils/mergeAndFilterByType';
-import { sendToMW } from '../_template/pluginSender';
+import type { PluginContext } from '../../src/PluginAPI/host';
 
-export { onLoad } from '../_template/pluginSender';
 
-export async function mergeToArrayFunc(_item: any, _description: any) {
+export async function mergeToArrayFunc(_item: any, _description: any, ctx: PluginContext) {
+	const { sendToMW } = ctx;
 	const finalFile = mergeAndFilterByType(_item.import ?? {}, Array.isArray(_item.addLink) ? _item.addLink : [], _description?.typeOfFile ?? {});
 
 	sendToMW('statusbar', {

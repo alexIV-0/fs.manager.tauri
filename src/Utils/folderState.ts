@@ -122,7 +122,7 @@ async function writeStateFile(
 		updatedBy: patch.updatedBy ?? cur.updatedBy ?? `app:${getClientId()}`,
 	};
 
-	unwrap(await commands.writeFile(filePath, JSON.stringify(next, null, 2)));
+	unwrap(await commands.writeFileAtomic(filePath, JSON.stringify(next, null, 2)));
 }
 
 // ── Публичный API ───────────────────────────────────────────────────────────

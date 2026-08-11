@@ -136,17 +136,46 @@ fn color_types_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("colorTypes.json"))
 }
 
+/// Читает JSON, при любой беде отдавая `fallback`.
+///
+/// Битый файл дополнительно сохраняется рядом как `<имя>.corrupt` — ОДИН раз, чтобы
+/// не затирать первую (самую ценную) копию. Без этого потеря настроек была совершенно
+/// молчаливой: файл не разобрался → пользователь получил дефолты и никакого следа,
+/// почему исчезли пути к ffmpeg и лимиты пулов.
 fn read_json(path: &PathBuf, fallback: Value) -> Value {
-    match fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(fallback),
-        Err(_) => fallback,
+    let Ok(content) = fs::read_to_string(path) else {
+        return fallback;
+    };
+    match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            let backup = path.with_extension("corrupt");
+            if !backup.exists() {
+                let _ = fs::write(&backup, &content);
+            }
+            eprintln!(
+                "[settings] {} не разобрался ({}), взяты значения по умолчанию. Копия: {}",
+                path.display(),
+                e,
+                backup.display()
+            );
+            fallback
+        }
     }
 }
 
+/// Пишет JSON АТОМАРНО: во временный файл рядом, затем переименование.
+///
+/// Раньше здесь был `fs::write`, который сначала обрезает файл, а потом наполняет.
+/// Крах или потеря питания в этом окне оставляли `settings.json` пустым, а `read_json`
+/// молча подставлял дефолты — то есть пользователь терял все настройки без следа.
+/// Переименование внутри одного каталога атомарно, поэтому файл на диске всегда либо
+/// прежний целиком, либо новый целиком.
 fn write_json(path: &PathBuf, value: &Value) -> Result<(), String> {
     let content =
         serde_json::to_string_pretty(value).map_err(|e| format!("to_string_pretty: {}", e))?;
-    fs::write(path, content).map_err(|e| format!("write: {}", e))
+
+    super::fs_commands::write_atomic(path, content.as_bytes())
 }
 
 // ==================== App Settings ====================
@@ -771,4 +800,88 @@ pub fn program_paths_set(
         st.program_paths = paths.clone();
     }
     Ok(paths)
+}
+
+#[cfg(test)]
+mod json_io_tests {
+    use super::{read_json, write_json};
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fsm-settings-{}-{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn запись_и_чтение_туда_обратно() {
+        let dir = tmpdir("roundtrip");
+        let p = dir.join("settings.json");
+        write_json(&p, &json!({"limit": 3})).unwrap();
+        assert_eq!(read_json(&p, json!({})), json!({"limit": 3}));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Регрессия: `fs::write` сначала обрезает файл, потом наполняет. Крах в этом окне
+    /// оставлял пустой settings.json, а чтение молча отдавало дефолты — пользователь
+    /// терял пути к ffmpeg и лимиты пулов без следа. Теперь запись идёт через `.tmp`
+    /// с переименованием, поэтому временных остатков после успеха быть не должно.
+    #[test]
+    fn после_записи_не_остаётся_временного_файла() {
+        let dir = tmpdir("no-tmp");
+        let p = dir.join("settings.json");
+        write_json(&p, &json!({"a": 1})).unwrap();
+        let tmp = dir.join("settings.json.tmp");
+        assert!(p.exists(), "целевой файл должен появиться");
+        assert!(!tmp.exists(), "временный файл обязан быть переименован, а не остаться");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn перезапись_не_теряет_прежнее_при_успехе() {
+        let dir = tmpdir("overwrite");
+        let p = dir.join("settings.json");
+        write_json(&p, &json!({"v": 1})).unwrap();
+        write_json(&p, &json!({"v": 2})).unwrap();
+        assert_eq!(read_json(&p, json!({})), json!({"v": 2}));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Битый файл больше не исчезает молча: рядом остаётся `.corrupt`, по которому
+    /// видно, что дефолты подставлены не просто так.
+    #[test]
+    fn битый_json_сохраняется_рядом_и_отдаёт_дефолты() {
+        let dir = tmpdir("corrupt");
+        let p = dir.join("settings.json");
+        std::fs::write(&p, "{ это не json").unwrap();
+
+        let got = read_json(&p, json!({"default": true}));
+        assert_eq!(got, json!({"default": true}));
+
+        let backup = p.with_extension("corrupt");
+        assert!(backup.exists(), "копия битого файла должна сохраниться");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "{ это не json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn первая_копия_битого_файла_не_затирается() {
+        let dir = tmpdir("corrupt-once");
+        let p = dir.join("settings.json");
+        let backup = p.with_extension("corrupt");
+
+        std::fs::write(&p, "первая порча").unwrap();
+        read_json(&p, json!({}));
+        std::fs::write(&p, "вторая порча").unwrap();
+        read_json(&p, json!({}));
+
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            "первая порча",
+            "сохранять надо ПЕРВУЮ порчу — она ближе к причине"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

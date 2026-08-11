@@ -101,7 +101,10 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	// Docs
 	// docs_list/docs_read мигрированы на tauri-specta (commands.docsList/docsRead) — мапперы не нужны.
 	// Log window: log_window_* мигрированы на tauri-specta (commands.logWindow*) — мапперы не нужны.
-	// (мёртвые toggle/get_status/open_quick/open_errors_only/emit_item_start/console остаются snake-командами.)
+	// Мёртвая половина API (log_message/toggle/close/get_status/get_recent/get_errors/
+	// has_errors/open_quick/open_errors_only/emit_item_start/console) УДАЛЕНА 2026-08-10:
+	// её не вызывал никто, а фильтры уровней, поиск и «только с ошибками» окно делает
+	// на клиенте поверх items.
 	// log_archive_* мигрированы на tauri-specta (commands.logArchive*) — мапперы не нужны.
 	diag_log_write: (msg: string) => ({ msg }),
 	diag_log_path: () => ({}),

@@ -3,10 +3,9 @@
 // через @plugin-api/tauri helper.
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 // Ключи плагинной инфраструктуры — не считаются динамическими addLink-входами.
 const KNOWN_ITEM_KEYS = new Set([
@@ -38,7 +37,8 @@ function toStringValue(value: any): string {
 	return String(value);
 }
 
-export async function promptUpdaterFunc(_item: any, _description: any): Promise<string[]> {
+export async function promptUpdaterFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	// ── 1. Get text content ──────────────────────────────────────────────────
 	let text = '';
 

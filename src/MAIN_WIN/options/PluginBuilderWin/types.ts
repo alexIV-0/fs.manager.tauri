@@ -474,21 +474,31 @@ export function validateUiJson(uiJson: UiJsonData): string[] {
 	return errors;
 }
 
+/**
+ * Заготовка кода плагина для вкладки «Script» в PluginBuilder.
+ *
+ * Раньше здесь выдавались импорты из `../../electron/main/...` — путей, которых в
+ * проекте нет с самого переезда на Tauri. Плагин, созданный через UI, не
+ * компилировался с рождения, и `tsc` этого не видел: код лежит в шаблонной строке.
+ *
+ * Теперь заготовка соответствует текущему контракту: host-сервисы приходят
+ * третьим аргументом (`ctx`), `onLoad` не нужен — его отсутствие позволяет
+ * загрузчику кэшировать модуль (см. src/PluginAPI/loader.ts).
+ */
 export function generateScriptTemplate(funcName: string): string {
 	return `
-import { testAndCreateFolder } from '../../electron/main/fileSistem/testAndCreateFolder';
-import { createPathForFileByPattern } from '../../electron/main/utilits/createPathForFileByPattern';
-import { sendToMW } from '../_template/pluginSender';
 import path from 'path';
+import type { PluginContext } from '../../src/PluginAPI/host';
+import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/pluginSender';
+export async function ${funcName}(_item: any, _description: any, ctx: PluginContext) {
+\t// Доступно из ctx: fs, http, ffmpeg, exec, ae, paths, system, fonts, sendToMW, log, signal.
+\tconst { fs, sendToMW } = ctx;
+\tconst finalFile: string[] = [];
 
-export async function ${funcName}(_item: any, _description: any) {
-\tlet finalFile: any[] = [];
+\tconst curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];
 
-\tlet curPath = _item.targetPath.length == 0 ? ['$clearName ($random(3))'] : _item.targetPath;
-
-\tif (_item.import.targetPath) {
+\tif (_item.import.targetPath?.length) {
 \t\tcurPath.unshift(..._item.import.targetPath);
 \t} else {
 \t\tcurPath.unshift('$localFolder', '$mainFolderName', '$projectName', '$findTime');
@@ -497,12 +507,12 @@ export async function ${funcName}(_item: any, _description: any) {
 \tconst fileForName = _description.pathForDelete;
 \tconst fileTo = createPathForFileByPattern(curPath, _description, fileForName);
 
-\ttestAndCreateFolder(path.dirname(fileTo));
+\tawait fs.mkdir(path.dirname(fileTo));
 
 \tsendToMW('statusbar', {
 \t\ttext: \`\${_description.infoText}: [process]\\n \${_description.curItem}\`,
 \t});
-\tsendToMW('log', { level: 'info', text: \`Result:\n\${finalFile}\` });
+\tsendToMW('log', { level: 'info', text: \`Result:\\n\${finalFile.join('\\n')}\` });
 \treturn finalFile;
 }
 `;

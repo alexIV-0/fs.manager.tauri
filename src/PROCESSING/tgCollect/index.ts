@@ -140,7 +140,8 @@ async function writePending(projectPath: string, arr: any[]): Promise<void> {
 		await commands.deleteItem(p).catch(() => {});
 		return;
 	}
-	unwrap(await commands.writeFile(p, JSON.stringify(arr, null, 2)));
+	// pending.json — состояние сбора, пишем атомарно (обрыв не должен оставить огрызок)
+	unwrap(await commands.writeFileAtomic(p, JSON.stringify(arr, null, 2)));
 }
 
 async function addPending(

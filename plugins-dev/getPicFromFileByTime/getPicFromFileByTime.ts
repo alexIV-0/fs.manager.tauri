@@ -3,12 +3,12 @@
 // Tauri-port: ffmpeg/fs через helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
-export async function getPicFromFileByTime(_item: any, _description: any): Promise<string[]> {
+export async function getPicFromFileByTime(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const sceneDetect: boolean = _item.sceneDetection || false;
@@ -35,7 +35,7 @@ export async function getPicFromFileByTime(_item: any, _description: any): Promi
 			if (parsed !== null) {
 				if (!importedTimestamps.includes(parsed)) importedTimestamps.push(parsed);
 			} else if (typeof val === 'string') {
-				for (const t of await parseTimecodeFile(val)) {
+				for (const t of await parseTimecodeFile(val, fs)) {
 					if (!importedTimestamps.includes(t)) importedTimestamps.push(t);
 				}
 			}
@@ -129,7 +129,8 @@ export async function getPicFromFileByTime(_item: any, _description: any): Promi
 	return finalFile;
 }
 
-async function parseTimecodeFile(filePath: string): Promise<number[]> {
+// `fs` параметром: host-сервисы живут в ctx, у модуля состояния нет → кэшируется.
+async function parseTimecodeFile(filePath: string, fs: PluginContext['fs']): Promise<number[]> {
 	try {
 		const content = await fs.read(filePath);
 		const lines = content

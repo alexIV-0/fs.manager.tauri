@@ -1,9 +1,8 @@
-import { fs, ffmpeg, exec, paths, system, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 import path from 'path';
 
-export { onLoad } from '../_template/tauri';
 
 // ── Форматы вывода ─────────────────────────────────────────────────────────────
 // Расширение финального файла по выбранному формату. Сам whisper всегда гоним в
@@ -50,7 +49,8 @@ function modelToDtwPreset(modelFile: string): string | null {
 // В проде плагин установлен в app_data/plugins/<id>@<ver>, в dev — distr-plugins/<id>@<ver>.
 // Берём установочный путь самого плагина (pluginInstallPath по id/version из pluginCtx);
 // fallback на plugins-dev/transcribeVA — только для старого dev-сценария.
-async function resolvePluginRoot(ctx: any): Promise<string | null> {
+async function resolvePluginRoot(ctx: PluginContext): Promise<string | null> {
+	const { paths, sendToMW } = ctx;
 	// Кандидаты id: из ctx (если прокинут 3-м аргументом) + хардкод собственного id
 	// (плагин знает, что он transcribeVA — на случай старой сборки app без pluginCtx).
 	const tries: Array<[string, string | undefined]> = [];
@@ -91,7 +91,8 @@ async function getWhisperBin(pluginRoot: string, platformTarget: string): Promis
 // Лежит в плагине рядом с бинарниками; список — от новой версии к старой.
 const VAD_MODELS = ['ggml-silero-v6.2.0.bin', 'ggml-silero-v5.1.2.bin'];
 
-async function getVadModel(pluginRoot: string): Promise<string | null> {
+async function getVadModel(pluginRoot: string, ctx: PluginContext): Promise<string | null> {
+	const { fs } = ctx;
 	const vadDir = path.join(pluginRoot, 'whisper', 'vad');
 	for (const name of VAD_MODELS) {
 		const modelPath = path.join(vadDir, name);
@@ -113,8 +114,10 @@ async function detectLanguageOnly(
 	threads: number,
 	vadModel: string | null,
 	vadThreshold: number,
+	ctx: PluginContext,
 	nodeId?: string,
 ): Promise<string> {
+	const { exec, sendToMW } = ctx;
 	const args = [
 		'-m', modelPath,
 		'-f', audioFile,
@@ -333,13 +336,14 @@ function buildProse(words: WhisperWord[]): string {
 
 // ── Основная функция плагина ───────────────────────────────────────────────────
 
-export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: any): Promise<string[]> {
+export async function transcribeAudioFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, paths, system, exec, sendToMW } = ctx;
 	const finalFiles: string[] = [];
 	const startTime = Date.now();
 	const nodeId: string | undefined = _item?.id;
 
 	const [pluginRoot, platformTarget, cpuCount, tmpRoot] = await Promise.all([
-		resolvePluginRoot(_ctx),
+		resolvePluginRoot(ctx),
 		paths.platformTarget(),
 		system.cpuCount(),
 		paths.tmpdir(),
@@ -361,7 +365,7 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 		return Number.isFinite(v) ? Math.min(0.9, Math.max(0, v)) : 0.5;
 	})();
 	const useVad = vadThreshold > 0;
-	const vadModel = useVad ? await getVadModel(pluginRoot) : null;
+	const vadModel = useVad ? await getVadModel(pluginRoot, ctx) : null;
 	if (useVad && !vadModel) {
 		sendToMW('log', { level: 'warn', text: `[whisper] VAD on, but no Silero model found in whisper/vad/ — running without VAD` });
 	}
@@ -459,7 +463,7 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 
 			// ── Режим "только детект языка" ───────────────────────────────────────
 			if (outputFormatRaw === 'Detect Language') {
-				const detectedLang = await detectLanguageOnly(bin, modelPath, pcmFile, threads, vadModel, vadThreshold, nodeId);
+				const detectedLang = await detectLanguageOnly(bin, modelPath, pcmFile, threads, vadModel, vadThreshold, ctx, nodeId);
 				const langFile = path.join(fileDir, `${fileBaseName} [${detectedLang}].txt`);
 				await fs.write(langFile, '');
 				sendToMW('log', { text: `[whisper] detected language: "${detectedLang}" → ${langFile}` });
@@ -525,7 +529,7 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 		} finally {
 			// Одноразовая temp-папка whisper целиком (WAV + сырой JSON + остатки) — удаляем
 			// при любом исходе, включая continue/ошибку.
-			await tryRemove(workDir);
+			await tryRemove(workDir, ctx);
 		}
 	}
 
@@ -536,7 +540,8 @@ export async function transcribeAudioFunc(_item: any, _description: any, _ctx?: 
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-async function tryRemove(p: string) {
+async function tryRemove(p: string, ctx: PluginContext) {
+	const { fs } = ctx;
 	try { await fs.remove(p); } catch {}
 }
 

@@ -4,7 +4,10 @@
 // Все HTTP — через http.* (Rust/reqwest, без CORS).
 
 import path from 'path';
-import { http } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// Сервисы приходят параметром из ctx точки входа через границу модуля —
+// у файла не остаётся собственного состояния, плагин кэшируется.
 
 const V = '5.199';
 const V_SHORT = '5.249';
@@ -33,7 +36,7 @@ export class VkApiError extends Error {
 }
 
 /** Вызов VK API (POST form-urlencoded). Бросает VkApiError при error в ответе. */
-async function vkApi(method: string, params: Record<string, any>, version = V): Promise<any> {
+async function vkApi(method: string, params: Record<string, any>, http: PluginContext['http'], version = V): Promise<any> {
 	const all: Record<string, any> = { v: version, ...params };
 	const body = Object.entries(all)
 		.filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -63,6 +66,7 @@ export async function publishVideo(
 	token: string,
 	file: string,
 	opts: { name: string; description: string; groupId?: number; onLog?: (msg: string) => void },
+	http: PluginContext['http'],
 ): Promise<PublishResult> {
 	const log = opts.onLog ?? (() => {});
 
@@ -74,7 +78,7 @@ export async function publishVideo(
 	if (opts.groupId) saveParams.group_id = opts.groupId;
 
 	log(`шаг 1/3 video.save (name="${opts.name}"${opts.groupId ? `, group_id=${opts.groupId}` : ''})…`);
-	const save = await vkApi('video.save', saveParams);
+	const save = await vkApi('video.save', saveParams, http);
 	const ownerId = Number(save.owner_id);
 	const videoId = Number(save.video_id);
 	log(`шаг 1/3 ✓ owner_id=${ownerId}, video_id=${videoId}`);
@@ -95,13 +99,27 @@ export async function publishVideo(
 	if (ownerId < 0) wallParams.from_group = 1;
 
 	log(`шаг 3/3 wall.post (owner_id=${ownerId}${ownerId < 0 ? ', from_group=1' : ''})…`);
-	const post = await vkApi('wall.post', wallParams);
+	const post = await vkApi('wall.post', wallParams, http);
 	const postId = Number(post.post_id);
 	log(`шаг 3/3 ✓ post_id=${postId}`);
 	return { ownerId, videoId, postId, permalink: `https://vk.com/wall${ownerId}_${postId}` };
 }
 
-/** Режим Clips / Both: вертикальный клип (+ дубль в ленту при wallpost=1). */
+/**
+ * Режим Clips / Both: вертикальный клип (+ дубль в ленту при wallpost=1).
+ *
+ * ⚠️ НЕ ПОДКЛЮЧЕНО. Вызывающих нет: в `ui.json` ноды всего четыре свойства
+ * (inputFile, description, account, target), выбора режима там нет, а `autoPostVK.ts`
+ * всегда пишет `mode: 'video'`. Чтобы включить, нужно свойство режима в `ui.json` и
+ * развилка в точке входа.
+ *
+ * Оставлено намеренно, а не удалено: здесь записана последовательность VK для клипов
+ * (`shortVideo.create` → upload → пауза на обработку → `edit` → `publish`) вместе с
+ * неочевидным — обязательным `license_agree`, отдельной версией API `V_SHORT`, и тем,
+ * что после загрузки нужно ЖДАТЬ обработки, иначе `edit` отвечает ошибкой. Восстановить
+ * это по документации VK дороже, чем хранить. В бандл не попадает: esbuild собран с
+ * `treeShaking: true`, неиспользованный экспорт выбрасывается.
+ */
 export async function publishClip(
 	token: string,
 	file: string,
@@ -113,11 +131,12 @@ export async function publishClip(
 		waitSec?: number;
 		onStatus?: (text: string) => void;
 	},
+	http: PluginContext['http'],
 ): Promise<PublishResult> {
 	const createParams: Record<string, any> = { access_token: token, file_size: opts.fileSize };
 	if (opts.groupId) createParams.group_id = opts.groupId;
 
-	const create = await vkApi('shortVideo.create', createParams, V_SHORT);
+	const create = await vkApi('shortVideo.create', createParams, http, V_SHORT);
 	const ownerId = Number(create.owner_id);
 	const videoId = Number(create.video_id);
 
@@ -139,7 +158,7 @@ export async function publishClip(
 		can_make_duet: 1,
 	};
 	if (opts.groupId) editParams.group_id = opts.groupId;
-	await vkApi('shortVideo.edit', editParams, V_SHORT);
+	await vkApi('shortVideo.edit', editParams, http, V_SHORT);
 
 	const pubParams: Record<string, any> = {
 		access_token: token,
@@ -150,7 +169,7 @@ export async function publishClip(
 		wallpost: opts.wallpost,
 	};
 	if (opts.groupId) pubParams.group_id = opts.groupId;
-	const pub = await vkApi('shortVideo.publish', pubParams, V_SHORT);
+	const pub = await vkApi('shortVideo.publish', pubParams, http, V_SHORT);
 
 	const postId = pub?.wall_post_id ? Number(pub.wall_post_id) : undefined;
 	return { ownerId, videoId, postId, permalink: `https://vk.com/clip${ownerId}_${videoId}` };

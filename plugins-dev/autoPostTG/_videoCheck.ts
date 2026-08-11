@@ -3,7 +3,10 @@
 //   • есть видеопоток
 // 2 ГБ возможны только через self-hosted telegram-bot-api — отложено (см. план).
 
-import { ffmpeg, fs } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// Сервисы приходят параметром из ctx точки входа через границу модуля —
+// у файла не остаётся собственного состояния, плагин кэшируется.
 
 export interface CheckResult {
 	ok: boolean;
@@ -13,7 +16,8 @@ export interface CheckResult {
 const MB = 1024 * 1024;
 export const TG_MAX_BYTES = 50 * MB;
 
-export async function videoCheck(file: string): Promise<CheckResult> {
+export async function videoCheck(file: string, ctx: PluginContext): Promise<CheckResult> {
+	const { ffmpeg, fs } = ctx;
 	let size = 0;
 	try {
 		size = (await fs.stat(file)).size;

@@ -3,11 +3,10 @@
 // HTTP-запросы выполняются через Rust (http_fetch / http_upload / http_download) — нет CORS.
 
 import path from 'path';
-import { fs, http, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 const MAX_ATTEMPTS = 3;
 const POLL_INTERVAL_MS = 10000;
@@ -42,7 +41,8 @@ function getMimeType(filename: string): string {
 
 const FILE_TYPE_SUFFIXES = new Set(['video', 'image', 'audio', 'latent']);
 
-export async function AIcomfyUIFunc(_item: any, _description: any): Promise<any[]> {
+export async function AIcomfyUIFunc(_item: any, _description: any, ctx: PluginContext): Promise<any[]> {
+	const { fs, sendToMW } = ctx;
 	let finalFile: any[] = [];
 	resetCancelFlag();
 
@@ -154,7 +154,7 @@ export async function AIcomfyUIFunc(_item: any, _description: any): Promise<any[
 		targetDir,
 		namePattern,
 		description: _description,
-	});
+	}, ctx);
 
 	if (result) finalFile.push(...result);
 	sendToMW('log', { level: 'info', text: `Result:\n${finalFile.join('\n')}` });
@@ -170,7 +170,8 @@ async function sendToComfyAsync(opts: {
 	targetDir: string;
 	namePattern: string;
 	description: any;
-}): Promise<string[] | null> {
+}, ctx: PluginContext): Promise<string[] | null> {
+	const { http, sendToMW } = ctx;
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
 			sendToMW('log', { text: `🚀 ComfyUI attempt ${attempt}/${MAX_ATTEMPTS}` });
@@ -219,7 +220,7 @@ async function sendToComfyAsync(opts: {
 				description: opts.description,
 				infoText: opts.description?.infoText,
 				curItem: opts.description?.curItem,
-			});
+			}, ctx);
 		} catch (err: any) {
 			sendToMW('log', { text: `❌ Attempt ${attempt} failed: ${err.message}` });
 			if (attempt >= MAX_ATTEMPTS) return null;
@@ -240,7 +241,8 @@ async function pollAndDownload(opts: {
 	description: any;
 	infoText?: string;
 	curItem?: string;
-}): Promise<string[]> {
+}, ctx: PluginContext): Promise<string[]> {
+	const { http, sendToMW } = ctx;
 	const statusPath = opts.statusUrl && opts.statusUrl.startsWith('/') ? opts.statusUrl : `/v2/jobs/${opts.jobId}`;
 	const statusFullUrl = `${opts.baseUrl}${statusPath}`;
 
@@ -281,7 +283,7 @@ async function pollAndDownload(opts: {
 
 		if (status === 'done') {
 			sendToMW('log', { text: `📋 Full status response:\n${JSON.stringify(statusData, null, 2)}` });
-			return await downloadOutputs(statusData.outputs, opts.targetDir, opts.namePattern, opts.baseUrl, authHeaders, opts.description);
+			return await downloadOutputs(statusData.outputs, opts.targetDir, opts.namePattern, opts.baseUrl, authHeaders, opts.description, ctx);
 		}
 		if (status === 'failed' || status === 'error' || status === 'cancelled') {
 			throw new Error(`Job ${opts.jobId} failed: ${statusData.error || 'Unknown error'}`);
@@ -296,7 +298,9 @@ async function downloadOutputs(
 	baseUrl: string,
 	headers: [string, string][],
 	description: any,
+	ctx: PluginContext,
 ): Promise<string[]> {
+	const { fs, http, sendToMW } = ctx;
 	const results: string[] = [];
 	await fs.mkdir(targetDir);
 

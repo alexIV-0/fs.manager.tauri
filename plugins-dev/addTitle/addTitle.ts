@@ -3,7 +3,7 @@
 // через fontsGetList (Rust обходит системные папки сам).
 
 import path from 'path';
-import { fs, ffmpeg, fonts, paths, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { TitleSettings } from './types';
 import { parseSubtitles, detectFormat } from './parsers';
@@ -12,7 +12,6 @@ import { buildPhrases } from './buildPhrases';
 import { buildAssFile } from './buildAss';
 import { resolveFontFamily } from './fontFamily';
 
-export { onLoad } from '../_template/tauri';
 
 function isTitleFile(filePath: string): boolean {
 	return ['.srt', '.vtt', '.json'].includes(path.extname(filePath).toLowerCase());
@@ -32,7 +31,8 @@ function escapeFilterPath(p: string): string {
 	return p.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
-export async function addTitle(_item: any, _description: any): Promise<string[]> {
+export async function addTitle(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, fonts, paths, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	let curPath: string[] = _item.targetPath?.length > 0 ? [..._item.targetPath] : ['$clearName ($random(3))'];
@@ -118,7 +118,7 @@ export async function addTitle(_item: any, _description: any): Promise<string[]>
 		// подменяется дефолтным. Поэтому читаем настоящее имя семейства из файла.
 		let fontName = fontResult?.name ?? platformFallbackFont();
 		if (fontResult) {
-			const family = await resolveFontFamily(fontResult.path);
+			const family = await resolveFontFamily(fontResult.path, fs);
 			if (family) fontName = family;
 			else sendToMW('log', { text: `[addTitle] Could not read family name from ${fontResult.path}, using stem "${fontName}"` });
 		}

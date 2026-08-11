@@ -84,7 +84,12 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	}
 
 	// преобразуем ноды в очередь процессов
-	const processArr = createProcessQueue(nodesProps);
+	// Цикл в графе означает, что часть нод молча не выполнится — говорим об этом
+	// вслух, уровнем error: это не шум, а причина «пайплайн не сработал».
+	const processArr = createProcessQueue(nodesProps, 'mainSearch', (message) => {
+		console.warn('[createProcessQueue]', message);
+		void commands.sendLog('error', `[${projectName}] ${message}`).catch(() => {});
+	});
 
 	const typeOfFileRaw = typeOfFile_store.getState().patternStore;
 	const typeOfFile = Object.fromEntries(typeOfFileRaw.map((t: any) => [t.name, t.path]));

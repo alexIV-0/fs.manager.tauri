@@ -3,11 +3,10 @@
 // getFullInfoFromVideoFile → ffmpeg.getInfo; fs/path → helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { buildOverlayGraph } from '../../src/Utils/ffmpegGraphs/overlayGraph';
 
-export { onLoad } from '../_template/tauri';
 
 // ── Типы (зеркало OverlayEdit/types.ts) ──────────────────────────────────────
 
@@ -39,8 +38,12 @@ async function processSinglePair(
 	opts: { fgAudio: boolean; bgAudio: boolean; offsetBG: boolean },
 	targetPath: string,
 	_description: any,
+	// ctx перед необязательным nodeId: host-сервисы приходят из него, поэтому у
+	// модуля не остаётся состояния и загрузчик его кэширует.
+	ctx: PluginContext,
 	nodeId?: string,
 ): Promise<string> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const label = `${_description.infoText}: [overlay]`;
 
 	sendToMW('statusbar', { text: `${label} analyze\n${path.basename(bgFile)}` });
@@ -122,7 +125,8 @@ async function processSinglePair(
 
 // ── Plugin entry ─────────────────────────────────────────────────────────────
 
-export async function overlayAndOffsetFunc(_item: any, _description: any): Promise<string[]> {
+export async function overlayAndOffsetFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { sendToMW } = ctx;
 	const finalFiles: string[] = [];
 
 	const bgFiles: string[] = (_item.import?.inputBG ?? []).filter(Boolean);
@@ -170,7 +174,7 @@ export async function overlayAndOffsetFunc(_item: any, _description: any): Promi
 		const fName = path.basename(basePath, path.extname(basePath));
 		const outFile = path.join(dirPath, `${fName}.mp4`);
 
-		const result = await processSinglePair(bgFile, fgFile, overlaySettings, opts, outFile, _description, _item.id);
+		const result = await processSinglePair(bgFile, fgFile, overlaySettings, opts, outFile, _description, ctx, _item.id);
 		finalFiles.push(result);
 	}
 

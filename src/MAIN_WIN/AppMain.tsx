@@ -1,5 +1,6 @@
 import { runProcessing } from '@/PROCESSING/runProcessing';
 import { abortNow } from '@/PROCESSING/utils/processingAbort';
+import { RUN_PROCESSING } from '@/PROCESSING/runLanes';
 import { startPostScheduler, stopPostScheduler } from '@/PROCESSING/autoPost/scheduler';
 import { usePostingAvailable } from '@/PROCESSING/autoPost/usePostingAvailable';
 import { usePosting_store } from '@/Store/Processing/usePosting_store';
@@ -135,7 +136,8 @@ export default function AppMain() {
 	const stopButtNowClick = () => {
 		if (!isRunningRef.current) return;
 		abortNow();
-		commands.abortProcessing();
+		// Полоса обработки: у постинга своя, его ffmpeg этот стоп больше не убивает.
+		commands.abortProcessing(RUN_PROCESSING);
 		setIsScanning(false);
 		useStatusBar_Store.getState().setStatusBarState('waiting starting');
 	};

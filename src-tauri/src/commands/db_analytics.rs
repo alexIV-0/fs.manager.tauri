@@ -188,15 +188,17 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or(json!({}))
 }
 
+/// Пишет агрегат периода АТОМАРНО.
+///
+/// Раньше был `std::fs::write`, который обрезает файл перед наполнением. Обрыв в этом
+/// окне давал усечённый файл, а `read_json` при ошибке разбора возвращает `{}` — то есть
+/// **вся накопленная статистика периода молча обнулялась** и начинала считаться заново.
+/// Окно возникает постоянно: на каждый обработанный item пишется четыре таких файла.
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
-    }
     let content = serde_json::to_string_pretty(value)
         .map_err(|e| format!("serialize: {}", e))?;
-    std::fs::write(path, content)
-        .map_err(|e| format!("write {}: {}", path.display(), e))
+    // write_atomic сам создаёт родительские каталоги.
+    super::fs_commands::write_atomic(path, content.as_bytes())
 }
 
 // ── Period stats — ключи ─────────────────────────────────────────────────────
@@ -220,6 +222,16 @@ pub fn year_key() -> String {
 
 // ── Запись статистики ─────────────────────────────────────────────────────────
 
+/// ВАЖНО про параллелизм: `read_json` → `upsert_period` → `write_json` — это
+/// read-modify-write, и он НЕ защищён сам по себе. Сериализуется он тем, что
+/// вызывающий (`log_window_emit_item_end`) держит замок `DbState` через весь
+/// `write_analytics`. Замок этот существует ради `DbState.items`, а файловый цикл
+/// закрывает заодно — то есть защита случайная.
+///
+/// Если когда-нибудь захочется «оптимизировать» и отпускать замок раньше (склонировать
+/// запись и работать с файлами без него — обычно так и правильно), инкременты начнут
+/// теряться: два одновременно завершившихся item'а прочитают одно значение и запишут
+/// каждый своё. Тогда сюда нужен собственный замок.
 fn upsert_period(existing: &mut Value, key: &str, record: &DbItemRecord, status: &str, cost: f64, ended_at: &str, duration: &str) {
     let success: u64 = if status == "done" { 1 } else { 0 };
     let error:   u64 = if status == "error" { 1 } else { 0 };

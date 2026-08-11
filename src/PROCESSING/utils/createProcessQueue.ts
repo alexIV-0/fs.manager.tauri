@@ -35,7 +35,13 @@ function resolveSpySource(
 // ------------------------------------------------------------------
 // Строит execution-объект для одной ноды.
 // ------------------------------------------------------------------
-function buildExecutionObject(id: string, nodesMap: Map<string, AnyNode>, allNodes: AnyNode[], allEdges: AnyEdge[]): any | null {
+function buildExecutionObject(
+	id: string,
+	nodesMap: Map<string, AnyNode>,
+	allNodes: AnyNode[],
+	allEdges: AnyEdge[],
+	onWarn?: (message: string) => void,
+): any | null {
 	const node = nodesMap.get(id);
 	// Spy-нода не исполняется — она «сплющивается» при сборке importObj
 	// у downstream-нод через resolveSpySource. В очереди её нет.
@@ -87,7 +93,7 @@ function buildExecutionObject(id: string, nodesMap: Map<string, AnyNode>, allNod
 		}
 
 		const subgraph = resolvedStartId
-			? createProcessQueueFromNodes({ nodes: childNodes, edges: innerEdges }, resolvedStartId, allNodes, allEdges)
+			? createProcessQueueFromNodes({ nodes: childNodes, edges: innerEdges }, resolvedStartId, allNodes, allEdges, onWarn)
 			: [];
 
 		// loopInput: внешняя нода → loopInput handle (через spy резолвим к реальному источнику)
@@ -136,7 +142,13 @@ function buildExecutionObject(id: string, nodesMap: Map<string, AnyNode>, allNod
 // Строит очередь для subgraph (рекурсивно для loop внутри loop).
 // allNodes/allEdges — весь граф для cross-boundary зависимостей.
 // ------------------------------------------------------------------
-function createProcessQueueFromNodes(graph: Graph, startNodeId: string, allNodes: AnyNode[], allEdges: AnyEdge[]): any[] {
+function createProcessQueueFromNodes(
+	graph: Graph,
+	startNodeId: string,
+	allNodes: AnyNode[],
+	allEdges: AnyEdge[],
+	onWarn?: (message: string) => void,
+): any[] {
 	const nodes = graph.nodes ?? [];
 	const edges = graph.edges ?? [];
 
@@ -228,13 +240,32 @@ function createProcessQueueFromNodes(graph: Graph, startNodeId: string, allNodes
 		}
 	}
 
-	return orderedIds.map((id) => buildExecutionObject(id, nodesMap, allNodes, allEdges)).filter(Boolean);
+	// То же, что на верхнем уровне: цикл среди детей loop'а тоже не должен молчать.
+	if (onWarn && orderedIds.length !== involved.size) {
+		const dropped = [...involved].filter((id) => !orderedIds.includes(id));
+		onWarn(`В графе цикл внутри loop-ноды: не будут выполнены — ${dropped.join(', ')}.`);
+	}
+
+	return orderedIds.map((id) => buildExecutionObject(id, nodesMap, allNodes, allEdges, onWarn)).filter(Boolean);
 }
 
 // ------------------------------------------------------------------
 // Публичная функция — точка входа
 // ------------------------------------------------------------------
-export function createProcessQueue(graph: Graph, startNodeId = 'mainSearch'): any[] {
+/**
+ * Собирает очередь исполнения из графа.
+ *
+ * `onWarn` — канал для того, о чём иначе никто не узнает. Kahn ниже упорядочивает
+ * узлы по входящим рёбрам, и узел, входящий в ЦИКЛ, до нулевой степени не доходит
+ * никогда: он просто не попадает в очередь. Раньше это происходило молча —
+ * пользователь видел, что часть графа не выполнилась, без единого сообщения.
+ * Редактор теперь замкнуть цикл не даёт, но в уже сохранённых флоу он может лежать.
+ */
+export function createProcessQueue(
+	graph: Graph,
+	startNodeId = 'mainSearch',
+	onWarn?: (message: string) => void,
+): any[] {
 	// Перезаписываем cost/costUnit актуальными значениями из plugin.json,
 	// чтобы изменения цены в Settings → Plugins применялись без перезагрузки флоу.
 	const nodes = syncCostsFromManifest((graph.nodes ?? []) as any);
@@ -355,6 +386,22 @@ export function createProcessQueue(graph: Graph, startNodeId = 'mainSearch'): an
 		}
 	}
 
+	// 5. Выпавшие узлы = цикл. Проверка дешёвая (сравнение размеров), а без неё
+	//    частичное выполнение графа выглядит как «программа не работает».
+	if (onWarn && orderedIds.length !== involved.size) {
+		const dropped = [...involved].filter((id) => !orderedIds.includes(id));
+		const names = dropped
+			.map((id) => {
+				const label = allNodesMap.get(id)?.data?.label;
+				return label ? `${label} (${id})` : id;
+			})
+			.join(', ');
+		onWarn(
+			`В графе цикл: ноды не будут выполнены — ${names}. ` +
+				`Уберите обратную связь между ними (стрелку, ведущую назад).`,
+		);
+	}
+
 	// 6. Формируем execution-объекты
 	const involvedNodesMap = new Map<string, AnyNode>();
 	for (const id of involved) {
@@ -362,5 +409,5 @@ export function createProcessQueue(graph: Graph, startNodeId = 'mainSearch'): an
 		if (node) involvedNodesMap.set(id, node);
 	}
 
-	return orderedIds.map((id) => buildExecutionObject(id, involvedNodesMap, nodes, edges)).filter(Boolean);
+	return orderedIds.map((id) => buildExecutionObject(id, involvedNodesMap, nodes, edges, onWarn)).filter(Boolean);
 }

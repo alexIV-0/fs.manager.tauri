@@ -22,6 +22,14 @@ export interface PostRoute {
 }
 
 // Запись в лог постинга (options/_post/$MM.$YYYY.jsonl). Пишет нода Poster; читает драйвер.
+//
+// Формат ОДИН на все площадки — площадка лежит в `platform`. Иначе дедуп и тайминг
+// драйвера пришлось бы писать под каждую заново.
+//
+// До 2026-08-11 этот интерфейс был скопирован в три плагина (`autoPostVK/_postLog.ts`,
+// `autoPostTG/…`, `autoPostYT/…`), и копии разъехались: у VK и YT `videoId` был разных
+// типов, а `postedFileSet` в плагинах игнорировал платформу — файл, запощенный в VK,
+// считался запощенным и для Telegram. Живёт только эта копия.
 export interface PostRecord {
 	ts: number;
 	publishedAt: number;
@@ -30,9 +38,17 @@ export interface PostRecord {
 	account: string;
 	file: string;
 	mode: string;
-	ownerId?: number;
-	videoId?: number;
-	postId?: number;
+
+	// Локаторы площадок: каждая заполняет своё, чужие поля отсутствуют.
+	ownerId?: number; // VK
+	videoId?: number | string; // VK — числовой, YouTube — строковый
+	postId?: number; // VK
+	chatId?: string | number; // Telegram (@username или числовой id)
+	channel?: string; // Telegram — читаемое имя канала
+	messageId?: number; // Telegram
+
 	permalink: string;
 	status: string;
+	/** Текст ошибки при `status: 'failed'` — Telegram пишет по записи на КАНАЛ. */
+	error?: string;
 }

@@ -281,9 +281,25 @@ async logArchiveClear() : Promise<Result<number, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async abortProcessing() : Promise<Result<null, string>> {
+async abortProcessing(lane: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("abort_processing") };
+    return { status: "ok", data: await TAURI_INVOKE("abort_processing", { lane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Снимает сигнал прерывания и обнуляет счётчики прогона.
+ * 
+ * Зовётся из `startProcessContext()` (src/PROCESSING/utils/processingAbort.ts) на
+ * старте каждого прогона. До этого команда была мёртвой, а флаг гасился побочным
+ * эффектом внутри `exec_command` — из-за чего первый убитый процесс снимал стоп
+ * для всех остальных.
+ */
+async resetProcessingSignal(lane: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reset_processing_signal", { lane }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -734,6 +750,30 @@ async writeFile(filePath: string, content: string) : Promise<Result<JsonValue, s
 }
 },
 /**
+ * Атомарная перезапись файла целиком — для файлов СОСТОЯНИЯ приложения.
+ * 
+ * Отличие от `write_file`: тот пишет напрямую (`fs::write` обрезает файл, потом
+ * наполняет), и крах в этом окне оставляет обрезанный файл. Здесь запись идёт через
+ * временный файл рядом с переименованием, поэтому на диске всегда либо прежнее
+ * содержимое целиком, либо новое целиком.
+ * 
+ * Почему отдельная команда, а не изменение `write_file`: тот универсальный и его
+ * зовут ПЛАГИНЫ для произвольных файлов, а переименование меняет inode — это может
+ * задеть вотчеры и жёсткие ссылки. Плагинам поведение оставлено прежним.
+ * 
+ * Применять к тому, что приложение перезаписывает целиком: `folderState.json`,
+ * сайдкары `postSources.json`/`tgSearch.json`, пресеты, `plugin.json`/`ui.json`
+ * из конструктора. Для дозаписи есть `append_file`.
+ */
+async writeFileAtomic(filePath: string, content: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("write_file_atomic", { filePath, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Дописывает строку в конец файла настоящим append'ом (O_APPEND), не перезаписывая файл.
  * Для append-only логов вроде _post/$MM.$YYYY.jsonl: краш посреди записи в худшем случае
  * оставит оборванную последнюю строку (парсер её пропустит), а не потеряет весь файл.
@@ -896,6 +936,14 @@ async fontsLoadOne(fontPath: string) : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Открыть путь системным средством. Реализация — `tauri-plugin-opener`
+ * (см. пояснение в `dialog_commands.rs`: рукописные `#[cfg]`-ветви убраны,
+ * на Windows там был небезопасный `cmd /c start`).
+ * 
+ * Отличие от `show_in_folder`: та РАСКРЫВАЕТ папку и выделяет в ней элемент,
+ * а эта просто открывает путь тем, что назначено в системе.
+ */
 async shellOpenPath(folderPath: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("shell_open_path", { folderPath }) };
@@ -1718,6 +1766,448 @@ async storagePathInfo(path: string) : Promise<Result<PathInfo, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Возвращает иконку файла как строку "data:image/png;base64,...".
+ * При ошибке возвращает Err — фронт тогда откатывается на нарисованную canvas-иконку.
+ */
+async getFileIcon(path: string, size: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_file_icon", { path, size }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pathJoin(segments: string[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("path_join", { segments }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openNodeWindow(data: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_node_window", { data }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Toggles the Web Inspector for the window that invoked the command.
+ * `window` is injected by Tauri — it's the caller's own webview, so F12 in any
+ * window opens that window's devtools. The inspector methods are compiled in
+ * because `tauri` is built with the `devtools` feature (see Cargo.toml).
+ */
+async openDevtools() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_devtools") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Handshake: окно (nodeWin/previewWin) запрашивает свои данные после монтирования React.
+ * Решает race-condition: tauri://loaded → emit("update-data") может произойти раньше, чем
+ * React успел подписаться. Команда смотрит метку вызывающего webview и шлёт last_data.
+ */
+async requestData() : Promise<void> {
+    await TAURI_INVOKE("request_data");
+},
+async diagLogWrite(msg: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("diag_log_write", { msg }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async diagLogPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("diag_log_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async diagLogClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("diag_log_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async isProcessingAborted(lane: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("is_processing_aborted", { lane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setProcessingProgress(currentStep: string, totalSteps: number, completedSteps: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_processing_progress", { currentStep, totalSteps, completedSteps }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProcessingProgress() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_processing_progress") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addProcessingError(error: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_processing_error", { error }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить файл/папку (processing)
+ */
+async processingDeleteItem(itemPath: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("processing_delete_item", { itemPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Получить информацию о файле/папке
+ */
+async getItemInfo(path: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_item_info", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async processItem(item: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("process_item", { item }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setStatusBar(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_status_bar", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendLog(level: string, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_log", { level, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async execCommand(args: ExecCommandArgs) : Promise<Result<ExecOutput, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("exec_command", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async killAllExecProcesses(lane: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kill_all_exec_processes", { lane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri-команда: возвращает путь к ffmpeg (из настроек или системный поиск)
+ */
+async ffmpegGetPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_get_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri-команда: возвращает путь к ffprobe (из настроек или системный поиск)
+ */
+async ffprobeGetPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffprobe_get_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает полную информацию о медиафайле через ffprobe (JSON-строку).
+ * Async-обёртка нужна по той же причине что и у ffmpeg_exec_with_progress:
+ * плагины дёргают ffprobe на каждом шаге, sync-команды быстро забивают
+ * Tauri worker-pool и блокируют параллельные IPC.
+ */
+async ffprobeGetInfo(filePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffprobe_get_info", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Снимает кадр из видеофайла и возвращает его как base64 data URL (image/png).
+ */
+async ffmpegGetVideoThumbnail(filePath: string, timestampSec: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_get_video_thumbnail", { filePath, timestampSec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Запускает ffmpeg-команду с отслеживанием прогресса через stderr.
+ * Эмитит "processing-event" со статусбаром, **дросселированно** (не чаще раза в 200мс),
+ * чтобы не засорять event-bus и не блокировать UI thread.
+ * 
+ * Async-обёртка через `spawn_blocking` критична: иначе sync `child.wait()` забивает
+ * Tauri worker-pool, и параллельные IPC (path_exists, get_stat и т.п.) встают в очередь
+ * → UI замирает. С async-командой Tauri-runtime спокойно делит ресурсы.
+ */
+async ffmpegExecWithProgress(args: string[], durationSec: number | null, nodeId: string | null, statusText: string | null, runLane: string | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_exec_with_progress", { args, durationSec, nodeId, statusText, runLane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Расширенная версия read_media_preview: для видео запускает ffmpeg и возвращает кадр.
+ * Если ffmpeg не найден — возвращает пустую строку.
+ */
+async readMediaPreviewWithFfmpeg(filePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_media_preview_with_ffmpeg", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Универсальный HTTP-запрос (GET/POST/PUT/...) с опциональным строковым телом.
+ * Возвращает { status, ok, body }. Не бросает при 4xx/5xx — отдаёт статус.
+ */
+async httpFetch(args: HttpFetchArgs) : Promise<Result<HttpResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("http_fetch", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Multipart/form-data upload с локальными файлами (читает их в Rust → нет CORS).
+ * files: [{ field, path, mime?, filename? }], fields: [{ field, value }].
+ */
+async httpUpload(args: HttpUploadArgs) : Promise<Result<HttpResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("http_upload", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Скачивает URL в локальный файл потоково (чанками). Возвращает количество записанных байт.
+ * Если передан nodeId/statusText — эмитит прогресс в UI (статусбар/нода).
+ */
+async httpDownload(args: HttpDownloadArgs) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("http_download", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerInit() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_init") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerLoadPlugin(folderName: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_load_plugin", { folderName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerUnloadPlugin(pluginId: string, version: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_unload_plugin", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetAllPlugins() : Promise<Result<PluginInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_all_plugins") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetPluginsByType(pluginType: string) : Promise<Result<PluginInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_plugins_by_type", { pluginType }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetPlugin(pluginId: string, version: string | null) : Promise<Result<PluginInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_plugin", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Записывает централизованную цену (cost/costUnit) в plugin.json плагина и обновляет
+ * in-memory manifest. Вызывается из Settings → Plugins. Пишем именно в загруженный
+ * plugin.json (plugin.path) — то, что читает менеджер; читаем JSON как Value и правим
+ * только два поля, чтобы не потерять остальные/порядок ключей.
+ */
+async pluginManagerSetCost(pluginId: string, version: string, cost: string, costUnit: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_set_cost", { pluginId, version, cost, costUnit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetPluginUi(pluginId: string, version: string) : Promise<Result<PluginUINode | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_plugin_ui", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetAllUiNodes() : Promise<Result<PluginUINode[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_all_ui_nodes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetUiNodes() : Promise<Result<PluginUINode[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_ui_nodes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerList() : Promise<Result<JsonValue[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetState() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerCall(pluginId: string, version: string, method: string, args: JsonValue[]) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_call", { pluginId, version, method, args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerInstall(filePath: string) : Promise<Result<PluginInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_install", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerDelete(pluginId: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_delete", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerDestroy() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_destroy") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Собирает один плагин из `plugins-dev/<id>` в `distr-plugins/` через
+ * `plugins-dev/_packScripts/build-plugin.js` (esbuild). Доступно только в dev —
+ * в собранном приложении нет ни исходников, ни node.
+ * 
+ * GUI-процесс на macOS не наследует PATH из шелла, поэтому node запускается через
+ * login-shell (`$SHELL -lc`), который подтягивает PATH из профиля (homebrew/nvm).
+ */
+async pluginBuild(pluginId: string) : Promise<Result<PluginBuildResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_build", { pluginId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Вызывается init-скриптом при перехвате токена (если IPC доступен). Рассылает
+ * событие в UI и закрывает окно. Внутренняя команда (не в TS-биндингах).
+ */
+async vkAuthCapture(token: string, expiresIn: number | null, userId: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vk_auth_capture", { token, expiresIn, userId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1806,7 +2296,17 @@ export type CopyAction =
  * Файл на месте есть и сделан из ТОЙ ЖЕ версии источника. Ничего не качали.
  */
 "skippedUpToDate"
-export type CopyMoveOptions = { use_hash_check?: boolean; overwrite?: boolean }
+/**
+ * Опции копирования/перемещения.
+ * 
+ * Поле `useHashCheck` убрано (2026-08-10): оно принималось, но НЕ читалось ни
+ * `copy_item`, ни `move_item` — то есть API обещал проверку целостности, которой
+ * не было. В Electron-версии проверка существовала и закрывала конкретный риск:
+ * файлы лежали в папке Google-синхронизатора и могли быть скачаны не полностью.
+ * Сейчас за «байты на месте» отвечает шов хранилища (`storage_ensure_local` /
+ * `storage_copy_from_mirror`), то есть гарантия стала явной и переехала уровнем выше.
+ */
+export type CopyMoveOptions = { overwrite?: boolean }
 export type CopyReport = { action: CopyAction; bytes: number | null; 
 /**
  * Пришлось ли скачивать источник. `false` при `SkippedUpToDate` — в этом весь смысл.
@@ -1859,6 +2359,16 @@ keptHot: number; keptPinned: number;
  * Если это число не ноль — в зеркале есть что-то, что существует только здесь.
  */
 keptUnsafe: number }
+export type ExecCommandArgs = { cmd: string; args: string[]; cwd?: string | null; nodeId?: string | null; env?: ([string, string])[] | null; 
+/**
+ * Полоса прогона (`processing` / `posting`) — чей стоп убивает этот процесс.
+ * 
+ * `None` = обработка: столько же, сколько было до появления полос, когда флаг
+ * прерывания был один. Так продолжают работать старые установленные бандлы
+ * плагинов, которые про полосы не знают.
+ */
+runLane?: string | null }
+export type ExecOutput = { exit_code: number; stdout: string; stderr: string; killed: boolean }
 export type FfmpegInstallResult = { 
 /**
  * true только если ffmpeg+ffprobe скачаны И gate по required пройден.
@@ -1947,6 +2457,20 @@ export type FolderAggregate =
 "error"
 export type FolderBadge = { aggregate: FolderAggregate; files: number; bytes: number; localFiles: number; localBytes: number }
 export type FontInfo = { name: string; path: string; loadable: boolean }
+export type HttpDownloadArgs = { url: string; dest: string; headers?: ([string, string])[] | null; 
+/**
+ * ID ноды — если передан, прогресс скачивания шлётся как processing-event
+ * с тем же payload-форматом, что у ffmpeg ({ type:"statusbar", payload:{text,progress} }).
+ */
+nodeId?: string | null; 
+/**
+ * Префикс текста в статусбаре (напр. "⬇️ Скачивание result.mp3"). Само наличие
+ * nodeId ИЛИ statusText включает показ прогресса; без них — тихое скачивание как раньше.
+ */
+statusText?: string | null }
+export type HttpFetchArgs = { url: string; method?: string | null; headers?: ([string, string])[] | null; body?: string | null }
+export type HttpResponse = { status: number; ok: boolean; body: string }
+export type HttpUploadArgs = { url: string; headers?: ([string, string])[] | null; files?: UploadFile[] | null; fields?: UploadField[] | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 /**
  * Строка вкладки «локальные копии»: файл, который синхронизирован И лежит на диске.
@@ -1987,6 +2511,14 @@ local: boolean; isFolder: boolean; size: number | null;
  * Unix seconds. Для облачного файла — исходное время из каталога.
  */
 mtime: number | null; fileId: string | null }
+/**
+ * Результат сборки плагина. Форма совпадает с тем, что ждёт фронтовый handleBuild
+ * (success/stdout/stderr/error).
+ */
+export type PluginBuildResult = { success: boolean; stdout: string; stderr: string; error?: string | null }
+export type PluginInfo = { id: string; version: string; name: string; description: string; type: string[]; hasUI: boolean; path: string; manifest: PluginManifest; uiType: string | null; cost: string; costUnit: string }
+export type PluginManifest = { id: string; name: string; description: string; version: string; apiVersion: number; type: string[]; main: string; ui: JsonValue | null; external: string[]; cost?: string; costUnit?: string; resourcePool?: string | null }
+export type PluginUINode = { id: string; type: string; position: JsonValue; width: number; height: number; plugin_id?: string | null; plugin_version?: string | null; plugin_path?: string | null; plugin_name?: string | null; ui_type?: string | null; data: JsonValue }
 export type PreviewAudioResult = { 
 /**
  * Абсолютный путь к WAV в кэше (фронт превращает в asset-URL через toFileUrl).
@@ -2104,6 +2636,10 @@ keep_temp_files: boolean | null;
  */
 timeout_sec: number | null; 
 /**
+ * Полоса прогона (`processing`/`posting`) — чей стоп прерывает ОЖИДАНИЕ AE.
+ */
+run_lane?: string | null; 
+/**
  * Убивать предыдущий процесс AE перед запуском (Windows), чтобы "-r" гарантированно
  * попал в холодный старт — AE не подхватывает "-r", если уже открыт. По умолчанию true;
  * выключается галкой в ноде, если вдруг понадобится оставить AE открытым вручную.
@@ -2202,6 +2738,8 @@ direction: string; name: string; bytesTotal: number | null; bytesDone: number;
  * `queued` | `active` | `paused` | `error` | `done`.
  */
 state: string; error: string | null; updatedAt: number }
+export type UploadField = { field: string; value: string }
+export type UploadFile = { field: string; path: string; mime?: string | null; filename?: string | null }
 export type UploadResult = { fileId: string; s3Key: string; bytes: number; strategy: UploadStrategy }
 /**
  * Как заливать. `Multipart` пока не реализован — поля `upload_id`/`parts_done`

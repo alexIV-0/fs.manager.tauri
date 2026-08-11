@@ -5,11 +5,10 @@
 
 import path from 'path';
 import { nanoid } from 'nanoid';
-import { fs, ffmpeg, sendToMW, VideoFileInfo } from '../_template/tauri';
+import type { PluginContext, VideoFileInfo } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 // ── Нужна ли конвертация под эталон ──────────────────────────────────────────
 
@@ -82,6 +81,8 @@ async function convertFileToReference(
 	curInfo: VideoFileInfo,
 	reference: VideoFileInfo,
 	workDir: string,
+	// `ffmpeg` параметром: host-сервисы живут в ctx, у модуля состояния нет → кэшируется.
+	ffmpeg: PluginContext['ffmpeg'],
 	ffmpegComm: { text: string; duration: number; nodeId?: string },
 ): Promise<string> {
 	const tmpFile = path.join(workDir, `${path.basename(curFile, path.extname(curFile))}_conv_${nanoid(3)}${path.extname(curFile)}`);
@@ -152,6 +153,7 @@ async function concatWithFade(
 	finalF: string,
 	outputDuration: number,
 	reference: VideoFileInfo,
+	ffmpeg: PluginContext['ffmpeg'],
 	ffmpegComm: { text: string; duration: number; nodeId?: string },
 ): Promise<void> {
 	const hasVideo = reference.hasVideo;
@@ -213,7 +215,8 @@ async function concatWithFade(
 
 // ── Главная функция плагина ──────────────────────────────────────────────────
 
-export async function joinFileFunc(_item: any, _description: any): Promise<string[]> {
+export async function joinFileFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	// 1. Фильтруем входящие файлы — только video/audio
@@ -313,7 +316,7 @@ export async function joinFileFunc(_item: any, _description: any): Promise<strin
 		});
 
 		if (anyNeedsConversion && needConvertFlags[i]) {
-			const tmpFile = await convertFileToReference(curFile, curInfo, reference, workDir, {
+			const tmpFile = await convertFileToReference(curFile, curInfo, reference, workDir, ffmpeg, {
 				text: `${_description.infoText}: [join VA] convert ${i + 1}/${filesForJoin.length} ${path.basename(curFile)}`,
 				duration: curInfo.durationInSeconds || 100,
 				nodeId: _item.id,
@@ -334,7 +337,7 @@ export async function joinFileFunc(_item: any, _description: any): Promise<strin
 
 	// 11. Склейка
 	if (fadeDuration > 0 && processedFiles.length > 1) {
-		await concatWithFade(processedFiles, filesForJoinInfo, fadeDuration, finalF, outputDuration, reference, {
+		await concatWithFade(processedFiles, filesForJoinInfo, fadeDuration, finalF, outputDuration, reference, ffmpeg, {
 			text: `${_description.infoText}: [join VA] concat+fade → ${path.basename(finalF)}`,
 			duration: effectiveDuration || 100,
 			nodeId: _item.id,

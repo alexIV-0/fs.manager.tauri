@@ -1,0 +1,17 @@
+{
+	"identifier": "main-window",
+	"description": "Права ТОЛЬКО главного окна. Каждое проверено по единственному месту вызова: перезапуск и обновление — AppUpdaterAccordion; буфер обмена для ФАЙЛОВ и перетаскивание наружу — колонки файлового менеджера через fileSystemActions/dragOut. Окна логов, нод и превью в этом списке не участвуют.",
+	"windows": [
+		"main"
+	],
+	"permissions": [
+		"process:default",
+		"updater:default",
+		"drag:default",
+		"clipboard:allow-read-files",
+		"clipboard:allow-write-files",
+		"clipboard:allow-read-files-uris",
+		"clipboard:allow-write-files-uris",
+		"clipboard:allow-has-files"
+	]
+}

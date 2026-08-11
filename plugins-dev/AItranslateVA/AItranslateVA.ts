@@ -2,10 +2,9 @@
 // HTTP-запросы выполняются через Rust (http_upload / http_fetch / http_download) — нет CORS.
 
 import path from 'path';
-import { fs, http, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 const BASE_URL = 'https://ai-video-parse-xiprk.ondigitalocean.app';
 const SUBMIT_URL = `${BASE_URL}/api/dubbing/submit`;
@@ -20,7 +19,8 @@ const AUDIO_EXT_RE = /\.(mp3|wav|m4a|ogg|aac|flac)$/i;
 type LangMap = Record<string, string>;
 let languagesCache: LangMap | null = null;
 
-export async function AItranslateVAFunc(_item: any, _description: any): Promise<string[]> {
+export async function AItranslateVAFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const inputFiles: string[] = _item.import?.inputFile ?? [];
@@ -33,7 +33,7 @@ export async function AItranslateVAFunc(_item: any, _description: any): Promise<
 	const numSpeakers: number = Number.isFinite(_item.numSpeakers) ? Number(_item.numSpeakers) : 0;
 	const dropBg: boolean = _item.dropBackgroundAudio === true;
 
-	const langMap = await getLanguagesMap();
+	const langMap = await getLanguagesMap(ctx);
 	const targetLangs = targetLangNames.map((name) => {
 		const code = langMap[name];
 		if (!code) throw new Error(`Неизвестный язык: ${name}`);
@@ -79,7 +79,7 @@ export async function AItranslateVAFunc(_item: any, _description: any): Promise<
 				dropBg,
 				isAudioInput,
 				targetFilePath,
-			});
+			}, ctx);
 
 			if (!ok) {
 				throw new Error(`${_description.curItem} — не удалось перевести ${path.basename(videoFile)} → ${lang.name}`);
@@ -100,7 +100,8 @@ async function dubWithRetry(opts: {
 	dropBg: boolean;
 	isAudioInput: boolean;
 	targetFilePath: string;
-}): Promise<boolean> {
+}, ctx: PluginContext): Promise<boolean> {
+	const { http, sendToMW } = ctx;
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
 			sendToMW('log', {
@@ -134,7 +135,7 @@ async function dubWithRetry(opts: {
 			const jobId: number = jobData.job_id;
 			sendToMW('log', { text: `📦 Job accepted: ${jobId} (rq=${jobData.rq_job_id})` });
 
-			const finalStatus = await pollDubbingStatus(jobId);
+			const finalStatus = await pollDubbingStatus(jobId, ctx);
 
 			const isAudioOnly = finalStatus.is_audio_only === true || opts.isAudioInput;
 			const downloadUrl = (isAudioOnly ? DOWNLOAD_AUDIO_URL_BASE : DOWNLOAD_VIDEO_URL_BASE) + jobId;
@@ -154,7 +155,8 @@ async function dubWithRetry(opts: {
 	return false;
 }
 
-async function pollDubbingStatus(jobId: number): Promise<{ is_audio_only?: boolean; status?: string }> {
+async function pollDubbingStatus(jobId: number, ctx: PluginContext): Promise<{ is_audio_only?: boolean; status?: string }> {
+	const { http, sendToMW } = ctx;
 	const statusUrl = `${STATUS_URL_BASE}${jobId}`;
 	let lastStatus = '';
 	while (true) {
@@ -185,7 +187,8 @@ async function pollDubbingStatus(jobId: number): Promise<{ is_audio_only?: boole
 	}
 }
 
-async function getLanguagesMap(): Promise<LangMap> {
+async function getLanguagesMap(ctx: PluginContext): Promise<LangMap> {
+	const { http } = ctx;
 	if (languagesCache) return languagesCache;
 
 	const res = await http.fetch(LANGUAGES_URL, { headers: [['Accept', 'application/json']] });

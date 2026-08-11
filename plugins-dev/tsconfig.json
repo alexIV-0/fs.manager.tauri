@@ -12,7 +12,17 @@
 		"isolatedModules": true,
 		"noEmit": true,
 		"types": ["node"],
-		"typeRoots": ["../node_modules/@types"]
+		"typeRoots": ["../node_modules/@types"],
+		// Плагины импортируют тип PluginContext из src/PluginAPI/host.ts, а тот тянет
+		// src/Utils/tauri-api.ts, который внутри ходит по алиасу `@/`. Без этих путей
+		// проверка типов плагинов спотыкается на файлах приложения.
+		// baseUrl не задаём (устарел, выпилят в TS 7) — пути в `paths` и так
+		// резолвятся относительно этого tsconfig.json, как в корневом конфиге.
+		"paths": {
+			"@/*": ["../src/*"],
+			"@plugin-api/fs-promises": ["../src/PluginAPI/fs-promises.ts"],
+			"@plugin-api/*": ["../src/PluginAPI/*.ts"]
+		}
 	},
 	"include": ["./**/*.ts"],
 	"exclude": ["node_modules", "_template/convertFile-old"]
