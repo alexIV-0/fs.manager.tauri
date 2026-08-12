@@ -186,8 +186,23 @@ impl MockApi {
         if self.with(|s| s.fail_notify) {
             return Err(StorageError::Other("notify упал".into()));
         }
+        // Бэкенд ищет строку по `s3_key` (`writeNotifyUpload`) и при совпадении
+        // ОБНОВЛЯЕТ её, сохраняя `file_id`. Мок обязан вести себя так же: иначе он
+        // прячет главное свойство перезаливки — что перерендер не плодит дубль и
+        // не рвёт историю файла.
+        let existing_id = self.with(|s| {
+            s.trees
+                .get(args.project_id)
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|e| e.s3_key.as_deref() == Some(args.s3_key))
+                })
+                .map(|e| e.id.clone())
+        });
         let file = ProjectFile {
-            id: format!("mock-{}-{}", args.folder_path, args.file_name),
+            id: existing_id
+                .unwrap_or_else(|| format!("mock-{}-{}", args.folder_path, args.file_name)),
             project_id: args.project_id.to_string(),
             folder_path: args.folder_path.to_string(),
             name: args.file_name.to_string(),
@@ -232,6 +247,7 @@ impl MockApi {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn presign_put(
         &self,
         project_id: &str,
@@ -239,6 +255,7 @@ impl MockApi {
         file_name: &str,
         content_type: &str,
         ttl_sec: Option<i64>,
+        s3_key: Option<&str>,
     ) -> StorageResult<PresignResponse> {
         if let Some(e) = self.take_failure() {
             return Err(e);
@@ -246,8 +263,21 @@ impl MockApi {
         // Ключ назначает бэкенд и вставляет uuid — повторяем форму, чтобы код,
         // который случайно попытается вывести из ключа логический путь, сломался
         // на моке, а не в проде.
-        let s3_key =
-            format!("innohub/projects/{project_id}/{folder_path}/00000000-{file_name}");
+        //
+        // Присланный ключ уважаем так же, как настоящий бэкенд: перезаливка
+        // известного файла обязана идти в ТОТ ЖЕ объект, иначе в каталоге
+        // появляется дубль с тем же именем.
+        let s3_key = match s3_key {
+            Some(k) => k.to_string(),
+            // С сегментом владельца, как настоящий бэкенд
+            // (`projectUploadObjectKey(access.ownerId, …)`). Из этого ключа
+            // определяется владелец проекта — в том числе у пустого проекта, где
+            // других ключей взять негде. Без сегмента мок прятал бы весь механизм.
+            None => format!(
+                "innohub/projects/{}/{project_id}/{folder_path}/00000000-{file_name}",
+                owner_of(project_id)
+            ),
+        };
         let base = self.with(|s| s.presign_base.clone());
         let url = match base {
             Some(b) => format!("{}/{}", b.trim_end_matches('/'), s3_key),
@@ -322,7 +352,20 @@ pub fn demo_state() -> MockState {
             content_hash: true,
             ..Default::default()
         },
-        projects: ProjectsResponse { clients, projects },
+        projects: ProjectsResponse {
+            clients,
+            // Имя есть только у одного владельца — чтобы демо показывало ОБА случая:
+            // папку с человеческим именем и папку, названную идентификатором (так
+            // будет выглядеть жизнь, пока бэкенд имён не отдаёт).
+            users: vec![RemoteUser {
+                id: owner_of("p1").to_string(),
+                // Папка подписывается ИМЕННО email'ом — так же будет в жизни.
+                email: "anya@studio.example".into(),
+                full_name: "Аня Смирнова".into(),
+                display_name: String::new(),
+            }],
+            projects,
+        },
         trees,
         ..Default::default()
     }
@@ -333,10 +376,26 @@ fn proj(id: &str, name: &str, client: Option<&str>) -> RemoteProject {
         id: id.into(),
         name: name.into(),
         client_id: client.map(|s| s.to_string()),
+        // `None` намеренно: настоящий бэкенд `userId` в `/projects` не отдаёт, и
+        // демо обязано проигрывать тот же путь — владелец добывается из ключа.
+        // Иначе мок «работал» бы через поле, которого в жизни нет.
+        user_id: None,
         group_name: "personal".into(),
         is_active: true,
         is_paused: false,
+        // Демо показывает и архивный проект: значок в колонке проектов и пропуск
+        // обработки иначе не проверить глазами.
+        is_archived: id == "p3",
+        archived_at: if id == "p3" { Some("2026-08-01T10:00:00.000Z".into()) } else { None },
         updated_at: "2026-08-07T09:00:00.000Z".into(),
+    }
+}
+
+/// Кто владеет проектом в фикстурах: `p1`/`p2` — один, `p3` — другой.
+fn owner_of(project: &str) -> &'static str {
+    match project {
+        "p3" => "8f14e45f-ceea-467a-9c4c-6b2f0a1d9e77",
+        _ => "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     }
 }
 
@@ -373,7 +432,13 @@ fn file(
         folder_path: folder.into(),
         name: name.into(),
         is_folder: false,
-        s3_key: Some(format!("innohub/projects/{project}/{folder}/uuid-{name}")),
+        // Раскладка как у бэкенда — С сегментом владельца: `projects/{userId}/{projectId}/…`.
+        // Без него мок прятал бы весь путь определения владельца, а именно он сейчас
+        // строит первый уровень зеркала.
+        s3_key: Some(format!(
+            "innohub/projects/{}/{project}/{folder}/uuid-{name}",
+            owner_of(project)
+        )),
         size_bytes: Some(size),
         content_type: Some(ct.into()),
         etag: Some(format!("etag-{id}")),

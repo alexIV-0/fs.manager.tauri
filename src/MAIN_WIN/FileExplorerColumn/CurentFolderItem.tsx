@@ -22,6 +22,7 @@ import {
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
 import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
+import { storageFolderMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
@@ -107,6 +108,12 @@ export function CurentFolderItem({
 		onPaste: () => pasteFromClipboardFs(path),
 		hasClipboard,
 	});
+
+	// «Обновить» — только у облачной папки: спрашивает состояние её проекта в онлайне.
+	// Признак «облачная» берём из наличия данных каталога у строки: они появляются
+	// только у того, что пришло из зеркала.
+	const folderCloudItems = storageFolderMenuItems(path, Boolean(storage));
+	const allMenuItems = [...menuItems, ...folderCloudItems];
 
 	return (
 		<>
@@ -201,7 +208,7 @@ export function CurentFolderItem({
 				position={menuPosition}
 				open={isMenuOpen}
 				onClose={handleMenuClose}
-				items={menuItems}
+				items={allMenuItems}
 			/>
 		</>
 	);

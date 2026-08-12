@@ -96,6 +96,10 @@ export interface MirrorItem {
 		progress: number | null;
 		error: string | null;
 		sizeBytes: number | null;
+		/** Только у строки проекта: проект убран в архив, обработка по нему не идёт. */
+		archived: boolean;
+		/** Только у строки проекта: приостановлен на сайте (`is_paused`) — галочка снята. */
+		paused: boolean;
 	};
 }
 
@@ -123,6 +127,8 @@ export async function browseMirror(p: string): Promise<MirrorItem[] | null> {
 				progress: e.progress,
 				error: e.error,
 				sizeBytes: e.sizeBytes,
+				archived: e.archived,
+				paused: e.paused,
 			},
 		}));
 	} catch {
@@ -148,6 +154,278 @@ export async function ensureMirrorDir(p: string): Promise<void> {
 		// Не создалась — дальше упадёт сама операция с понятной ошибкой,
 		// дублировать её здесь незачем.
 	}
+}
+
+/**
+ * Сообщить, что пайплайн положил файлы — их надо залить.
+ *
+ * Это **основной триггер заливки**, а не оптимизация. Слежка за файловой системой
+ * не может отличить дописанный файл от растущего (события «файл закрыт» на macOS
+ * нет вообще), поэтому она ждёт затишья, а раннер знает точно: шаг завершён.
+ *
+ * Вне зеркала — no-op. Ошибку глотаем: не залившийся файл увидит вотчер или
+ * полный обход, а падать из-за облака посреди обработки нельзя.
+ */
+export async function markUploads(paths: string[]): Promise<void> {
+	await ensureProbed();
+	const mine = paths.filter(maybeMirror);
+	if (mine.length === 0) return;
+	try {
+		await commands.storageMarkDirty(mine, true);
+	} catch {}
+}
+
+/**
+ * Конец витка: залить всё накопившееся, не дожидаясь затишья.
+ *
+ * Нужно для файлов, о готовности которых сообщить некому, — например месячного
+ * JSONL статистики: он дописывается на каждый элемент, и заливать его после
+ * каждого значило бы гонять весь файл в облако тысячу раз за месяц.
+ */
+export async function flushUploads(): Promise<void> {
+	await ensureProbed();
+	if (!mirrorRoot) return;
+	try {
+		await commands.storageFlushUploads();
+	} catch {}
+}
+
+/**
+ * Догнать дельты каталога по пути проекта — один раз в начале витка.
+ *
+ * Дальше весь виток можно доверять локальному индексу. Альтернатива — спрашивать
+ * бэкенд о каждом файле: при десяти тысячах элементов это десять тысяч запросов
+ * вместо одного.
+ *
+ * Вне зеркала — no-op.
+ */
+export async function catchUpProject(projectPath: string): Promise<void> {
+	await ensureProbed();
+	if (!maybeMirror(projectPath)) return;
+	try {
+		await commands.storageCatchUpPath(projectPath);
+	} catch {
+		// Дельты не пришли — работаем по индексу, какой есть. Это отставание
+		// каталога, а не причина останавливать обработку.
+	}
+}
+
+/**
+ * Архивный ли это проект. `false` — не архивный ИЛИ путь вообще не проект зеркала.
+ *
+ * Архивность решает бэкенд (`is_archived`, не `group_name`), и обработку по таким
+ * проектам запускать нельзя — так прямо написано в контракте storage-API. Вне
+ * зеркала — no-op без единого IPC-вызова.
+ */
+export async function projectArchived(projectPath: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(projectPath)) return false;
+	try {
+		const r = await commands.storageProjectInfo(projectPath);
+		return r.status === 'ok' ? Boolean(r.data?.archived) : false;
+	} catch {
+		// Каталог недоступен — не превращаем это в «пропустить проект»: молча
+		// потерянный виток обработки хуже, чем обработка архивного проекта.
+		return false;
+	}
+}
+
+/**
+ * Создать папку В КАТАЛОГЕ и на диске. `false` — путь не в зеркале, создавай сам.
+ *
+ * Отличается от `ensureMirrorDir`: та материализует на диске папку, которая в
+ * каталоге уже есть. Здесь папка в каталоге ЗАВОДИТСЯ — иначе у неё нет `file_id`,
+ * а значит ни переименования, ни удаления через API, ни значка синхронизации.
+ */
+export async function mkdirInCloud(path: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return false;
+	const r = await commands.storageMkdir(path);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data !== null;
+}
+
+/**
+ * Удалить — **двухступенчато**. `null` — путь не в зеркале, удаляй как обычно.
+ *
+ * Первое нажатие убирает локальную копию (файл остаётся в облаке со значком «только
+ * онлайн»), второе — удаляет в облаке. Случайное нажатие стоит повторного
+ * скачивания, а не мастера, который считали часами.
+ *
+ * `needsConfirm` — вторая ступень требует подтверждения: у бэкенда нет корзины
+ * (просьба 6), значит удаление в облаке необратимо. Подтвердил — зови с
+ * `allowOnline = true`.
+ */
+export async function deleteInCloud(path: string, allowOnline = false): Promise<import('@/bindings').DeleteStage | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storageDelete(path, allowOnline);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data;
+}
+
+/**
+ * Обновить состояние ОДНОЙ папки: дельты её проекта + сверка путей.
+ *
+ * Пункт меню «Обновить» у облачной папки. Спрашивает только её проект — незачем
+ * трогать чужие: охват синхронизации и так строится по тому, с чем работают.
+ *
+ * `false` — путь не в зеркале.
+ */
+export async function refreshFolder(path: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return false;
+	try {
+		await commands.storageCatchUpPath(path);
+		await commands.storageSyncNow();
+	} catch {
+		// Сеть отвалилась — показываем, что есть в индексе.
+	}
+	return true;
+}
+
+/**
+ * Догнать каталог прямо сейчас (кнопка «Обновить» у владельца).
+ *
+ * Интерфейс от этого не перерисовывается — он и так рисуется из локальной БД.
+ * Задача вызова: подтянуть саму БД и подвинуть локальные копии за изменившимися
+ * путями. Вне зеркала — no-op.
+ */
+export async function syncNow(): Promise<void> {
+	await ensureProbed();
+	if (!mirrorRoot) return;
+	try {
+		await commands.storageSyncNow();
+	} catch {
+		// Сеть отвалилась — показываем, что есть в индексе. Кнопка не обязана падать.
+	}
+}
+
+/**
+ * Освободить диск от локальных копий владельца. Онлайн не трогается.
+ *
+ * `null` — путь не в зеркале. Незалитое остаётся на диске: в нём работа, которой в
+ * облаке ещё нет, и отчёт это возвращает, чтобы интерфейс не соврал «удалено всё».
+ */
+export async function dropOwnerLocal(
+	path: string,
+): Promise<import('@/bindings').DropOwnerReport | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storageDropOwnerLocal(path);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data;
+}
+
+/**
+ * Разрешить конфликт: `takeCloud = true` — взять облачную версию, иначе залить свою.
+ *
+ * Бросает — вызывающий показывает ошибку: молча «ничего не произошло» в разрешении
+ * конфликта хуже всего, человек останется с тем же ⚠ и без объяснений.
+ */
+export async function resolveConflict(path: string, takeCloud: boolean): Promise<void> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return;
+	const r = await commands.storageResolveConflict(path, takeCloud);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+}
+
+/**
+ * Удалить ПОЛНОСТЬЮ — и копию, и запись в каталоге. `false` — путь не в зеркале.
+ *
+ * Для раннера, а не для человека: «удалить исходник после обработки» — явная
+ * инструкция пайплайна, и двухступенчатость тут вредна. Убрать только локальную копию
+ * значило бы оставить файл в каталоге, а следующий скан подобрал бы его снова и
+ * обработал заново — бесконечный круг.
+ *
+ * Человеку двухступенчатое удаление остаётся: там оно защищает от случайного нажатия.
+ */
+export async function deleteEverywhere(path: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return false;
+	// Первый вызов снимает локальную копию, если она есть; второй — запись в каталоге.
+	// Разрешение на облако передаём сразу: спрашивать в раннере некого.
+	const first = await deleteInCloud(path, true);
+	if (first === 'localCopy') await deleteInCloud(path, true);
+	return true;
+}
+
+/**
+ * Лежит ли путь в зеркале. Нужно интерфейсу, чтобы одинаковое меню вело себя
+ * по-разному: у онлайн-проекта переименование делается на сайте, а не на диске.
+ *
+ * Дешёво: после первого `storageStatus` ответ считается локально.
+ */
+export async function isInMirror(p: string): Promise<boolean> {
+	await ensureProbed();
+	return maybeMirror(p);
+}
+
+/**
+ * Переименовать в облаке И на диске. `false` — путь не в зеркале, переименовывай сам.
+ *
+ * Переименовать только на диске нельзя: логическое имя живёт в каталоге бэкенда, и
+ * после локального переименования путь перестаёт разбираться — колонка молча читает
+ * диск, значки синхронизации исчезают, а в облаке файл остаётся под прежним именем.
+ *
+ * Бросает с понятным текстом на уровнях выше проекта (владелец, сам проект): их
+ * имена меняются на сайте.
+ */
+export async function renameInCloud(path: string, newName: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return false;
+	const r = await commands.storageRename(path, newName);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data !== null;
+}
+
+/**
+ * Перенести внутри облака: тот же `/rename`, только меняется папка. `false` — путь
+ * не наш (или приёмник вне зеркала), переноси как обычно.
+ *
+ * Байты при этом не двигаются вообще: логический путь живёт в каталоге, а `s3Key` от
+ * папки не зависит. Перенос папки с сотнями гигабайт стоит один SQL-запрос.
+ *
+ * Перенос **между проектами** бэкенд не умеет — вернётся ошибка с объяснением.
+ */
+export async function moveInCloud(path: string, destDir: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path) || !maybeMirror(destDir)) return false;
+	const r = await commands.storageMove(path, destDir);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data !== null;
+}
+
+/**
+ * Переименовать ПРОЕКТ: имя в каталоге, папка зеркала следом. `false` — не наш путь.
+ *
+ * Пункт меню обычный, а не серый: для человека проект — такая же папка, и «сходи на
+ * сайт» ломает работу. Эндпоинта под machine token у бэкенда пока нет — тогда прилетит
+ * его ошибка, а на диске ничего не изменится (порядок «сначала каталог»).
+ */
+export async function renameProjectInCloud(path: string, newName: string): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return false;
+	const r = await commands.storageRenameProject(path, newName);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data !== null;
+}
+
+/**
+ * Включить/выключить проект в каталоге. `false` — путь не проект зеркала.
+ *
+ * Направление «программа → сайт». Обратное идёт само: `is_paused` приезжает в каждом
+ * `/projects` и снимает галочку (это работает уже сегодня).
+ *
+ * Эндпоинта под machine token у бэкенда пока нет — прилетит его ошибка. Новых полей
+ * в БД при этом не нужно: колонка `is_paused` есть и её пишет сайт.
+ */
+export async function setProjectPaused(path: string, paused: boolean): Promise<boolean> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return false;
+	const r = await commands.storageSetProjectPaused(path, paused);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data !== null;
 }
 
 export interface SeamPathInfo {

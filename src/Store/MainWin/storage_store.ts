@@ -29,6 +29,8 @@ const OFFLINE: StorageStatus = {
 		contentHash: false,
 	},
 	lastError: null,
+	watching: false,
+	pendingUploads: 0,
 };
 
 /** Где мы сейчас в онлайн-иерархии: клиент → проект → папка. */

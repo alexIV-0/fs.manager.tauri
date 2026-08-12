@@ -62,6 +62,15 @@ pub struct StorageStatus {
     pub caps: crate::storage::Capabilities,
     /// Ошибка последней попытки соединиться.
     pub last_error: Option<String>,
+    /// Поднялась ли слежка за зеркалом.
+    ///
+    /// `false` при подключённом клиенте — не поломка, но важная разница: файлы,
+    /// положенные руками, будут находиться редким полным обходом (до 10 минут), а
+    /// не за секунды. Без этого поля «почему файл не залился сразу» неотлаживаемо.
+    pub watching: bool,
+    /// Сколько путей ждут заливки в очереди кандидатов. Диагностика: очередь,
+    /// которая не пустеет, означает, что заливка стоит.
+    pub pending_uploads: i64,
 }
 
 // ─── Вспомогательное ─────────────────────────────────────────────────────────
@@ -141,6 +150,8 @@ pub async fn storage_connect(
             base_url: cfg.base_url,
             caps: Default::default(),
             last_error: Some("Не задан адрес сайта или токен".into()),
+            watching: false,
+            pending_uploads: 0,
         });
     }
 
@@ -160,6 +171,10 @@ pub async fn storage_connect(
     state
         .attach(sync, std::path::PathBuf::from(&cfg.mirror_root))
         .await;
+    // Хэндл нужен, чтобы фоновые передачи могли сообщить интерфейсу об
+    // изменившихся файлах: иначе значок меняется только у того, что начал сам
+    // интерфейс, а скачанное префетчем остаётся «только в облаке».
+    state.set_app(app.clone());
     remember_mode(&app, false);
     crate::storage::daemon::start(app.clone());
     Ok(StorageStatus {
@@ -170,6 +185,8 @@ pub async fn storage_connect(
         base_url: cfg.base_url,
         caps,
         last_error,
+        watching: state.is_watching(),
+        pending_uploads: state.pending_len() as i64,
     })
 }
 
@@ -210,6 +227,7 @@ pub async fn storage_connect_mock(
 
     let mirror_str = mirror.to_string_lossy().to_string();
     state.attach(sync, mirror).await;
+    state.set_app(app.clone());
     remember_mode(&app, true);
     crate::storage::daemon::start(app.clone());
     Ok(StorageStatus {
@@ -220,6 +238,8 @@ pub async fn storage_connect_mock(
         base_url: "mock://".into(),
         caps,
         last_error: None,
+        watching: state.is_watching(),
+        pending_uploads: state.pending_len() as i64,
     })
 }
 
@@ -245,6 +265,8 @@ pub async fn storage_disconnect(
         base_url: cfg.base_url,
         caps: Default::default(),
         last_error: None,
+        watching: false,
+        pending_uploads: 0,
     })
 }
 
@@ -265,6 +287,8 @@ pub async fn storage_status(
             base_url: cfg.base_url,
             caps: s.caps().clone(),
             last_error: None,
+            watching: state.is_watching(),
+            pending_uploads: state.pending_len() as i64,
         },
         None => StorageStatus {
             configured: cfg.is_connected(),
@@ -274,6 +298,8 @@ pub async fn storage_status(
             base_url: cfg.base_url,
             caps: Default::default(),
             last_error: None,
+            watching: false,
+            pending_uploads: 0,
         },
     })
 }
@@ -296,6 +322,13 @@ pub async fn storage_refresh_projects(
     // иначе переименованный проект перестанет находиться по пути.
     drop(guard);
     state.refresh_dirs().await;
+
+    // Первый уровень зеркала — владелец проекта. Бэкенд `userId` пока не отдаёт,
+    // поэтому недостающих владельцев добираем из ключей: без этого все проекты
+    // лежали бы в одной папке «Без клиента» вместо папок пользователей.
+    if let Err(e) = state.discover_owners().await {
+        eprintln!("[storage] владельцы проектов: {e}");
+    }
     Ok(resp)
 }
 
@@ -357,6 +390,9 @@ pub async fn storage_list_dir(
     project_id: String,
     folder_path: String,
 ) -> Result<Vec<StorageDirEntry>, String> {
+    // Первый `/tree` по проекту: без него листинг честно отдаёт пустоту из индекса,
+    // и «в облаке ничего нет» невозможно отличить от «мы ещё не спрашивали».
+    state.ensure_catalog(&project_id).await?;
     state.with_sync(|s| {
         let entries = s.index.list_dir(&project_id, &folder_path)?;
         let mut out = Vec::with_capacity(entries.len());
@@ -619,6 +655,51 @@ pub async fn storage_transfers(
 
 /// Отменить передачу. Прерывание происходит в цикле чтения между кусками,
 /// недокачанный `.part` удаляется.
+/// Что лежит здесь и не уехало в облако — включая остановленное вручную.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_not_uploaded(
+    state: State<'_, StorageService>,
+    limit: Option<u32>,
+) -> Result<Vec<crate::storage::NotUploadedRow>, String> {
+    state.not_uploaded(limit.unwrap_or(500) as usize).await
+}
+
+/// Отправить файл в облако по явной команде человека — снимая прошлую остановку.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_upload_now(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    state.allow_upload(&p);
+    state.mark_dirty(&[p], true);
+    Ok(())
+}
+
+/// Убрать задачу из списка передач (обычно — упавшую).
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_dismiss_transfer(
+    state: State<'_, StorageService>,
+    id: i64,
+) -> Result<(), String> {
+    state.dismiss_transfer(id).await
+}
+
+/// Повторить упавшую передачу. Заливка встаёт в очередь сразу, скачивание уходит
+/// в фоновую задачу. Если исходника больше нет — задача снимается, и об этом
+/// сообщается текстом.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_retry_transfer(
+    state: State<'_, StorageService>,
+    id: i64,
+) -> Result<String, String> {
+    state.retry_transfer(id).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn storage_cancel_transfer(
@@ -663,4 +744,223 @@ pub async fn storage_path_info(
     path: String,
 ) -> Result<crate::storage::PathInfo, String> {
     state.path_info(std::path::Path::new(&path)).await
+}
+
+/// Создать папку зеркала В КАТАЛОГЕ и на диске. `None` — путь не в зеркале.
+///
+/// Отличается от `storage_ensure_dir`: та только материализует на диске папку,
+/// которая в каталоге уже есть. Здесь папка в каталоге ЗАВОДИТСЯ — иначе у неё нет
+/// `file_id`, а значит ни переименования, ни удаления, ни значка синхронизации.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_mkdir(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<Option<String>, String> {
+    state.mkdir_in_cloud(std::path::Path::new(&path)).await
+}
+
+/// Догнать каталог прямо сейчас — кнопка «Обновить» у владельца.
+///
+/// Не перерисовывает интерфейс: он рисуется из локальной БД. Задача кнопки —
+/// подтянуть саму БД (дельты по тёплым проектам) и подвинуть локальные копии за
+/// изменившимися логическими путями.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_sync_now(state: State<'_, StorageService>) -> Result<i64, String> {
+    let warm = state.warm_projects(std::time::Duration::from_secs(15 * 60));
+    for pid in &warm {
+        if let Err(e) = state.catch_up_project(pid).await {
+            eprintln!("[storage] дельта {pid}: {e}");
+        }
+    }
+    let moved = state.reconcile_local_paths().await?;
+    Ok(moved as i64)
+}
+
+/// Освободить диск от локальных копий владельца. Онлайн не трогается.
+///
+/// Незалитое остаётся на диске (инвариант кэша) и попадает в отчёт: интерфейс
+/// обязан сказать, что удалено не всё, а не соврать «готово».
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_drop_owner_local(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<crate::storage::DropOwnerReport, String> {
+    state.drop_owner_local(std::path::Path::new(&path)).await
+}
+
+/// Разрешить конфликт: `takeCloud = true` — взять облачную версию, `false` — залить свою.
+///
+/// Конфликт единственное состояние, которое программа не решает сама: любой
+/// автовыбор теряет данные. Здесь только исполнение выбора человека.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_resolve_conflict(
+    state: State<'_, StorageService>,
+    path: String,
+    take_cloud: bool,
+) -> Result<Option<FileState>, String> {
+    state
+        .resolve_conflict(std::path::Path::new(&path), take_cloud)
+        .await
+}
+
+/// Удалить файл или папку зеркала — **двухступенчато**.
+///
+/// Первое нажатие убирает локальную копию (файл остаётся в облаке), второе —
+/// удаляет в облаке. Вторая ступень возвращает `needsConfirm`, пока `allow_online`
+/// не выставлен: у бэкенда нет корзины, и удаление в облаке необратимо.
+///
+/// `None` — путь не в зеркале, зовущий удаляет как обычно.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_delete(
+    state: State<'_, StorageService>,
+    path: String,
+    allow_online: Option<bool>,
+) -> Result<Option<crate::storage::DeleteStage>, String> {
+    state
+        .delete_in_cloud(std::path::Path::new(&path), allow_online.unwrap_or(false))
+        .await
+}
+
+/// Включить/выключить проект в каталоге (галочка во второй колонке).
+/// `None` — путь не проект зеркала, зовущий решает сам (локальная папка).
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_set_project_paused(
+    state: State<'_, StorageService>,
+    path: String,
+    paused: bool,
+) -> Result<Option<()>, String> {
+    state
+        .set_project_paused(std::path::Path::new(&path), paused)
+        .await
+}
+
+/// Переименовать проект: имя в каталоге, затем папка зеркала.
+/// `None` — путь не в зеркале.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_rename_project(
+    state: State<'_, StorageService>,
+    path: String,
+    new_name: String,
+) -> Result<Option<crate::storage::RenameReport>, String> {
+    state
+        .rename_project(std::path::Path::new(&path), &new_name)
+        .await
+}
+
+/// Перенести файл или папку зеркала в другую папку ТОГО ЖЕ проекта.
+///
+/// Тот же `/rename`, только меняется `folderPath`: байты не двигаются, `s3Key` не
+/// трогается. `None` — источник или приёмник вне зеркала, зовущий переносит сам
+/// (для выгрузки наружу это гидрация + обычное копирование).
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_move(
+    state: State<'_, StorageService>,
+    path: String,
+    dest_dir: String,
+) -> Result<Option<crate::storage::RenameReport>, String> {
+    state
+        .move_in_cloud(
+            std::path::Path::new(&path),
+            std::path::Path::new(&dest_dir),
+        )
+        .await
+}
+
+/// Переименовать файл или папку зеркала — в каталоге и на диске.
+///
+/// `None` — путь не в зеркале, зовущий переименовывает как обычно. Уровни выше
+/// проекта (владелец, сам проект) дают понятный отказ: их имена живут на сайте.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_rename(
+    state: State<'_, StorageService>,
+    path: String,
+    new_name: String,
+) -> Result<Option<crate::storage::RenameReport>, String> {
+    state
+        .rename_in_cloud(std::path::Path::new(&path), &new_name)
+        .await
+}
+
+/// Сведения о проекте по пути: архивный ли, приостановлен ли.
+///
+/// Раннер обязан пропускать архивные проекты (`STORAGE_API.md`, «Processing flags»),
+/// а интерфейс — показывать это значком. `None` — путь не проект зеркала, и это не
+/// ошибка: локальные папки сюда попадают штатно.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_project_info(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<Option<crate::storage::ProjectInfo>, String> {
+    state.project_info(std::path::Path::new(&path)).await
+}
+
+/// Сообщить, что по этим путям что-то появилось или изменилось.
+///
+/// `ready = true` — «файл дописан, заливай не дожидаясь затишья». Так зовёт
+/// раннер: он знает точно, шаг завершён. `ready = false` — «просто посмотри»,
+/// как это делает вотчер.
+///
+/// Пути вне зеркала молча отбрасываются — вызов безопасно ставить где угодно, не
+/// разбираясь заранее, облачный ли это путь. Возвращает, сколько путей принято.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_mark_dirty(
+    state: State<'_, StorageService>,
+    paths: Vec<String>,
+    ready: Option<bool>,
+) -> Result<i64, String> {
+    let bufs: Vec<std::path::PathBuf> = paths.into_iter().map(std::path::PathBuf::from).collect();
+    Ok(state.mark_dirty(&bufs, ready.unwrap_or(true)) as i64)
+}
+
+/// Объявить готовыми всех накопившихся кандидатов: конец витка, писать больше некому.
+///
+/// Заливку выполняет демон на следующем пульсе (≤3 с) — команда только снимает
+/// ожидание затишья. Так она отвечает мгновенно и не держит IPC-вызов на время
+/// передачи гигабайтов.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_flush_uploads(state: State<'_, StorageService>) -> Result<i64, String> {
+    Ok(state.flush_pending() as i64)
+}
+
+/// Догнать дельты для проекта, заданного ПУТЁМ, а не `project_id`.
+///
+/// Раннер оперирует путями и про идентификаторы каталога не знает. Один вызов на
+/// проект в начале витка — и дальше весь виток можно доверять индексу: иначе
+/// пришлось бы делать HEAD на каждый из десяти тысяч файлов.
+///
+/// `None` — путь не в зеркале (обычная локальная папка), и это не ошибка.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_catch_up_path(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<Option<StorageSyncReport>, String> {
+    let Some(project_id) = state.project_id_for_path(std::path::Path::new(&path)).await else {
+        return Ok(None);
+    };
+    let mut guard = state.sync_mut().await;
+    let s = guard
+        .as_mut()
+        .ok_or_else(|| "Хранилище не подключено".to_string())?;
+    let r = s.catch_up(&project_id).await.map_err(|e| e.to_string())?;
+    Ok(Some(StorageSyncReport {
+        pages: r.pages as i64,
+        upserted: r.upserted as i64,
+        deleted: r.deleted as i64,
+        skipped: r.skipped as i64,
+        rebootstrapped: r.rebootstrapped,
+        cursor: r.cursor,
+    }))
 }

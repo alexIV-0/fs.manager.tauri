@@ -14,6 +14,8 @@ import { startDrag } from '@crabnebula/tauri-plugin-drag';
 import { getInstanceType } from '@/PROCESSING/utils/fileSystemActions';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { commands, unwrap } from '@/Utils/specta';
+import { dirname } from '@/Utils/path';
+import { ensureLocal, moveInCloud } from '@/Utils/storageSeam';
 
 export type DragMode = 'move' | 'copy';
 
@@ -136,10 +138,15 @@ export function isDraggingOut(): boolean {
 // Применяет дроп в эксплорере: move (перемещение + удаление из исходной колонки) либо copy.
 export async function applyExplorerDrop(srcPath: string, destPath: string, mode: DragMode): Promise<void> {
 	if (mode === 'move') {
-		unwrap(await commands.moveItem(srcPath, destPath, { overwrite: false }));
+		// Перенос внутри облака — через каталог (`/rename` со сменой папки, 0 байт).
+		// Вне облака: гидрация источника, потом обычный перенос на диске.
+		// `destPath` — итоговый путь файла, а переносу нужна папка-приёмник.
+		if (!(await moveInCloud(srcPath, dirname(destPath)))) {
+			unwrap(await commands.moveItem(await ensureLocal(srcPath), destPath, { overwrite: false }));
+		}
 		await useColumnView_Store.getState().removeItemAndTrimColumns(getInstanceType(srcPath), srcPath);
 	} else {
-		unwrap(await commands.copyItem(srcPath, destPath, { overwrite: false }));
+		unwrap(await commands.copyItem(await ensureLocal(srcPath), destPath, { overwrite: false }));
 	}
 }
 

@@ -8,6 +8,7 @@ import { reloadFolders } from '@/PROCESSING/reloadFolders';
 import { loadFromLocalStorage } from '@/Utils/loadSaveToLS';
 import { greenColor } from '@/Store/Color/grayColor';
 import { storage_store } from '@/Store/MainWin/storage_store';
+import { syncNow, dropOwnerLocal } from '@/Utils/storageSeam';
 import { basename } from '@/Utils/path';
 
 type FolderItemProps = {
@@ -40,8 +41,32 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 		}
 	}, [scrollIntoView, scrollToMainFolder, obj.id]);
 
-	const handleRemoveClick = (e: React.MouseEvent) => {
+	const handleRemoveClick = async (e: React.MouseEvent) => {
 		e.stopPropagation();
+
+		// Облачная папка: убрать её из колонки значит «на этой машине больше не нужна».
+		// Онлайн не трогаем — записи каталога остаются, добавить обратно можно всегда,
+		// файлы скачаются заново. Но локальные копии надо унести, иначе гигабайты
+		// останутся на диске мусором, о котором никто не помнит.
+		if (obj.online) {
+			const ok = window.confirm(
+				`Убрать «${basename(obj.path)}» из списка?\n\n` +
+					`Локальные копии его проектов будут удалены с диска. В облаке всё останется — ` +
+					`папку можно добавить снова в любой момент.`,
+			);
+			if (!ok) return;
+			try {
+				const report = await dropOwnerLocal(obj.path);
+				if (report && report.keptUnsafe > 0) {
+					window.alert(
+						`Освобождено файлов: ${report.removed}. ` +
+							`Осталось ${report.keptUnsafe} — они ещё не залиты в облако, и стирать их нельзя.`,
+					);
+				}
+			} catch (err) {
+				console.error('Не удалось освободить локальные копии:', err);
+			}
+		}
 
 		const { mainFolderArr, removeFolderFromMainArr } = mainFolders_stor.getState();
 		const { setMainFolderId } = setActiveFolders_store.getState();
@@ -69,7 +94,13 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 			// У облачной папки список проектов знает каталог, а он обновляется только
 			// запросом к хранилищу. Без этого кнопка перечитывала бы локальный индекс
 			// и новые проекты не появлялись бы никогда.
-			if (obj.online) await storage_store.getState().refreshProjects();
+			if (obj.online) {
+				// Список проектов — из `/projects`; содержимое проектов — дельтами по
+				// тёплым. Без второго кнопка обновляла бы только колонку 2, а внутри
+				// проектов данные оставались бы такими, какими их застал последний заход.
+				await storage_store.getState().refreshProjects();
+				await syncNow();
+			}
 			const finalArr = await reloadFolders(obj);
 			console.log('[refresh]', basename(obj.path), '→ прочитано с диска:', finalArr.length, finalArr);
 			mainFolders_stor.getState().updateParameters({
@@ -140,7 +171,6 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 		>
 			<Checkbox checked={obj.active} onClick={handleChekboxClick} />
 
-
 			<ListItemText
 				sx={{
 					whiteSpace: 'nowrap',
@@ -161,12 +191,12 @@ export const FolderItem = memo(function FolderItem({ obj, isActive = false, onCl
 			{obj.online && (
 				<Tooltip title='Папка в облачном хранилище' placement='left' arrow>
 					<Cloud
-						size={15}
+						size={20}
 						strokeWidth={1}
 						style={{
 							position: 'absolute',
 							top: '50%',
-							right: 6,
+							right: 8,
 							transform: 'translateY(-50%)',
 							color: greenColor(65),
 						}}

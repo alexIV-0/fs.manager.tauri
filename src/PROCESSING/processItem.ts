@@ -14,7 +14,7 @@ import { hostServices, invokeHost, execOnLane, type PluginContext } from '@/Plug
 import { acquirePool, releasePool, resolvePool } from './ResourcePool';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
-import { pathExists as seamPathExists } from '@/Utils/storageSeam';
+import { pathExists as seamPathExists, markUploads, deleteEverywhere } from '@/Utils/storageSeam';
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
@@ -330,7 +330,12 @@ export async function processItem(item: any, signal: AbortSignal, runId: string)
 		if (allStepsSucceeded && !ctx.signal.aborted && deleteAfter) {
 			send('log', { level: 'debug', text: `[processItem.postProcess] → DELETE branch`, itemId });
 			try {
-				unwrap(await commands.deleteItem(pathForDelete));
+				// Облачный исходник надо убрать И из каталога: иначе он останется
+				// «только онлайн», следующий скан найдёт его снова и обработает заново.
+				// Вне зеркала — обычное удаление с диска.
+				if (!(await deleteEverywhere(pathForDelete))) {
+					unwrap(await commands.deleteItem(pathForDelete));
+				}
 				send('log', { level: 'info', text: `[processItem] Deleted original: ${basename(pathForDelete)}`, itemId });
 			} catch {
 				send('log', { level: 'warn', text: `[processItem] Failed to delete original: ${basename(pathForDelete)}`, itemId });
@@ -378,6 +383,15 @@ export async function processItem(item: any, signal: AbortSignal, runId: string)
 	// Собираем пути финальных файлов + суммарный хронометраж выходных медиафайлов.
 	const { secs: mediaDurationSecs, files: outFiles } = await collectOutputInfo(ctx, steps);
 	const duration = secsToDurationStr(mediaDurationSecs);
+
+	// Результат лёг в зеркало → заливаем. ЭТО основной триггер заливки в облако:
+	// здесь про готовность файла известно точно (шаг завершён, файл закрыт), а
+	// слежка за файловой системой этого знать не может и вынуждена ждать затишья.
+	// Только успешные элементы: заливать выход упавшей обработки незачем.
+	// Не ждём — передача идёт своей очередью, обработка не должна её сторожить.
+	if (allStepsSucceeded && !ctx.signal.aborted && outFiles.length > 0) {
+		void markUploads(outFiles);
+	}
 
 	send('item:end', { itemId, status: finalStatus, totalCost, duration, outFiles });
 	return finalStatus;

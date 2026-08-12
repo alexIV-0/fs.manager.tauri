@@ -231,13 +231,17 @@ mod tests {
                 id: "c1".into(),
                 display_name: "Мегафон".into(),
             }],
+            users: vec![],
             projects: vec![RemoteProject {
                 id: "p1".into(),
                 name: "Реклама Q3".into(),
                 client_id: Some("c1".into()),
+                user_id: None,
                 group_name: "personal".into(),
                 is_active: true,
                 is_paused: false,
+                is_archived: false,
+                archived_at: None,
                 updated_at: "2026-08-07T00:00:00.000Z".into(),
             }],
         }

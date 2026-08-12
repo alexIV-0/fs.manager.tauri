@@ -8,6 +8,7 @@ import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_
 import { processItem } from './processItem';
 import { createRunPools, disposeRunPools } from './ResourcePool';
 import { RUN_PROCESSING } from './runLanes';
+import { prefetchNextItems } from './utils/prefetchSources';
 
 export async function startProcessing() {
 	const signal = getSignal();
@@ -87,6 +88,11 @@ export async function startProcessing() {
 				let promise: Promise<void>;
 				promise = processOne(item).finally(() => running.delete(promise));
 				running.add(promise);
+
+				// Пока этот элемент обрабатывается, тихо тянем исходники следующих.
+				// Список очереди построен заранее — значит уже известно, что
+				// понадобится, и ждать скачивания на каждом элементе незачем.
+				void prefetchNextItems();
 			}
 
 			// Очередь пуста и нечего обрабатывать — выходим. Управление возвращается

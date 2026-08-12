@@ -2,8 +2,8 @@ import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
 import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { prefetchDir } from '@/Store/helpers/readDirContent';
-import { ListItem, Checkbox, ListItemText, IconButton, TextField } from '@mui/material';
-import { Settings } from 'lucide-react';
+import { ListItem, Checkbox, ListItemText, IconButton, TextField, Tooltip } from '@mui/material';
+import { Archive, Settings } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 import useFoldersFromLS from '../hooks/useFoldersFromLS';
 import { useEditableField } from '@/hooks/useEditableField';
@@ -12,6 +12,9 @@ import { getProjectActivity, setProjectActivity } from '@/Utils/projectActivityL
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { commands, unwrap } from '@/Utils/specta';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
+import { archivedProjects_store } from '@/Store/MainWin/archivedProjects_store';
+import { isInMirror, renameProjectInCloud, setProjectPaused } from '@/Utils/storageSeam';
+import { storageFolderMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 import { useContextMenu } from '../hooks/useContextMenu';
 import { useMenuItems } from '../hooks/useMenuItems';
 import { FileFolderContextMenu } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
@@ -46,6 +49,37 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 
 	const { folders, addFolder, removeFolder } = useFoldersFromLS(activeMainFolder || '');
 
+	// Путь проекта собираем из активной главной папки: колонка проектов знает только
+	// имена, а архивность живёт в каталоге и привязана к пути.
+	const mainFolderPath = mainFolders_stor(
+		(s) => s.mainFolderArr.find((f) => f.id === activeMainFolder)?.path ?? '',
+	);
+	// Онлайн-проект: имя живёт в каталоге сайта, а не в имени папки на диске.
+	// Переименовать его локально нельзя — путь перестанет разбираться, и значки
+	// синхронизации исчезнут (ровно это и случилось при первой проверке).
+	const [isOnline, setIsOnline] = useState(false);
+	// Ref рядом со state: `onSave` из `useEditableField` замыкается один раз, и
+	// прочитал бы состояние первого рендера — то есть страховка молча не работала бы.
+	const isOnlineRef = useRef(false);
+	useEffect(() => {
+		if (!mainFolderPath) return;
+		let alive = true;
+		void isInMirror(mainFolderPath).then((v) => {
+			if (!alive) return;
+			isOnlineRef.current = v;
+			setIsOnline(v);
+		});
+		return () => {
+			alive = false;
+		};
+	}, [mainFolderPath]);
+
+	const projectPath = mainFolderPath ? joinPath(mainFolderPath, name) : '';
+
+	const isArchived = archivedProjects_store((s) =>
+		Boolean(mainFolderPath && s.paths[`${mainFolderPath}/${name}`.replace(/[\\/]+$/, '').toLowerCase()]),
+	);
+
 	const { isEditing, startEditing, inputProps } = useEditableField({
 		initialValue: name,
 		onSave: async (newName) => {
@@ -53,11 +87,26 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			const { activeMainFolder } = setActiveFolders_store.getState();
 			const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
 			if (!activeMain) return;
-			const updated = activeMain.projectFolders.map((f: string) => (f === name ? newName : f));
-			updateParameters({ id: activeMain.id, projectFolders: updated });
 			const oldPath = joinPath(activeMain.path, name);
 			const newPath = joinPath(activeMain.path, newName);
-			unwrap(await commands.renameFolder(oldPath, newPath));
+
+			// Онлайн-проект: имя живёт в каталоге, поэтому команда идёт в бэкенд, а
+			// папка зеркала переезжает следом. Локальная папка — как раньше.
+			// Список в сторе обновляем ПОСЛЕ успеха: иначе при отказе сервера в колонке
+			// останется имя, которого нет ни на диске, ни в каталоге.
+			try {
+				if (isOnlineRef.current) {
+					await renameProjectInCloud(oldPath, newName);
+				} else {
+					unwrap(await commands.renameFolder(oldPath, newPath));
+				}
+			} catch (err) {
+				console.error('Не удалось переименовать проект:', err);
+				window.alert(`Не удалось переименовать проект:\n${String(err)}`);
+				return;
+			}
+			const updated = activeMain.projectFolders.map((f: string) => (f === name ? newName : f));
+			updateParameters({ id: activeMain.id, projectFolders: updated });
 		},
 	});
 
@@ -69,6 +118,15 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			reactivateOnManualEnable();
 		}
 		setOnOffVal(!_prev);
+
+		// Онлайн-проект: активность живёт в каталоге (`projects.is_paused`), значит её
+		// надо туда и записать — иначе выключение здесь сайт не увидит, а следующий
+		// `/projects` вернёт галочку обратно. Локальные папки как раньше: LS + сайдкар.
+		if (isOnlineRef.current && projectPath) {
+			void setProjectPaused(projectPath, _prev).catch((err) => {
+				console.error('Не удалось изменить активность проекта в каталоге:', err);
+			});
+		}
 	}
 
 	// Двойная логика ручного включения:
@@ -143,6 +201,8 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 		});
 		removeFolder(name);
 	};
+
+	const cloudItems = storageFolderMenuItems(projectPath, isOnline);
 
 	const menuItems = useMenuItems({
 		type: 'project',
@@ -220,6 +280,15 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			onMouseEnter={handleMouseEnter}
 		>
 			<Checkbox checked={onOffVal} onClick={(e) => { e.stopPropagation(); toggleState(onOffVal); }} />
+			{/* Архивный проект: обработка по нему не запускается вообще, и это должно
+			    быть видно до того, как человек начнёт искать, почему ничего не
+			    происходит. Значок перед именем, приглушённый — состояние, а не
+			    предупреждение: архив это нормальное положение дел. */}
+			{isArchived && (
+				<Tooltip title='В архиве на сайте — обработка не запускается' arrow>
+					<Archive size={13} strokeWidth={1} style={{ marginRight: 6, flexShrink: 0, opacity: 0.55 }} />
+				</Tooltip>
+			)}
 			{isEditing ? (
 				<TextField
 					{...inputProps}
@@ -270,7 +339,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			position={menuPosition}
 			open={isMenuOpen}
 			onClose={handleMenuClose}
-			items={menuItems}
+			items={[...menuItems, ...cloudItems]}
 		/>
 
 		<ProjectStatsModal

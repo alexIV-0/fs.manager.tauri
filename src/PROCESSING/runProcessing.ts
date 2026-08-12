@@ -16,6 +16,8 @@ import { startProcessContext, getSignal } from './utils/processingAbort';
 import { runTgCollect } from './tgCollect';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
+import { flushUploads } from '@/Utils/storageSeam';
+import { resetPrefetch } from './utils/prefetchSources';
 
 // Значения подтягиваются из AppSettings при старте runProcessing.
 // Экспорт ради обратной совместимости с местами, которые читают timeToWait.folders.
@@ -39,6 +41,7 @@ export async function runProcessing() {
 	const { clearWorkProjectState } = useWorkProject_Store.getState();
 	const { setMainFolderIndex } = isScanningStore.getState();
 	clearWorkProjectState();
+	resetPrefetch();
 	startProcessContext();
 
 	// Применяем свежие значения из настроек перед стартом цикла.
@@ -79,6 +82,14 @@ export async function runProcessing() {
 			await startProcessing();
 
 			if (!isScanningStore.getState().isScanning) break;
+
+			// Волна обработана — досылаем в облако всё, о готовности чего сообщить
+			// было некому. Главный случай — месячный JSONL статистики: он
+			// дописывается на каждый элемент, и заливать его после каждого значило
+			// бы за месяц прогнать один и тот же файл в облако тысячу раз (в R2
+			// дописывания в конец нет, каждая строка = перезалив целиком).
+			// Вне зеркала — no-op.
+			void flushUploads();
 
 			// Автоудаление старых findTime-папок запускаем ПАРАЛЛЕЛЬНО с ожиданием
 			// следующего скана. Очередь обработки уже пуста (startProcessing вышел),

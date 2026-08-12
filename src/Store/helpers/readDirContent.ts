@@ -12,16 +12,36 @@ export interface FileItem {
 	path: string;
 	isDir: boolean;
 	/** Заполнено только для записей из облачного зеркала — для значка состояния.
-	    Для обычных локальных папок этих полей нет, и всё работает как раньше. */
-	storage?: {
-		fileId: string | null;
-		state: FileState | null;
-		aggregate: FolderAggregate | null;
-		pinned: boolean;
-		progress: number | null;
-		error: string | null;
-		sizeBytes: number | null;
-	};
+	    Для обычных локальных папок этих полей нет, и всё работает как раньше.
+
+	    Форма берётся из шва (`MirrorItem`), а не описывается заново: это ровно те
+	    данные, что пришли из каталога. Своя копия типа однажды уже разошлась —
+	    в ней не было `archived`/`paused`, и сравнение строк молча их не замечало. */
+	storage?: import('@/Utils/storageSeam').MirrorItem['storage'];
+}
+
+/**
+ * Одинаковы ли данные значка синхронизации — то есть можно ли НЕ перерисовывать.
+ *
+ * Живёт одной функцией на всю программу, потому что сравнивать это приходится в
+ * трёх местах (стор колонок и оба `memo`-компонента строки), и каждое место,
+ * забывшее про часть полей, стоило дня диагностики: путь у облачного файла не
+ * меняется никогда — меняются состояние, проценты, пин. Проверка «ничего не
+ * изменилось» обязана сравнивать то, что РИСУЕТСЯ.
+ */
+export function sameStorage(a: FileItem['storage'], b: FileItem['storage']): boolean {
+	if (!a && !b) return true;
+	if (!a || !b) return false;
+	return (
+		a.state === b.state &&
+		a.aggregate === b.aggregate &&
+		a.pinned === b.pinned &&
+		a.progress === b.progress &&
+		a.error === b.error &&
+		a.archived === b.archived &&
+		a.paused === b.paused &&
+		a.sizeBytes === b.sizeBytes
+	);
 }
 
 export interface Column {

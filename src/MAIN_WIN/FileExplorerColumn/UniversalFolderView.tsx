@@ -12,6 +12,7 @@ import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { TopPanelLocal } from './TopPanelLocal';
 import { TopPanelGD } from './TopPanelGD';
 import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimColumn';
+import { openPreview } from '@/PROCESSING/utils/fileSystemActions';
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
@@ -250,8 +251,9 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 
 			e.preventDefault();
 
-			const fileType = await commands.getFileTypeByExtname(item.path.split('.').pop() || '');
-			unwrap(await commands.previewOpen(JSON.stringify({ filePath: item.path, fileType })));
+			// Через общий слой: облачный файл сначала скачивается, локальный открывается
+			// как раньше. Логика одна на все точки вызова.
+			await openPreview(item.path);
 		},
 	});
 

@@ -30,34 +30,50 @@ interface Props {
 	onClose: () => void;
 }
 
+/** Папка верхнего уровня зеркала: то, что реально можно добавить. */
+interface RootFolder {
+	id: string;
+	name: string;
+	path: string;
+}
+
 export function AddOnlineFolderDialog({ open, onClose }: Props) {
 	const { status, clients, projects } = storage_store();
 	const { mainFolderArr } = mainFolders_stor();
-	const [paths, setPaths] = useState<Record<string, string>>({});
+	const [rows, setRows] = useState<RootFolder[]>([]);
 	const [error, setError] = useState<string | null>(null);
 
-	// Пути папок клиентов берём из того же листинга, что рисует колонки: правила
+	// Источник истины — листинг корня зеркала, тот же, что рисует колонки: правила
 	// раскладки имён живут в Rust, и повторять их здесь нельзя — разъедутся.
+	//
+	// Раньше список строился из `clients` (ответ бэкенда), а листинг использовался
+	// только за путями. Это ломалось на живых данных: если у проектов нет
+	// `client_id`, клиентов ноль, и диалог писал «В хранилище нет клиентов» при
+	// полном облаке — добавить папку было нельзя вообще. Такие проекты лежат в
+	// папке «Без клиента», и она приходит именно из листинга.
 	useEffect(() => {
 		if (!open || !status.connected || !status.mirrorRoot) return;
 		setError(null);
-		void browseMirror(status.mirrorRoot).then((rows) => {
-			if (!rows) {
+		void browseMirror(status.mirrorRoot).then((list) => {
+			if (!list) {
 				setError('Не удалось прочитать корень зеркала');
 				return;
 			}
-			const map: Record<string, string> = {};
-			for (const r of rows) if (r.storage?.fileId) map[r.storage.fileId] = r.path;
-			setPaths(map);
+			setRows(
+				list
+					.filter((r) => r.isDir)
+					.map((r) => ({ id: r.storage?.fileId ?? r.path, name: r.name, path: r.path })),
+			);
 		});
-	}, [open, status.connected, status.mirrorRoot, clients.length]);
+	}, [open, status.connected, status.mirrorRoot, clients.length, projects.length]);
 
 	const norm = (p: string) => p.replace(/\/+$/, '').toLowerCase();
 	const added = new Set(mainFolderArr.map((f) => norm(f.path)));
-	const available = clients.filter((c) => paths[c.id] && !added.has(norm(paths[c.id])));
+	const available = rows.filter((r) => !added.has(norm(r.path)));
+	/** Сколько проектов внутри — только для настоящих клиентов, у псевдо-папки счётчик не считаем. */
+	const countOf = (id: string) => projects.filter((p) => p.clientId === id).length;
 
-	const add = async (clientId: string) => {
-		const path = paths[clientId];
+	const add = async (path: string) => {
 		if (!path) return;
 		const id = mainFolders_stor.getState().ensureOnlineFolder(path);
 
@@ -95,19 +111,21 @@ export function AddOnlineFolderDialog({ open, onClose }: Props) {
 					</Typography>
 				) : available.length === 0 ? (
 					<Typography variant='caption' sx={{ display: 'block', p: 2, color: 'text.disabled' }}>
-						{clients.length === 0 ? 'В хранилище нет клиентов' : 'Все папки уже добавлены'}
+						{rows.length === 0 ? 'В хранилище нет папок' : 'Все папки уже добавлены'}
 					</Typography>
 				) : (
 					<List disablePadding>
-						{available.map((c) => (
-							<ListItemButton key={c.id} onClick={() => void add(c.id)} sx={{ gap: 1, py: '4px' }}>
+						{available.map((r) => (
+							<ListItemButton key={r.id} onClick={() => void add(r.path)} sx={{ gap: 1, py: '4px' }}>
 								<Cloud size={14} strokeWidth={1} opacity={0.55} />
 								<Typography variant='body2' noWrap sx={{ flex: 1, minWidth: 0, fontSize: 13 }}>
-									{c.displayName}
+									{r.name}
 								</Typography>
-								<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 10 }}>
-									{projects.filter((p) => p.clientId === c.id).length}
-								</Typography>
+								{countOf(r.id) > 0 && (
+									<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 10 }}>
+										{countOf(r.id)}
+									</Typography>
+								)}
 							</ListItemButton>
 						))}
 					</List>

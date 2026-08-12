@@ -10,22 +10,17 @@
 // Пин рисуется ПОВЕРХ основного значка, а не вместо: запиненный файл
 // одновременно либо синхронизирован, либо качается, и терять эту информацию нельзя.
 
+import type { CSSProperties } from 'react';
 import { Box, Tooltip, alpha, useTheme } from '@mui/material';
-import {
-	Cloud,
-	CloudDownload,
-	CircleCheck,
-	CircleArrowUp,
-	RefreshCw,
-	TriangleAlert,
-	Pin,
-	FolderClosed,
-} from 'lucide-react';
+import { Cloud, CloudDownload, CircleCheck, CircleArrowUp, RefreshCw, TriangleAlert, Pin } from 'lucide-react';
 import type { FileState, FolderAggregate } from '@/bindings';
 
-const SIZE = 15;
+const SIZE = 20;
 /** Как в TopPanelGD/TopPanelLocal: единообразие толщины делает иконку «своей». */
 const STROKE = 1;
+/** Пин — накладка поверх основного значка, поэтому мельче, но НЕ бледнее:
+ *  раньше он был `text.disabled` того же размера и терялся на фоне галочки. */
+const PIN_SIZE = 20;
 
 type Look = {
 	Icon: typeof Cloud;
@@ -51,7 +46,10 @@ const FILE_LOOK: Record<FileState, Look> = {
 };
 
 const FOLDER_LOOK: Record<FolderAggregate, Look> = {
-	empty: { Icon: FolderClosed, tone: 'muted', title: 'Пусто' },
+	// Пустая папка синхронизирована по определению: скачивать в ней нечего. Раньше
+	// здесь стоял значок папки — бессмысленный: что это папка, уже видно по большой
+	// иконке слева, а человек ждёт в этом месте состояние синхронизации.
+	empty: { Icon: CircleCheck, tone: 'success', title: 'Пусто — синхронизирована' },
 	allCloud: { Icon: Cloud, tone: 'muted', title: 'Ничего не скачано' },
 	mixed: { Icon: Cloud, tone: 'secondary', title: 'Скачано частично' },
 	allLocal: { Icon: CircleCheck, tone: 'success', title: 'Скачано полностью' },
@@ -100,8 +98,41 @@ export function StorageBadge({ state, aggregate, pinned, progress, error }: Prop
 	const pct = typeof progress === 'number' ? Math.round(progress * 100) : null;
 	const title = error ? `${look.title}: ${error}` : look.title;
 
+	// ── Запинённый и синхронизированный: показываем ТОЛЬКО пин ────────────────
+	// Галочка тут избыточна: пин означает «держим локально», а держать можно только
+	// то, что скачано. Две иконки говорили бы одно и то же дважды.
+	//
+	// Замена работает ровно для состояния покоя (`fresh`). Для всего, что требует
+	// действия — «надо залить», «в облаке новее», конфликт, ошибка, идущая передача —
+	// значок состояния остаётся, а пин идёт накладкой: спрятать требование действия
+	// за пином значит спрятать саму работу.
+	const pinOnly = pinned && state === 'fresh';
+
+	// ⚙️ ЕДИНСТВЕННОЕ МЕСТО, где настраивается вид пина.
+	//
+	// Раньше пин рисовался в ДВУХ ветках — «только пин» и «накладка», — и правка одной
+	// из них не давала никакого эффекта, если строка рендерилась через другую. Теперь
+	// стиль один, а разница между режимами только в размере и позиции.
+	const pinStyle: CSSProperties = pinOnly
+		? { rotate: '35deg', fill: 'green' }
+		: {
+				position: 'absolute',
+				bottom: -1,
+				right: -4,
+				// rotate: '35deg',
+				// Контур цветом фона: накладка читается поверх линий значка, а не
+				// сливается с ними.
+				paintOrder: 'stroke',
+				stroke: 'rgba(0,0,0,0.55)',
+				strokeWidth: 3,
+			};
+
+	const pinNode = (
+		<Pin size={pinOnly ? SIZE : PIN_SIZE} strokeWidth={pinOnly ? STROKE : 2} fill={pinOnly ? 'none' : 'currentColor'} style={pinStyle} />
+	);
+
 	return (
-		<Tooltip title={pinned ? `${title} · оставлен оффлайн` : title} placement='left' arrow>
+		<Tooltip title={pinOnly ? 'Оставлен оффлайн · синхронизирован' : pinned ? `${title} · оставлен оффлайн` : title} placement='left' arrow>
 			<Box
 				sx={{
 					display: 'inline-flex',
@@ -115,29 +146,14 @@ export function StorageBadge({ state, aggregate, pinned, progress, error }: Prop
 					transition: 'none',
 				}}
 			>
-				<Icon size={SIZE} strokeWidth={STROKE} />
+				{/* Пин заменяет значок состояния — значит второй иконки в этой ветке нет. */}
+				{!pinOnly && <Icon size={SIZE} strokeWidth={STROKE} />}
 				{pct !== null && (
-					<Box
-						component='span'
-						sx={{ fontSize: 10, lineHeight: 1, userSelect: 'none', fontVariantNumeric: 'tabular-nums' }}
-					>
+					<Box component='span' sx={{ fontSize: 10, lineHeight: 1, userSelect: 'none', fontVariantNumeric: 'tabular-nums' }}>
 						{pct}%
 					</Box>
 				)}
-				{pinned && (
-					<Pin
-						size={9}
-						strokeWidth={1.5}
-						style={{
-							position: 'absolute',
-							right: -3,
-							bottom: -3,
-							// Пин — модификатор, а не сигнал: он не должен спорить с
-							// основным значком за внимание.
-							opacity: 0.75,
-						}}
-					/>
-				)}
+				{pinned && pinNode}
 			</Box>
 		</Tooltip>
 	);

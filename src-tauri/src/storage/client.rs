@@ -157,6 +157,15 @@ impl StorageApi {
     ///
     /// ВНИМАНИЕ: ссылка живёт ~час. Запрашивать в момент старта передачи, иначе
     /// на длинной очереди хвост протухнет.
+    /// Подписанный PUT.
+    ///
+    /// `s3_key` — ключ УЖЕ существующего объекта, если мы перезаливаем известный
+    /// файл. Это не оптимизация, а обязательное условие: без него бэкенд каждый раз
+    /// выписывает НОВЫЙ ключ `{uuid}-{имя}`, и перерендер в тот же логический путь
+    /// даёт вторую строку в каталоге с тем же именем плюс осиротевший объект в R2.
+    /// С ключом `/notify` находит строку по `s3_key` и обновляет её — `file_id`
+    /// сохраняется, история файла не рвётся.
+    #[allow(clippy::too_many_arguments)]
     pub async fn presign_put(
         &self,
         project_id: &str,
@@ -164,6 +173,7 @@ impl StorageApi {
         file_name: &str,
         content_type: &str,
         ttl_sec: Option<i64>,
+        s3_key: Option<&str>,
     ) -> StorageResult<PresignResponse> {
         let mut body = json!({
             "projectId": project_id,
@@ -174,6 +184,9 @@ impl StorageApi {
         });
         if let Some(ttl) = ttl_sec {
             body["ttlSec"] = json!(ttl);
+        }
+        if let Some(key) = s3_key {
+            body["s3Key"] = json!(key);
         }
         self.send(Method::POST, "presign", &[], Some(body)).await
     }
@@ -260,6 +273,34 @@ impl StorageApi {
         }
         let env: FileEnvelope = self.send(Method::POST, "rename", &[], Some(body)).await?;
         Ok(env.file)
+    }
+
+    /// Переименовать ПРОЕКТ. Имя живёт в `projects.name`, ключи в бакете от него не
+    /// зависят — для бэкенда это один `UPDATE`.
+    ///
+    /// Эндпоинта под machine token пока нет (просьба 5): клиент готов заранее, чтобы
+    /// после правки бэкенда ничего не переписывать. До тех пор вернётся 404, и
+    /// интерфейс покажет его как понятную ошибку.
+    pub async fn rename_project(&self, project_id: &str, name: &str) -> StorageResult<()> {
+        let body = json!({ "projectId": project_id, "name": name });
+        let _: serde_json::Value = self
+            .send(Method::POST, "project-rename", &[], Some(body))
+            .await?;
+        Ok(())
+    }
+
+    /// Включить/выключить проект (`projects.is_paused`).
+    ///
+    /// Колонка в БД уже есть — её пишет сайт, и она приезжает в каждом `/projects`.
+    /// Не хватает только эндпоинта под machine token (просьба 5.1): без него
+    /// направление «выключил в программе → выключилось на сайте» не работает, хотя
+    /// обратное работает уже сегодня.
+    pub async fn set_project_paused(&self, project_id: &str, paused: bool) -> StorageResult<()> {
+        let body = json!({ "projectId": project_id, "paused": paused });
+        let _: serde_json::Value = self
+            .send(Method::POST, "project-state", &[], Some(body))
+            .await?;
+        Ok(())
     }
 
     /// Удаление файла или папки (каскадом). `options` — 403.

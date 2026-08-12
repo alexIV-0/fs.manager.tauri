@@ -67,11 +67,62 @@ pub struct RemoteProject {
     pub name: String,
     /// `None` — проект не привязан к клиенту (лежит в корне).
     pub client_id: Option<String>,
+    /// Владелец проекта — **первый уровень зеркала**.
+    ///
+    /// Раскладка бакета `projects/{userId}/{projectId}/…`, то есть уровень
+    /// пользователя в данных есть всегда. А вот в ответе `/projects` его пока нет
+    /// (`serializeProject` не кладёт `userId`, хотя рядом им же проверяет права) —
+    /// поэтому поле опциональное, и пока бэкенд молчит, владелец добывается из
+    /// `s3Key` первого же файла проекта. Появится в ответе — возьмём оттуда, код
+    /// менять не придётся.
+    #[serde(default)]
+    pub user_id: Option<String>,
     pub group_name: String,
     pub is_active: bool,
     pub is_paused: bool,
+    /// Проект убран в архив на сайте — **обработку по нему запускать нельзя**.
+    ///
+    /// Три флага рядом, и путать их нельзя (`STORAGE_API.md`, «Processing flags»):
+    /// `is_paused` — пользователь приостановил, `is_active` — legacy-зеркало
+    /// `!is_paused`, `is_archived` — проект уехал в архив. Архивность живёт именно
+    /// здесь, а не в `group_name`: группа отвечает только за раскладку интерфейса
+    /// сайта.
+    #[serde(default)]
+    pub is_archived: bool,
+    /// Когда заархивировали. ISO-8601; `None` — не архивный.
+    #[serde(default)]
+    pub archived_at: Option<String>,
     /// ISO-8601.
     pub updated_at: String,
+}
+
+/// Владелец проектов. Приходит из `/projects`, когда бэкенд научится отдавать; до
+/// тех пор существует только как идентификатор, добытый из ключа.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteUser {
+    pub id: String,
+    /// **Основное имя папки владельца.** Email узнаваем и уникален, в отличие от
+    /// `full_name`, который бывает пустым и повторяется.
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub full_name: String,
+    /// Общий вариант, если бэкенд отдаёт одно готовое имя вместо полей.
+    #[serde(default)]
+    pub display_name: String,
+}
+
+impl RemoteUser {
+    /// Чем подписывать папку. Пусто — значит про владельца известен только id.
+    pub fn label(&self) -> &str {
+        for candidate in [&self.email, &self.full_name, &self.display_name] {
+            if !candidate.trim().is_empty() {
+                return candidate;
+            }
+        }
+        ""
+    }
 }
 
 /// Ответ `GET /projects`. Под ADMIN-токеном — все клиенты и проекты,
@@ -81,6 +132,10 @@ pub struct RemoteProject {
 pub struct ProjectsResponse {
     #[serde(default)]
     pub clients: Vec<RemoteClient>,
+    /// Владельцы проектов. Бэкенд пока не присылает — тогда имена берём из
+    /// идентификаторов, добытых из ключей.
+    #[serde(default)]
+    pub users: Vec<RemoteUser>,
     #[serde(default)]
     pub projects: Vec<RemoteProject>,
 }

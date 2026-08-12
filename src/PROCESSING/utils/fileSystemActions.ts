@@ -1,11 +1,12 @@
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
 import clipboard from 'tauri-plugin-clipboard-api';
 import { basename, dirname } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
-import { ensureLocal, ensureMirrorDir } from '@/Utils/storageSeam';
+import { ensureLocal, ensureMirrorDir, renameInCloud, mkdirInCloud, deleteInCloud, moveInCloud } from '@/Utils/storageSeam';
 
 // ── Определяем тип инстанса по пути ────────────────────────────────────────
 // Сначала пытаемся понять, в какой панели реально открыт путь — сравниваем с
@@ -35,7 +36,34 @@ export function getInstanceType(path: string): 'gd' | 'local' {
 // ── Удаление с обрезкой дочерних колонок ───────────────────────────────────
 export async function deleteItem(path: string): Promise<void> {
 	try {
-		unwrap(await commands.deleteItem(path));
+		// В зеркале удаление ДВУХСТУПЕНЧАТОЕ: первое нажатие убирает локальную копию
+		// (файл остаётся в облаке), второе — удаляет в облаке. Пока у бэкенда нет
+		// корзины, вторая ступень необратима, поэтому спрашиваем подтверждение.
+		const stage = await deleteInCloud(path);
+		if (stage === null) {
+			// Не зеркало — обычное локальное удаление.
+			unwrap(await commands.deleteItem(path));
+		} else if (stage === 'needsConfirm') {
+			const name = basename(path);
+			const ok = window.confirm(
+				`Локальной копии нет — «${name}» будет удалён В ОБЛАКЕ.\n\n` +
+					`Восстановить будет нельзя: корзины на стороне сайта пока нет.`,
+			);
+			if (!ok) return;
+			await deleteInCloud(path, true);
+		} else if (stage === 'localCopy') {
+			// Файл остался в облаке — из колонки он не исчезает, меняется значок.
+			// Обрезать дочерние колонки в этом случае нельзя: путь всё ещё живой.
+			//
+			// Обновляем ОБЕ панели, а не ту, которую вернёт `getInstanceType`: одну и
+			// ту же папку зеркала можно открыть слева и справа одновременно, и тогда
+			// вторая осталась бы со старым значком. Лишняя работа тут — одно чтение
+			// папки, которого всё равно не видно.
+			const cols = useColumnView_Store.getState();
+			cols.refreshAffectedColumns('gd', [dirname(path)]);
+			cols.refreshAffectedColumns('local', [dirname(path)]);
+			return;
+		}
 	} catch (err) {
 		console.error('deleteItem failed:', err);
 		return;
@@ -76,6 +104,23 @@ export async function openFile(path: string): Promise<void> {
 	}
 }
 
+// ── Превью файла (пробел / Quick Look) ──────────────────────────────────────
+// Отдельная функция, а не вызов `previewOpen` из компонента: превью — это чтение
+// БАЙТОВ, значит облачный файл сначала надо скачать. Раньше пробел звал команду
+// напрямую и для нескачанного файла показывал пустоту, хотя пункт «Открыть» в меню
+// того же файла работал правильно. Одинаковое по смыслу действие обязано вести себя
+// одинаково, откуда бы его ни позвали.
+export async function openPreview(path: string): Promise<void> {
+	try {
+		// Вне зеркала `ensureLocal` не делает ничего.
+		const ready = await ensureLocal(path);
+		const fileType = await commands.getFileTypeByExtname(ready.split('.').pop() || '');
+		unwrap(await commands.previewOpen(JSON.stringify({ filePath: ready, fileType })));
+	} catch (err) {
+		console.error('openPreview failed:', err);
+	}
+}
+
 // ── Переименовать папку с обновлением колонок ───────────────────────────────
 export async function renameFolder(
 	oldPath: string,
@@ -83,7 +128,12 @@ export async function renameFolder(
 	onSuccess?: (oldName: string, newName: string) => void,
 ): Promise<void> {
 	try {
-		unwrap(await commands.renameFolder(oldPath, newPath));
+		// В зеркале имя живёт в каталоге бэкенда, и переименовать надо ЕГО: иначе
+		// путь перестанет разбираться, значки синхронизации исчезнут, а в облаке
+		// папка останется под прежним именем. Вне зеркала — обычное переименование.
+		if (!(await renameInCloud(oldPath, basename(newPath)))) {
+			unwrap(await commands.renameFolder(oldPath, newPath));
+		}
 
 		const parentPath = dirname(oldPath);
 		const oldName = basename(oldPath);
@@ -105,8 +155,11 @@ export async function renameFile(
 	onSuccess?: (oldName: string, newName: string) => void,
 ): Promise<void> {
 	try {
-		const success = unwrap(await commands.renameFile(oldPath, newPath));
-		if (!success) return;
+		// См. `renameFolder`: для зеркала переименование идёт через каталог.
+		if (!(await renameInCloud(oldPath, basename(newPath)))) {
+			const success = unwrap(await commands.renameFile(oldPath, newPath));
+			if (!success) return;
+		}
 
 		const parentPath = dirname(oldPath);
 		const oldName = basename(oldPath);
@@ -125,13 +178,23 @@ export async function renameFile(
 export async function createFolder(parentPath: string, folderName = 'Новая папка'): Promise<void> {
 	try {
 		const newFolderPath = joinPath(parentPath, folderName);
-		unwrap(await commands.createFolder(newFolderPath));
+		// В зеркале папка заводится в каталоге — тогда у неё есть `file_id`, её можно
+		// переименовать и удалить, и у неё появляется значок синхронизации. Папка,
+		// созданная только на диске, для облака не существует.
+		if (!(await mkdirInCloud(newFolderPath))) {
+			unwrap(await commands.createFolder(newFolderPath));
+		}
 
 		const instanceType = getInstanceType(parentPath);
 		const store = useColumnView_Store.getState();
 		// Делаем новую папку выбранной + активируем панель: её сразу можно переименовать
 		// по Enter, а в другой панели выделение снимется (см. clearInstanceSelection).
 		store.addAndSelectItemByPath(instanceType, parentPath, { name: folderName, path: newFolderPath, isDir: true });
+		// Кэш папки сбросить ОБЯЗАТЕЛЬНО: без этого перечитывание отдаёт прежний
+		// список, синтетическая строка остаётся без данных каталога — и новая папка
+		// висит без значка синхронизации, хотя в каталоге она уже есть. Значок
+		// появлялся только после следующего действия, которое кэш сбрасывало.
+		invalidateDirCache(parentPath);
 		store.refreshAffectedColumns(instanceType, [parentPath]);
 	} catch (err) {
 		console.error('createFolder failed:', err);
@@ -148,6 +211,7 @@ export async function createTextFile(parentPath: string, fileName = 'Новый 
 		const store = useColumnView_Store.getState();
 		// Новый файл — сразу выбранный и активный (Enter → переименование).
 		store.addAndSelectItemByPath(instanceType, parentPath, { name: fileName, path: newFilePath, isDir: false });
+		invalidateDirCache(parentPath);
 		store.refreshAffectedColumns(instanceType, [parentPath]);
 	} catch (err) {
 		console.error('createTextFile failed:', err);
@@ -246,10 +310,24 @@ export async function pasteFromClipboardFs(destFolderPath: string): Promise<void
 		const destPath = joinPath(destFolderPath, name);
 
 		try {
+			// Перенос ВНУТРИ облака идёт через каталог: это `/rename` со сменой папки,
+			// байты не двигаются. Двинуть только на диске значило бы сломать связь с
+			// каталогом — путь перестал бы разбираться, и значки исчезли бы (ровно то,
+			// что уже случалось с переименованием).
+			if (type === 'cut' && (await moveInCloud(srcPath, destFolderPath))) {
+				const srcInstanceType = getInstanceType(srcPath);
+				await useColumnView_Store.getState().removeItemAndTrimColumns(srcInstanceType, srcPath);
+				continue;
+			}
+
+			// Источник может быть облачным и ещё не скачанным: в каталоге он есть, на
+			// диске нет. Без гидрации скопировалась бы пустота — а `ensureLocal` вне
+			// зеркала не делает ничего, так что вызов безопасен для локальных файлов.
+			const readySrc = await ensureLocal(srcPath);
 			if (type === 'copy') {
-				unwrap(await commands.copyItem(srcPath, destPath, { overwrite: false }));
+				unwrap(await commands.copyItem(readySrc, destPath, { overwrite: false }));
 			} else {
-				unwrap(await commands.moveItem(srcPath, destPath, { overwrite: false }));
+				unwrap(await commands.moveItem(readySrc, destPath, { overwrite: false }));
 				// После перемещения убираем из исходной колонки
 				const srcInstanceType = getInstanceType(srcPath);
 				await useColumnView_Store.getState().removeItemAndTrimColumns(srcInstanceType, srcPath);

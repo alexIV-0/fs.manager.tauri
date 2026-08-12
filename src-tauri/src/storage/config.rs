@@ -68,7 +68,13 @@ impl ConnectionConfig {
             .filter(|s| !s.is_empty())
             .collect();
         if cleaned.is_empty() {
-            vec!["options/*.json".to_string()]
+            // Второй шаблон обязателен: статистика дописывается в конец на каждом
+            // элементе, а в R2 дописывания нет — вытесненный между дописываниями
+            // stat-файл пришлось бы качать заново каждый раз.
+            vec![
+                "options/*.json".to_string(),
+                "options/__stat/*.jsonl".to_string(),
+            ]
         } else {
             cleaned
         }
@@ -148,7 +154,13 @@ mod tests {
             ..Default::default()
         };
         // Иначе список из одних пустых строк отключил бы вытеснение целиком.
-        assert_eq!(c.hot_patterns_or_default(), vec!["options/*.json".to_string()]);
+        assert_eq!(
+            c.hot_patterns_or_default(),
+            vec![
+                "options/*.json".to_string(),
+                "options/__stat/*.jsonl".to_string()
+            ]
+        );
 
         let c = ConnectionConfig {
             hot_patterns: Some(vec!["options/*.json".into(), "".into(), "*.aep".into()]),

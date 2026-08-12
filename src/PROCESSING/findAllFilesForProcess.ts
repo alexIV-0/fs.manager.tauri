@@ -17,6 +17,7 @@ import { getProjectActivity, setProjectActivity, pruneActivity } from '@/Utils/p
 import { recordActivity, persistEnabled } from '@/Utils/folderState';
 import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
+import { catchUpProject, projectArchived } from '@/Utils/storageSeam';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
@@ -134,6 +135,23 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			console.groupCollapsed(`[${mainFolderName}] - ${projectName}`);
 
 			const projectPathOnGD = joinPath(curMainFolder.path, projectName);
+
+			// Облачный проект: один запрос дельт на проект ЗДЕСЬ — и дальше весь
+			// проход доверяем локальному индексу. Иначе пришлось бы спрашивать
+			// бэкенд про каждый найденный файл: при десяти тысячах элементов это
+			// разница между одним запросом и десятью тысячами.
+			// Вне зеркала — no-op без единого IPC-вызова.
+			await catchUpProject(projectPathOnGD as string);
+
+			// Архивный проект обработке не подлежит — так требует контракт
+			// storage-API. Проверяем ПОСЛЕ дельт: флаг мог измениться на сайте, и
+			// решение должно приниматься по свежему каталогу, а не по прошлому проходу.
+			if (await projectArchived(projectPathOnGD as string)) {
+				console.log(`%c→ архивный проект, пропуск`, 'color: #888');
+				console.groupEnd();
+				await waitingSome(timeToWait.folders);
+				continue;
+			}
 
 			// ТГ-сбор: безусловно (независимо от содержимого IN) собираем маршрут из
 			// options/tgSearch.json — дешёвый stat, до IN-гейта в findFilesForSingleFolder.

@@ -20,7 +20,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::types::*;
 
 /// Версия схемы. Растёт при каждом изменении; миграции идут по `user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 4;
 
 pub struct Index {
     conn: Connection,
@@ -79,6 +79,24 @@ impl Index {
             self.conn
                 .execute_batch(SCHEMA_V1)
                 .map_err(|e| format!("миграция 0→1: {e}"))?;
+        }
+        if from <= 1 {
+            // Владелец проекта = первый уровень зеркала. Индекс производный, но
+            // ронять его ради одной колонки незачем: `ALTER TABLE` сохраняет и
+            // дерево, и локальные копии, а значит не заставляет заново качать.
+            self.conn
+                .execute_batch(SCHEMA_V2)
+                .map_err(|e| format!("миграция 1→2: {e}"))?;
+        }
+        if from <= 2 {
+            self.conn
+                .execute_batch(SCHEMA_V3)
+                .map_err(|e| format!("миграция 2→3: {e}"))?;
+        }
+        if from <= 3 {
+            self.conn
+                .execute_batch(SCHEMA_V4)
+                .map_err(|e| format!("миграция 3→4: {e}"))?;
         }
         self.conn
             .execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -201,12 +219,60 @@ CREATE TABLE media_probe (
 CREATE TABLE sync_meta (k TEXT PRIMARY KEY, v TEXT);
 "#;
 
+/// v2: владелец проекта — первый уровень зеркала (`projects/{userId}/{projectId}/…`).
+///
+/// `user_id` заполняется из ответа `/projects`, когда бэкенд его отдаёт, либо
+/// добывается из `s3Key` — поэтому колонка обнуляемая, а не `NOT NULL`.
+const SCHEMA_V2: &str = r#"
+ALTER TABLE remote_projects ADD COLUMN user_id TEXT;
+CREATE INDEX idx_rp_user ON remote_projects(user_id, name);
+
+-- Имена владельцев. Пока бэкенд их не отдаёт, таблица пустует, и в интерфейсе
+-- показывается идентификатор — как в бакете.
+CREATE TABLE remote_users (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL
+);
+"#;
+
+/// v3: имя папки владельца — это **email**.
+///
+/// `display_name` одного поля не хватило: в БД бэкенда лежат и `email`, и
+/// `full_name`, и подписывать папку надо именно email — он уникален и узнаваем, а
+/// `full_name` бывает пустым и повторяется. Храним что прислали, а выбор имени
+/// оставляем раскладке.
+const SCHEMA_V3: &str = r#"
+ALTER TABLE remote_users ADD COLUMN email TEXT NOT NULL DEFAULT '';
+ALTER TABLE remote_users ADD COLUMN full_name TEXT NOT NULL DEFAULT '';
+"#;
+
+/// v4: архивный проект. Обработку по нему запускать нельзя, и человек обязан видеть
+/// это в колонке проектов — иначе «почему проект не обрабатывается» неотлаживаемо.
+const SCHEMA_V4: &str = r#"
+ALTER TABLE remote_projects ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE remote_projects ADD COLUMN archived_at TEXT;
+"#;
+
 // ─── Клиенты и проекты ───────────────────────────────────────────────────────
 
 impl Index {
     /// Ответ `/projects` целиком заменяет кэш: бэкенд отдаёт полный видимый список,
     /// значит исчезнувшее оттуда исчезло и у нас.
     pub fn replace_projects(&mut self, resp: &ProjectsResponse) -> Result<(), String> {
+        // Владельцев, добытых из ключей, запоминаем ДО удаления: бэкенд их не
+        // присылает, а потеря означала бы повторный обход деревьев на каждое
+        // обновление списка проектов.
+        let known_owners: std::collections::HashMap<String, String> = {
+            let mut st = self
+                .conn
+                .prepare("SELECT id, user_id FROM remote_projects WHERE user_id IS NOT NULL")
+                .map_err(|e| e.to_string())?;
+            let rows = st
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
+        };
+
         let tx = self.conn.transaction().map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM remote_clients", [])
             .map_err(|e| e.to_string())?;
@@ -220,11 +286,22 @@ impl Index {
             )
             .map_err(|e| format!("insert client {}: {e}", c.id))?;
         }
+        for u in &resp.users {
+            tx.execute(
+                "INSERT INTO remote_users (id, display_name, email, full_name)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET
+                    display_name = ?2, email = ?3, full_name = ?4",
+                params![u.id, u.display_name, u.email, u.full_name],
+            )
+            .map_err(|e| format!("insert user {}: {e}", u.id))?;
+        }
         for p in &resp.projects {
             tx.execute(
                 "INSERT INTO remote_projects
-                    (id, name, client_id, group_name, is_active, is_paused, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (id, name, client_id, group_name, is_active, is_paused, updated_at,
+                     user_id, is_archived, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     p.id,
                     p.name,
@@ -232,7 +309,12 @@ impl Index {
                     p.group_name,
                     p.is_active as i64,
                     p.is_paused as i64,
-                    p.updated_at
+                    p.updated_at,
+                    // Ответ бэкенда важнее: он источник истины. Своё добытое
+                    // значение — только когда бэкенд молчит.
+                    p.user_id.clone().or_else(|| known_owners.get(&p.id).cloned()),
+                    p.is_archived as i64,
+                    p.archived_at.clone()
                 ],
             )
             .map_err(|e| format!("insert project {}: {e}", p.id))?;
@@ -258,7 +340,8 @@ impl Index {
 
     /// `client_id = None` → все проекты; `Some(id)` → проекты этого клиента.
     pub fn projects(&self, client_id: Option<&str>) -> Result<Vec<RemoteProject>, String> {
-        let sql = "SELECT id, name, client_id, group_name, is_active, is_paused, updated_at
+        let sql = "SELECT id, name, client_id, group_name, is_active, is_paused, updated_at,
+                            user_id, is_archived, archived_at
                      FROM remote_projects
                     WHERE (?1 IS NULL OR client_id = ?1)
                     ORDER BY name";
@@ -273,10 +356,91 @@ impl Index {
                     is_active: r.get::<_, i64>(4)? != 0,
                     is_paused: r.get::<_, i64>(5)? != 0,
                     updated_at: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    user_id: r.get(7)?,
+                    is_archived: r.get::<_, i64>(8)? != 0,
+                    archived_at: r.get(9)?,
                 })
             })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Владельцы с человеческими именами. Пусто — бэкенд их пока не отдаёт, и
+    /// папка будет названа идентификатором, как в бакете.
+    pub fn users(&self) -> Result<Vec<RemoteUser>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT id, display_name, email, full_name FROM remote_users
+                  ORDER BY email, display_name",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(RemoteUser {
+                    id: r.get(0)?,
+                    display_name: r.get(1)?,
+                    email: r.get(2)?,
+                    full_name: r.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Проекты, владелец которых неизвестен — их и надо разбирать по ключам.
+    pub fn projects_without_owner(&self) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare("SELECT id FROM remote_projects WHERE user_id IS NULL")
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Отметить проект приостановленным/активным.
+    ///
+    /// Правим локально сразу после успешного ответа бэкенда: иначе следующий
+    /// `reloadFolders` вернёт галочку обратно из ещё не обновлённого каталога, и
+    /// выключение «отскочит» на глазах у человека.
+    pub fn set_project_paused(&self, project_id: &str, paused: bool) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE remote_projects SET is_paused = ?2, is_active = ?3 WHERE id = ?1",
+                params![project_id, paused as i64, !paused as i64],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("set_project_paused {project_id}: {e}"))
+    }
+
+    /// Запомнить владельца, добытого из ключа.
+    pub fn set_project_owner(&self, project_id: &str, user_id: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE remote_projects SET user_id = ?2 WHERE id = ?1",
+                params![project_id, user_id],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("set_project_owner {project_id}: {e}"))
+    }
+
+    /// Любой непустой `s3_key` проекта — из него выводится владелец.
+    ///
+    /// Папки ключей не имеют, поэтому берём именно файл; пустой проект владельца
+    /// не выдаст, и это ограничение обходного пути, а не ошибка.
+    pub fn any_s3_key(&self, project_id: &str) -> Result<Option<String>, String> {
+        self.conn
+            .query_row(
+                "SELECT s3_key FROM remote_entries
+                  WHERE project_id = ?1 AND s3_key IS NOT NULL AND deleted = 0
+                  LIMIT 1",
+                params![project_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -485,6 +649,51 @@ impl Index {
             )
             .map(|_| ())
             .map_err(|e| format!("upsert_from_file {}: {e}", f.id))
+    }
+
+    /// Переименовали ПАПКУ — переписать логический путь всему, что внутри.
+    ///
+    /// Бэкенд делает то же самое одним `UPDATE` (`writeRename`), но **не журналит
+    /// потомков**: в `/delta` приходит событие только на саму папку. Значит принять
+    /// каскад в индекс обязаны мы сами, иначе дети останутся по старому пути, и
+    /// локальные пути для них соберутся неправильно — файл «пропадёт» из проекта.
+    ///
+    /// Возвращает, сколько записей поехало.
+    pub fn reprefix_children(
+        &self,
+        project_id: &str,
+        old_prefix: &str,
+        new_prefix: &str,
+    ) -> Result<usize, String> {
+        self.conn
+            .execute(
+                "UPDATE remote_entries
+                    SET folder_path = CASE
+                          WHEN folder_path = ?2 THEN ?3
+                          ELSE ?3 || substr(folder_path, length(?2) + 1)
+                        END
+                  WHERE project_id = ?1
+                    AND (folder_path = ?2 OR folder_path LIKE ?2 || '/%')",
+                params![project_id, old_prefix, new_prefix],
+            )
+            .map_err(|e| format!("reprefix_children {old_prefix} → {new_prefix}: {e}"))
+    }
+
+    /// Локальные копии переехали вместе с переименованной папкой на диске.
+    ///
+    /// `local_path` — абсолютный путь; после `fs::rename` папки все файлы внутри
+    /// лежат по новому пути, и запись обязана это отражать. Иначе сверка не найдёт
+    /// файл, решит «удалён руками» и обнулит baseline: свежая копия превратится в
+    /// «только в облаке», хотя лежит на диске.
+    pub fn rebase_local_paths(&self, old_prefix: &str, new_prefix: &str) -> Result<usize, String> {
+        self.conn
+            .execute(
+                "UPDATE local_state
+                    SET local_path = ?2 || substr(local_path, length(?1) + 1)
+                  WHERE local_path = ?1 OR local_path LIKE ?1 || '/%'",
+                params![old_prefix, new_prefix],
+            )
+            .map_err(|e| format!("rebase_local_paths {old_prefix} → {new_prefix}: {e}"))
     }
 
     pub fn cursor(&self, project_id: &str) -> Result<i64, String> {
@@ -750,6 +959,77 @@ impl Index {
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
+    /// Локальные пути передач, которые идут прямо сейчас.
+    ///
+    /// Нужно для живого прогресса: проценты пишутся в `transfers` раз в 4 МБ, но сами
+    /// себя интерфейсу не показывают. Пока передача идёт, строку колонки надо
+    /// перечитывать — иначе значок «скачивается 47 %» не появится никогда, и на экране
+    /// будет казаться, что программа висит.
+    pub fn active_transfer_paths(&self) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT local_path FROM transfers
+                  WHERE state IN ('queued','active')",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Активные передачи, ключ — локальный путь.
+    ///
+    /// Нужно для файлов, которых В КАТАЛОГЕ ЕЩЁ НЕТ: у новой заливки `file_id`
+    /// появляется только из ответа `/notify`, поэтому связать её строку с передачей
+    /// можно лишь по пути. Без этого свежий файл на 200 МБ показывал статичную
+    /// стрелку «надо залить» и ни одного процента — заливка шла, а на экране ничего
+    /// не двигалось.
+    pub fn active_transfers_by_path(&self) -> Result<Vec<(String, String, Option<f64>)>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT local_path, direction,
+                        CASE WHEN IFNULL(bytes_total,0) > 0
+                             THEN CAST(bytes_done AS REAL) / bytes_total
+                             ELSE NULL END
+                   FROM transfers
+                  WHERE state IN ('queued','active')",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<f64>>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Локальные пути записей в заданном состоянии.
+    ///
+    /// Нужно демону: `detect_local_changes` только ставит метку `LocalModified`, а
+    /// заливать по ней некому — очередь кандидатов работает с путями, не с
+    /// состояниями. Без этого запроса перерендеренный файл получал значок
+    /// «надо залить» и ждал, пока человек нажмёт заливку руками.
+    pub fn paths_in_state(&self, state: &str) -> Result<Vec<String>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT local_path FROM local_state
+                  WHERE state = ?1 AND local_path IS NOT NULL",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![state], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
     #[cfg(test)]
     pub fn local_state(&self, file_id: &str) -> Result<Option<(String, Option<String>)>, String> {
         self.conn
@@ -825,6 +1105,52 @@ impl Index {
     /// Baseline (`local_size`/`local_mtime`/`synced_etag`) обнуляем: иначе после
     /// повторного скачивания сравнение версий возьмёт старое значение и решит, что
     /// файл «локально изменён».
+    /// Забыть записи целиком — файл удалён из каталога, а не вытеснен с диска.
+    ///
+    /// Отличать от `mark_evicted` обязательно: вытеснение оставляет строку каталога
+    /// (файл в облаке есть, копии нет), а удаление убирает и её. Оставить строку —
+    /// значит показывать в колонке файл, которого больше нет нигде.
+    ///
+    /// Папка удаляется каскадом, поэтому принимаем список.
+    pub fn forget_files(&self, file_ids: &[String]) -> Result<usize, String> {
+        let mut n = 0;
+        for id in file_ids {
+            self.conn
+                .execute("DELETE FROM local_state WHERE file_id = ?1", params![id])
+                .map_err(|e| format!("forget local_state {id}: {e}"))?;
+            n += self
+                .conn
+                .execute("DELETE FROM remote_entries WHERE file_id = ?1", params![id])
+                .map_err(|e| format!("forget entry {id}: {e}"))?;
+        }
+        Ok(n)
+    }
+
+    /// Всё поддерево папки: сама папка и её потомки. Для удаления каскадом — нам
+    /// нужно вычистить у себя ровно то же, что бэкенд вычистит у себя.
+    pub fn subtree_ids(
+        &self,
+        project_id: &str,
+        folder_prefix: &str,
+    ) -> Result<Vec<(String, Option<String>)>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT re.file_id, ls.local_path
+                   FROM remote_entries re
+                   LEFT JOIN local_state ls ON ls.file_id = re.file_id
+                  WHERE re.project_id = ?1
+                    AND (re.folder_path = ?2 OR re.folder_path LIKE ?2 || '/%')",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![project_id, folder_prefix], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
     pub fn mark_evicted(&self, file_id: &str) -> Result<(), String> {
         self.conn
             .execute(
@@ -1021,10 +1347,16 @@ impl Index {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Активные передачи первыми, затем недавно завершённые.
+    /// Что едет прямо сейчас и что упало. Успешно завершённое НЕ показываем.
     ///
-    /// Завершённые тоже показываем: ошибка, о которой никто не узнал, — это
-    /// ошибка, которая повторится.
+    /// Список — это «что происходит», а не журнал: файл синхронизировался, вопрос
+    /// закрыт, и держать его в списке значит закапывать в истории то, что едет
+    /// сейчас. Ошибки при этом остаются — ошибка, о которой никто не узнал, это
+    /// ошибка, которая повторится (особенно случай «байты уехали, а подтверждение не
+    /// прошло»: он требует человека).
+    ///
+    /// Правило живёт здесь, в запросе, а не в интерфейсе: у списка два потребителя,
+    /// и фильтр, скопированный в оба, однажды разъедется.
     pub fn list_transfers(&self, limit: i64) -> Result<Vec<super::TransferRow>, String> {
         let mut st = self
             .conn
@@ -1034,6 +1366,7 @@ impl Index {
                         re.name
                    FROM transfers t
                    LEFT JOIN remote_entries re ON re.file_id = t.file_id
+                  WHERE t.state <> 'done'
                   ORDER BY
                     CASE t.state WHEN 'active' THEN 0 WHEN 'queued' THEN 1
                                  WHEN 'error' THEN 2 ELSE 3 END,
@@ -1067,6 +1400,30 @@ impl Index {
             })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Одна строка передачи — для повтора и снятия задачи.
+    pub fn transfer_row(&self, id: i64) -> Result<Option<(String, String, String)>, String> {
+        self.conn
+            .query_row(
+                "SELECT direction, local_path, state FROM transfers WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| format!("transfer_row {id}: {e}"))
+    }
+
+    /// Убрать одну задачу из списка.
+    ///
+    /// Нужно ровно для упавших: пока строка висит, человек не может отличить «эта
+    /// ошибка ещё актуальна» от «я про неё уже знаю». Строка передачи — не архив, её
+    /// незачем хранить после того, как с ней разобрались.
+    pub fn delete_transfer(&self, id: i64) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM transfers WHERE id = ?1", params![id])
+            .map(|_| ())
+            .map_err(|e| format!("delete_transfer {id}: {e}"))
     }
 
     /// Убрать из истории всё завершённое — кнопка «очистить».
@@ -1119,6 +1476,35 @@ fn now_sec() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// В списке передач нет места тому, что уже синхронизировалось, — но ошибка
+    /// остаётся: иначе про неудачную заливку человек не узнает никогда.
+    #[test]
+    fn список_передач_без_завершённых_но_с_ошибками() {
+        let idx = Index::open_in_memory().unwrap();
+
+        let едет = idx
+            .enqueue_transfer(None, "p1", "up", "/m/везёт.mp4", Some(100))
+            .unwrap();
+        let готово = idx
+            .enqueue_transfer(None, "p1", "up", "/m/доехал.mp4", Some(100))
+            .unwrap();
+        let упало = idx
+            .enqueue_transfer(None, "p1", "down", "/m/сломался.mp4", Some(100))
+            .unwrap();
+
+        idx.finish_transfer(готово, None).unwrap();
+        idx.finish_transfer(упало, Some("PUT вернул 403")).unwrap();
+
+        let ids: Vec<i64> = idx.list_transfers(50).unwrap().into_iter().map(|t| t.id).collect();
+
+        assert!(ids.contains(&едет), "то, что едет, обязано быть в списке");
+        assert!(ids.contains(&упало), "ошибку скрывать нельзя — она повторится");
+        assert!(
+            !ids.contains(&готово),
+            "успешно завершённое в списке не держим: он про то, что происходит сейчас"
+        );
+    }
 
     fn entry(id: &str, folder: &str, name: &str, is_folder: bool, size: i64) -> TreeEntry {
         TreeEntry {
@@ -1283,6 +1669,53 @@ mod tests {
         assert!(idx.entry_by_path("p1", "IN", "нет.mov").unwrap().is_none());
     }
 
+    /// Архивность обязана доезжать до индекса и обратно.
+    ///
+    /// По ней принимаются два решения: раннер пропускает проект, интерфейс рисует
+    /// значок. Потеряется в `replace_projects` — архивный проект молча пойдёт в
+    /// обработку, а это прямое нарушение контракта storage-API.
+    #[test]
+    fn архивность_проекта_доезжает_до_индекса() {
+        let mut idx = Index::open_in_memory().unwrap();
+        let mut resp = ProjectsResponse::default();
+        resp.projects = vec![
+            RemoteProject {
+                id: "p1".into(),
+                name: "Живой".into(),
+                client_id: None,
+                user_id: None,
+                group_name: "personal".into(),
+                is_active: true,
+                is_paused: false,
+                is_archived: false,
+                archived_at: None,
+                updated_at: "2026-08-11T00:00:00.000Z".into(),
+            },
+            RemoteProject {
+                id: "p2".into(),
+                name: "Архивный".into(),
+                client_id: None,
+                user_id: None,
+                // Архив НЕ выводится из `group_name`: группа отвечает только за
+                // раскладку интерфейса сайта, а статус живёт в своём поле.
+                group_name: "personal".into(),
+                is_active: true,
+                is_paused: false,
+                is_archived: true,
+                archived_at: Some("2026-08-01T10:00:00.000Z".into()),
+                updated_at: "2026-08-11T00:00:00.000Z".into(),
+            },
+        ];
+        idx.replace_projects(&resp).unwrap();
+
+        let got = idx.projects(None).unwrap();
+        let alive = got.iter().find(|p| p.id == "p1").unwrap();
+        let archived = got.iter().find(|p| p.id == "p2").unwrap();
+        assert!(!alive.is_archived);
+        assert!(archived.is_archived);
+        assert_eq!(archived.archived_at.as_deref(), Some("2026-08-01T10:00:00.000Z"));
+    }
+
     #[test]
     fn проекты_фильтруются_по_клиенту() {
         let mut idx = Index::open_in_memory().unwrap();
@@ -1291,23 +1724,30 @@ mod tests {
                 id: "c1".into(),
                 display_name: "Мегафон".into(),
             }],
+            users: vec![],
             projects: vec![
                 RemoteProject {
                     id: "p1".into(),
                     name: "Реклама Q3".into(),
                     client_id: Some("c1".into()),
+                    user_id: None,
                     group_name: "personal".into(),
                     is_active: true,
                     is_paused: false,
+                    is_archived: false,
+                    archived_at: None,
                     updated_at: "2026-08-07T00:00:00.000Z".into(),
                 },
                 RemoteProject {
                     id: "p2".into(),
                     name: "Без клиента".into(),
                     client_id: None,
+                    user_id: None,
                     group_name: "personal".into(),
                     is_active: true,
                     is_paused: false,
+                    is_archived: false,
+                    archived_at: None,
                     updated_at: "2026-08-07T00:00:00.000Z".into(),
                 },
             ],

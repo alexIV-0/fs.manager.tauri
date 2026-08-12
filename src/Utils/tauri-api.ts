@@ -360,6 +360,30 @@ export const tauriAPI = {
 		tauriOff('processing-event', wrapped ?? callback);
 	},
 
+	/// Состояние файлов зеркала изменилось — скачали, залили, вытеснили.
+	///
+	/// Отдельно от `onFsChanged`: событие файловой системы говорит «файл на диске
+	/// поменялся», а это — «поменялось состояние синхронизации», и приходит оно в
+	/// том числе когда на диске ничего не менялось (например, файл ЗАЛИТ). Обёртку
+	/// храним по той же причине, что и у `fs-changed`: отписка без listener убила бы
+	/// весь Set слушателей канала.
+	onStorageChanged: (callback: (paths: string[]) => void) => {
+		const wrapper = (_event: any, paths: string[]) => callback(paths ?? []);
+		tauriOn('storage-changed', wrapper);
+		return () => tauriOff('storage-changed', wrapper);
+	},
+
+	/// Список проектов изменился: имя, архив, пауза, состав.
+	///
+	/// Отдельно от `storage-changed`: тот про файлы, этот про сами проекты. Архив и
+	/// пауза живут в `projects` и в журнал изменений не попадают, поэтому узнать о них
+	/// можно только перечитав список — и сообщить об этом надо отдельным событием.
+	onStorageProjectsChanged: (callback: () => void) => {
+		const wrapper = () => callback();
+		tauriOn('storage-projects-changed', wrapper);
+		return () => tauriOff('storage-projects-changed', wrapper);
+	},
+
 	onFsChanged: (callback: (changedPath: string) => void) => {
 		// ВАЖНО: храним ссылку на обёртку и снимаем именно её. tauriOff('fs-changed')
 		// без listener удалил бы ВЕСЬ Set слушателей канала — а на 'fs-changed' подписаны

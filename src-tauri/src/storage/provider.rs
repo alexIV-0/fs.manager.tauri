@@ -53,6 +53,8 @@ impl Provider {
         dispatch!(self, presign_get(project_id, s3_key, ttl_sec))
     }
 
+    /// `s3_key` — ключ существующего объекта при перезаливке. См. `StorageApi::presign_put`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn presign_put(
         &self,
         project_id: &str,
@@ -60,10 +62,11 @@ impl Provider {
         file_name: &str,
         content_type: &str,
         ttl_sec: Option<i64>,
+        s3_key: Option<&str>,
     ) -> StorageResult<PresignResponse> {
         dispatch!(
             self,
-            presign_put(project_id, folder_path, file_name, content_type, ttl_sec)
+            presign_put(project_id, folder_path, file_name, content_type, ttl_sec, s3_key)
         )
     }
 
@@ -76,10 +79,63 @@ impl Provider {
         }
     }
 
+    /// Создать логическую папку. В R2 объекта не появляется — это строка в Postgres.
+    ///
+    /// Мок отказывает намеренно: подделка записи создала бы ложное чувство, что путь
+    /// проверен. Демо-режим папки в облаке не создаёт, и это видно сразу.
+    pub async fn mkdir(
+        &self,
+        project_id: &str,
+        folder_path: &str,
+        name: &str,
+        event_id: Option<&str>,
+    ) -> StorageResult<ProjectFile> {
+        match self {
+            Provider::Api(a) => a.mkdir(project_id, folder_path, name, event_id).await,
+            Provider::Mock(_) => Err(StorageError::Unsupported(
+                "создание папки не поддерживается мок-провайдером".into(),
+            )),
+        }
+    }
+
+    /// Удалить файл или папку (папку — каскадом). Возвращает удалённые ключи R2.
+    pub async fn delete(
+        &self,
+        project_id: &str,
+        file_id: &str,
+        event_id: Option<&str>,
+    ) -> StorageResult<Vec<String>> {
+        match self {
+            Provider::Api(a) => a.delete(project_id, file_id, event_id).await,
+            Provider::Mock(_) => Err(StorageError::Unsupported(
+                "удаление не поддерживается мок-провайдером".into(),
+            )),
+        }
+    }
+
+    /// Переименовать проект. У мока нет — подделка создала бы ложное чувство, что
+    /// путь проверен.
+    pub async fn rename_project(&self, project_id: &str, name: &str) -> StorageResult<()> {
+        match self {
+            Provider::Api(a) => a.rename_project(project_id, name).await,
+            Provider::Mock(_) => Err(StorageError::Unsupported(
+                "переименование проекта не поддерживается мок-провайдером".into(),
+            )),
+        }
+    }
+
+    /// Включить/выключить проект. У мока нет: подделка скрыла бы отсутствие эндпоинта.
+    pub async fn set_project_paused(&self, project_id: &str, paused: bool) -> StorageResult<()> {
+        match self {
+            Provider::Api(a) => a.set_project_paused(project_id, paused).await,
+            Provider::Mock(_) => Err(StorageError::Unsupported(
+                "смена активности проекта не поддерживается мок-провайдером".into(),
+            )),
+        }
+    }
+
     /// Остальные мутации есть только у настоящего бэкенда: подделка записи создаёт
     /// ложное чувство, что путь проверен.
-    /// Эндпоинт контракта; интерфейсом пока не вызывается.
-    #[allow(dead_code)]
     pub async fn rename(
         &self,
         project_id: &str,

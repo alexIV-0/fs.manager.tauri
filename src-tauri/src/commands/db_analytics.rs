@@ -362,6 +362,64 @@ const LOCAL_ARCHIVE_SCHEMA_VERSION: u32 = 1;
 /// - `started_at` — реальный старт обработки (из лог-группы), НЕ registeredAt (= время находки).
 /// - `duration`   — хронометраж ВЫХОДНЫХ медиафайлов ("HH:MM:SS"), считается ffprobe на фронте.
 /// - `out_files`  — абсолютные пути финальных файлов; здесь режутся до пути от корня проекта.
+/// Дописать имя машины перед расширением: `2026.08.jsonl` → `2026.08.alexeys-imac.jsonl`.
+///
+/// Имя хоста, а не uuid: его видно глазами в имени файла, и когда через полгода
+/// придётся разбираться, чья это статистика, отвечать будет само имя.
+///
+/// `in_mirror = false` — путь возвращается как есть. Флаг аргументом, а не чтением
+/// глобального состояния внутри: так функция чистая и её тест не зависит от того,
+/// что параллельно делают другие тесты.
+fn machine_scoped_if(path: &Path, in_mirror: bool) -> std::path::PathBuf {
+    if !in_mirror {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("stat");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
+    path.with_file_name(format!("{stem}.{}.{ext}", machine_id()))
+}
+
+/// Короткое и стабильное имя этой машины для имени файла.
+///
+/// `hostname` спрашиваем один раз за процесс: команда дешёвая, но зовётся она на
+/// каждый обработанный элемент, а имя хоста за прогон не меняется.
+fn machine_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let raw = std::process::Command::new("hostname")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default();
+        sanitize_machine(&raw)
+    })
+}
+
+/// Привести имя хоста к безопасному куску имени файла.
+///
+/// `Alexeys-iMac.local` → `alexeys-imac`: точки режем (иначе они выглядят как
+/// расширения), регистр вниз, длину ограничиваем — имя файла не место для
+/// корпоративного FQDN. Пусто → `machine`, чтобы файл всё равно получил имя.
+fn sanitize_machine(raw: &str) -> String {
+    let head = raw.trim().split('.').next().unwrap_or("").trim();
+    let cleaned: String = head
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "machine".to_string()
+    } else {
+        trimmed.chars().take(20).collect()
+    }
+}
+
 pub fn write_local_archive(
     path: &Path,
     record: &DbItemRecord,
@@ -372,8 +430,18 @@ pub fn write_local_archive(
     duration: &str,
     out_files: &[String],
 ) -> Result<(), String> {
-    // local-archive пишет в .jsonl (одна JSON-строка на item)
-    let jsonl_path = path.with_extension("jsonl");
+    // local-archive пишет в .jsonl (одна JSON-строка на item), И В ФАЙЛ СВОЕЙ МАШИНЫ.
+    //
+    // Имя машины в названии обязательно: в объектном хранилище нет дописывания в
+    // конец, заливка перезаписывает объект целиком. Две машины, пишущие один
+    // `2026.08.jsonl`, затрут строки друг друга — и потеря будет тихой, задним
+    // числом. Со своим файлом у каждой машины конфликта нет по построению, а чтение
+    // статистики за месяц становится склейкой файлов (это впереди).
+    // Метка машины — ТОЛЬКО если файл уедет в облако. В локальной папке, которая ни
+    // с чем не синхронизируется, затирать друг друга некому, а имя хоста в названии
+    // будет только мешать глазам.
+    let plain = path.with_extension("jsonl");
+    let jsonl_path = machine_scoped_if(&plain, crate::storage::paths::under_global_mirror(&plain));
     if let Some(parent) = jsonl_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("mkdir: {}", e))?;
@@ -512,6 +580,47 @@ pub fn write_analytics(
             Ok(()) => println!("[db_analytics] ✓ {}", resolved.display()),
             Err(e) => println!("[db_analytics] ✗ template={} err={}", template_id, e),
         }
+    }
+}
+
+#[cfg(test)]
+mod machine_tests {
+    use super::*;
+
+    /// Имя машины в имени файла статистики — защита от тихой потери строк: в R2 нет
+    /// дописывания, и две машины, пишущие один `2026.08.jsonl`, затрут друг друга.
+    /// Метка машины нужна ТОЛЬКО там, где файл уедет в облако: в R2 нет дописывания,
+    /// и две машины, заливающие один `2026.08.jsonl`, затрут строки друг друга.
+    #[test]
+    fn в_зеркале_имя_машины_дописывается() {
+        let p = Path::new("/mirror/Кл/Пр/options/__stat/2026.08.jsonl");
+        let name = machine_scoped_if(p, true)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(name.starts_with("2026.08."), "получили {name}");
+        assert!(name.ends_with(".jsonl"), "получили {name}");
+        assert_ne!(name, "2026.08.jsonl", "имя машины обязано появиться");
+    }
+
+    /// А в локальной папке, которая ни с чем не синхронизируется, затирать друг
+    /// друга некому — метка была бы мусором в имени.
+    #[test]
+    fn вне_зеркала_имя_остаётся_чистым() {
+        let p = Path::new("/Users/x/Work/проект/options/__stat/2026.08.jsonl");
+        assert_eq!(machine_scoped_if(p, false), p.to_path_buf());
+    }
+
+    #[test]
+    fn имя_хоста_приводится_к_короткому_и_безопасному() {
+        assert_eq!(sanitize_machine("Alexeys-iMac.local"), "alexeys-imac");
+        assert_eq!(sanitize_machine("  RENDER BOX 2  "), "render-box-2");
+        // Пусто — файл всё равно должен получить имя.
+        assert_eq!(sanitize_machine(""), "machine");
+        assert_eq!(sanitize_machine("..."), "machine");
+        // Длину ограничиваем: имя файла не место для корпоративного FQDN.
+        assert!(sanitize_machine(&"a".repeat(50)).len() <= 20);
     }
 }
 

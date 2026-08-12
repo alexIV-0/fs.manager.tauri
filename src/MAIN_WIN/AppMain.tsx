@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { CurentProjectFolder } from './ProjectFolderColumn/CurentProjectFolder';
 import { storage_store } from '@/Store/MainWin/storage_store';
+import { useStorageChanged } from './Storage/useStorageChanged';
 
 import { MainTopPanel } from './MainTopPanel';
 import { ProjectFolderColumn } from './ProjectFolderColumn/ProjectFolderColumn';
@@ -101,6 +102,10 @@ export default function AppMain() {
 
 		loadAllPlugins();
 	}, []);
+
+	// Значки зеркала после фоновой передачи: скачали префетчем, залил демон,
+	// вытеснили по таймеру — интерфейс об этом иначе не узнаёт.
+	useStorageChanged();
 
 	// Живое обновление списка плагинов после сборки/загрузки из PluginBuilder.
 	useEffect(() => {

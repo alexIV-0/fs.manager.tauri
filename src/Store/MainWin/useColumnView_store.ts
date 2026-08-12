@@ -1,6 +1,6 @@
 // stores/useColumnViewStore.ts
 import { create } from 'zustand';
-import { calcColumnWidth, COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent } from '../helpers/readDirContent';
+import { calcColumnWidth, COLUMN_DEFAULT_WIDTH, COLUMN_MIN_WIDTH, ColumnViewState, invalidateDirCache, readDirContent, sameStorage, type FileItem } from '../helpers/readDirContent';
 import { useColumnFocus_store } from './columnFocus_store';
 
 interface ColumnInstance {
@@ -53,6 +53,20 @@ interface UniversalColumnViewState {
 	// синхронизирует lastSelectedItem с уже выбранным элементом этой панели
 	// (или с первым элементом корневой колонки, если ничего не выбрано).
 	focusInstance: (instanceType: 'gd' | 'local') => void;
+}
+
+/**
+ * Одинаковы ли строки колонки — с точки зрения ОТРИСОВКИ.
+ *
+ * Путь один и тот же ещё не значит «рисовать нечего»: у облачного файла меняется
+ * состояние синхронизации, проценты передачи, пин, агрегат папки, архивность. Всё это
+ * влияет на то, что человек видит, поэтому входит в сравнение.
+ *
+ * Функция существует ровно для защиты от мерцания: без сравнения каждая проверка папки
+ * пересоздавала бы массив и перерисовывала список целиком.
+ */
+function sameItem(a: FileItem, b: FileItem): boolean {
+	return a.path === b.path && a.isDir === b.isDir && sameStorage(a.storage, b.storage);
 }
 
 export const useColumnView_Store = create<UniversalColumnViewState>((set, get) => ({
@@ -222,11 +236,14 @@ export const useColumnView_Store = create<UniversalColumnViewState>((set, get) =
 				if (idx === -1) return state;
 
 				const oldItems = currentCols[idx].items;
-				// Пропускаем обновление если содержимое не изменилось — избегаем лишних ре-рендеров и мерцания.
-				if (
-					oldItems.length === items.length &&
-					oldItems.every((item: { path: string }, i: number) => item.path === items[i].path)
-				) return state;
+				// Пропускаем обновление, если не изменилось НИЧЕГО — включая состояние
+				// синхронизации. Сравнивать только пути было ошибкой: у облачных файлов
+				// путь не меняется никогда, меняются значок и проценты. Из-за этого
+				// свежие данные приходили и молча выбрасывались как «то же самое», и
+				// значок обновлялся лишь при уходе в другую папку и обратно (там колонка
+				// пересобирается заново, а не сравнивается).
+				if (oldItems.length === items.length && oldItems.every((item: FileItem, i: number) => sameItem(item, items[i])))
+					return state;
 
 				const updatedCols = [...currentCols];
 				updatedCols[idx] = { ...currentCols[idx], items };

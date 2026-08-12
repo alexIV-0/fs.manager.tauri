@@ -1,5 +1,7 @@
 // components/DraggableFileItem.tsx
 import { memo } from 'react';
+
+import { sameStorage } from '@/Store/helpers/readDirContent';
 import { useDraggable } from '@dnd-kit/core';
 import { CurrentFileItem } from './CurentFileItem';
 
@@ -56,5 +58,10 @@ export const DraggableFileItem = memo(function DraggableFileItem({ name, path, i
 	prev.path === next.path &&
 	prev.isSelected === next.isSelected &&
 	prev.isActiveSelection === next.isActiveSelection &&
-	prev.isMultiSelected === next.isMultiSelected
+	prev.isMultiSelected === next.isMultiSelected &&
+	// Значок синхронизации — тоже пропс, и он меняется чаще всех остальных.
+	// Без этой строки строка не перерисовывалась НИКОГДА: путь и имя у облачного
+	// файла постоянны, поэтому компаратор говорил «пропсы те же», хотя в сторе уже
+	// лежало «скачивается 72 %». Симптом выглядел как «события не доходят».
+	sameStorage(prev.storage, next.storage)
 );

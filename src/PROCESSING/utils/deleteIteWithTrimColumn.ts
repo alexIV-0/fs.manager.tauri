@@ -1,16 +1,24 @@
-import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
-import { getInstanceType } from './fileSystemActions';
-import { commands, unwrap } from '@/Utils/specta';
+// Удаление по горячей клавише (Delete) — обёртка над общим `deleteItem`.
+//
+// ── Почему здесь нет своей логики ───────────────────────────────────────────
+// Раньше эта функция звала `commands.deleteItem` напрямую и обрезала колонки. Для
+// облачного файла это было неверно дважды:
+//
+//   • она **обходила шов** — то есть удаляла локальную копию с диска, а запись в
+//     каталоге оставляла. Двухступенчатого удаления (сначала копия, потом облако)
+//     для горячей клавиши не существовало вообще;
+//   • она **обрезала колонки** — хотя после снятия локальной копии путь остаётся
+//     живым: файл никуда не делся, он просто «только в облаке».
+//
+// Снаружи это выглядело как «нажимаю Delete, и ничего не происходит»: значок не
+// менялся, строка исчезала, а в облаке файл оставался.
+//
+// Поэтому логика ровно одна и живёт в `fileSystemActions.deleteItem` — и меню, и
+// горячая клавиша идут через неё. Одинаковое действие не может вести себя по-разному
+// в зависимости от того, чем его вызвали.
 
-export async function deleteItemWithTrimColumns(path: string) {
-	try {
-		unwrap(await commands.deleteItem(path));
-	} catch (err) {
-		console.error('deleteItem failed:', err);
-		return;
-	}
+import { deleteItem } from './fileSystemActions';
 
-	const instanceType = getInstanceType(path);
-
-	await useColumnView_Store.getState().removeItemAndTrimColumns(instanceType, path);
+export async function deleteItemWithTrimColumns(path: string): Promise<void> {
+	await deleteItem(path);
 }

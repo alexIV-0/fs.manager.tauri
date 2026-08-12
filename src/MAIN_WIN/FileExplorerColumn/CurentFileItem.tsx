@@ -22,8 +22,10 @@ import {
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
+import { ConflictChoice } from '@/MAIN_WIN/Storage/ConflictChoice';
 import { storageMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 
 interface CurrentFileItemProps {
@@ -243,7 +245,20 @@ export function CurrentFileItem({
 					    `ml: auto` прижимает значок вправо: у ListItemText здесь нет flex,
 					    и без этого он липнет к имени. */}
 					{storage?.state && (
-						<Box sx={{ ml: 'auto', pl: 1, display: 'flex', flexShrink: 0 }}>
+						<Box sx={{ ml: 'auto', pl: 1, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+							{/* Конфликт требует выбора, а не повтора — поэтому выбор стоит прямо
+							    в строке, рядом со значком, а не спрятан в контекстном меню. */}
+							{storage.state === 'conflict' && (
+								<ConflictChoice
+									path={path}
+									onResolved={() => {
+										invalidateDirCache(dirname(path));
+										const store = useColumnView_Store.getState();
+										store.refreshAffectedColumns('gd', [dirname(path)]);
+										store.refreshAffectedColumns('local', [dirname(path)]);
+									}}
+								/>
+							)}
 							<StorageBadge
 								state={storage.state}
 								pinned={storage.pinned}

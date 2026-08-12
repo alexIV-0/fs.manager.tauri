@@ -64,6 +64,33 @@ pub fn under_mirror(mirror_root: &Path, path: &Path) -> bool {
     strip_mirror(mirror_root, path).is_some()
 }
 
+/// Корень зеркала, доступный вне клиента хранилища.
+///
+/// Нужен ровно одному потребителю — статистике: она должна знать, уедет ли её файл
+/// в облако (тогда в имени нужна метка машины) или останется в локальной папке
+/// (тогда метка только мешает). Тащить туда `StorageService` ради одного вопроса
+/// незачем, а корень зеркала на процесс всё равно один.
+static MIRROR_ROOT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Запомнить корень зеркала глобально. Зовётся из `attach`/`detach`.
+pub fn set_global_mirror_root(root: Option<PathBuf>) {
+    if let Ok(mut g) = MIRROR_ROOT.lock() {
+        *g = root.filter(|p| !p.as_os_str().is_empty());
+    }
+}
+
+/// Под зеркалом ли путь — по глобально запомненному корню.
+///
+/// `false`, если зеркало не настроено: тогда «под зеркалом» нет ничего, и все пути
+/// локальные.
+pub fn under_global_mirror(path: &Path) -> bool {
+    let Ok(g) = MIRROR_ROOT.lock() else { return false };
+    match g.as_ref() {
+        Some(root) => under_mirror(root, path),
+        None => false,
+    }
+}
+
 /// Отрезать корень зеркала. `None` — путь не под зеркалом.
 fn strip_mirror(mirror_root: &Path, path: &Path) -> Option<Vec<String>> {
     let root = normalize(mirror_root);
@@ -188,23 +215,26 @@ pub fn part_path(target: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::types::{RemoteClient, RemoteProject};
+    use crate::storage::types::{RemoteProject, RemoteUser};
 
     fn root() -> PathBuf {
         PathBuf::from("/Users/x/Mirror")
     }
 
-    /// Один клиент «Мегафон» с проектом «Реклама Q3» (id `proj1`).
+    /// Один владелец «Мегафон» с проектом «Реклама Q3» (id `proj1`).
     fn dirs() -> MirrorDirs {
         MirrorDirs::build(
-            &[RemoteClient { id: "c1".into(), display_name: "Мегафон".into() }],
+            &[RemoteUser { id: "u1".into(), email: "Мегафон".into(), full_name: String::new(), display_name: String::new() }],
             &[RemoteProject {
                 id: "proj1".into(),
                 name: "Реклама Q3".into(),
-                client_id: Some("c1".into()),
+                client_id: None,
+                user_id: Some("u1".into()),
                 group_name: "personal".into(),
                 is_active: true,
                 is_paused: false,
+                is_archived: false,
+                archived_at: None,
                 updated_at: "2026-08-08T00:00:00.000Z".into(),
             }],
         )
@@ -308,7 +338,9 @@ mod tests {
         assert_eq!(classify(&root(), &d, &root()), Some(MirrorNode::Root));
         assert_eq!(
             classify(&root(), &d, Path::new("/Users/x/Mirror/Мегафон")),
-            Some(MirrorNode::Client { client_id: "c1".into() })
+            // Первый уровень — владелец; `client_id` здесь читается как «id
+            // верхнего уровня», см. шапку layout.rs.
+            Some(MirrorNode::Client { client_id: "u1".into() })
         );
         assert_eq!(
             classify(&root(), &d, Path::new("/Users/x/Mirror/Мегафон/Реклама Q3")),

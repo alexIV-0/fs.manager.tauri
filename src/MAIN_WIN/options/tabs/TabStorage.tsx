@@ -22,7 +22,7 @@ import {
 	Typography,
 } from '@mui/material';
 import { Check, CloudOff, FlaskConical, FolderOpen, Plus, Trash2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ConnectionConfig } from '@/bindings';
 import { storage_store } from '@/Store/MainWin/storage_store';
@@ -50,37 +50,88 @@ const EMPTY: ConnectionConfig = {
 	demo: false,
 };
 
+/**
+ * Слить сохранённый конфиг с дефолтами.
+ *
+ * Простой `{ ...EMPTY, ...data }` не годится: в файле незаданные поля лежат как
+ * `null`, а `null` в спреде **перебивает** дефолт. Из-за этого список «всегда
+ * горячих» рисовался пустым, хотя вытеснение применяло дефолтную маску
+ * `options/*.json` (в Rust есть `hot_patterns_or_default`) — интерфейс показывал
+ * не то, что происходит на самом деле. То же било по «Хранить копию» и «Предел
+ * зеркала»: на экране 4 ч и 100 ГБ, в конфиге `null`.
+ */
+function withDefaults(data: ConnectionConfig): ConnectionConfig {
+	return {
+		...EMPTY,
+		...data,
+		keepHours: data.keepHours ?? EMPTY.keepHours,
+		maxMirrorGb: data.maxMirrorGb ?? EMPTY.maxMirrorGb,
+		hotPatterns: data.hotPatterns ?? EMPTY.hotPatterns,
+	};
+}
+
 export default function TabStorage() {
 	const { status, busy, error, connect, connectMock, disconnect, refreshStatus } = storage_store();
 	const [cfg, setCfg] = useState<ConnectionConfig>(EMPTY);
 	const [saved, setSaved] = useState(false);
 	const [mirrorBytes, setMirrorBytes] = useState<number | null>(null);
 	const [evicting, setEvicting] = useState(false);
+	// Автосохранение: правка ниже кнопки «Сохранить» иначе теряется молча — человек
+	// редактирует маски в конце вкладки и закрывает окно, а кнопка осталась выше, в
+	// секции «Подключение». Первый рендер и загрузку конфига пропускаем, иначе
+	// автосейв запишет дефолты поверх сохранённого.
+	const loaded = useRef(false);
+	const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
 		void (async () => {
 			const r = await commands.storageGetConfig();
-			if (r.status === 'ok') setCfg({ ...EMPTY, ...r.data });
+			if (r.status === 'ok') setCfg(withDefaults(r.data));
 			void refreshStatus();
 			const mb = await commands.storageMirrorBytes();
 			if (mb.status === 'ok') setMirrorBytes(mb.data);
+			loaded.current = true;
 		})();
 	}, [refreshStatus]);
 
-	const patch = (p: Partial<ConnectionConfig>) => {
-		setCfg((c) => ({ ...c, ...p }));
-		setSaved(false);
-	};
+	/** Правка, которую ещё не записали. Нужна, чтобы дописать её при закрытии вкладки. */
+	const pending = useRef<ConnectionConfig | null>(null);
 
-	const save = async () => {
-		const r = await commands.storageSetConfig(cfg);
+	const save = async (next?: ConnectionConfig) => {
+		const body = next ?? pending.current ?? cfg;
+		pending.current = null;
+		const r = await commands.storageSetConfig(body);
 		if (r.status === 'ok') {
 			// Токен возвращается замаскированным — иначе следующее сохранение
 			// затёрло бы настоящее значение маской.
-			setCfg({ ...EMPTY, ...r.data });
+			setCfg(withDefaults(r.data));
 			setSaved(true);
 		}
 	};
+
+	const patch = (p: Partial<ConnectionConfig>) => {
+		setCfg((c) => {
+			const next = { ...c, ...p };
+			if (loaded.current) {
+				pending.current = next;
+				if (saveTimer.current) clearTimeout(saveTimer.current);
+				saveTimer.current = setTimeout(() => void save(next), 600);
+			}
+			return next;
+		});
+		setSaved(false);
+	};
+
+	// Закрыли вкладку, пока тикал дебаунс — правку всё равно записываем. Просто
+	// снять таймер значило бы потерять её, то есть оставить ровно тот баг, который
+	// автосохранение и лечит.
+	useEffect(() => {
+		return () => {
+			if (saveTimer.current) clearTimeout(saveTimer.current);
+			const last = pending.current;
+			if (last) void commands.storageSetConfig(last);
+		};
+	}, []);
 
 	const pickMirror = async () => {
 		const picked = unwrap(await commands.selectFolders({ multiSelect: false }));
@@ -137,6 +188,24 @@ export default function TabStorage() {
 				<Alert severity='warning' sx={{ py: 0 }}>
 					{status.lastError}
 				</Alert>
+			)}
+
+			{/* Слежка за зеркалом — то, из чего заливка узнаёт о файлах, положенных
+			    руками. Если она не поднялась, программа продолжает работать, но такие
+			    файлы находятся редким полным обходом (до 10 минут), а не за секунды.
+			    Молча это оставлять нельзя: «почему файл не залился сразу» иначе
+			    неотлаживаемо. Результаты пайплайна от слежки не зависят — про них
+			    раннер сообщает явно. */}
+			{status.connected && !status.watching && (
+				<Alert severity='warning' sx={{ py: 0 }}>
+					Слежка за папкой зеркала не поднялась. Файлы, положенные вручную, будут находиться полным
+					обходом раз в 10 минут. Результаты обработки заливаются как обычно.
+				</Alert>
+			)}
+			{status.connected && status.pendingUploads > 0 && (
+				<Typography variant='caption' sx={{ color: 'text.disabled' }}>
+					В очереди на заливку: {status.pendingUploads}
+				</Typography>
 			)}
 
 			{/* Что умеет бэкенд. Показываем честно: недоступные операции гасятся в

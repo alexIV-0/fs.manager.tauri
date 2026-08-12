@@ -20,12 +20,13 @@ import {
 	Tooltip,
 	Typography,
 } from '@mui/material';
-import { ArrowDown, ArrowUp, CloudOff, HardDriveDownload, Pin, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CloudOff, CloudUpload, HardDriveDownload, OctagonPause, Pin, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { LocalFileRow, TransferRow } from '@/bindings';
+import type { LocalFileRow, NotUploadedRow, TransferRow } from '@/bindings';
 import { storage_store } from '@/Store/MainWin/storage_store';
 import { commands } from '@/Utils/specta';
+import { applyListView, ListControls, type SortKey } from './ListControls';
 
 /** Пока что-то едет — опрашиваем часто, в покое почти не трогаем. */
 const TICK_ACTIVE = 500;
@@ -87,6 +88,10 @@ export function SyncStatusButton() {
 
 	// Опрос вместо событий: передачи живут в Rust, а событий по ним пока нет.
 	// Частота падает в покое, поэтому в простое это почти бесплатно.
+	//
+	// Завершённое сюда не приходит вовсе — отфильтровано в запросе (`list_transfers`),
+	// одним правилом на всех потребителей. Поэтому пустой список означает «сейчас
+	// ничего не едет», а не «не было никогда»; ошибки остаются видны.
 	useEffect(() => {
 		if (!connected) {
 			setRows([]);
@@ -173,6 +178,11 @@ export function SyncStatusButton() {
 
 function SyncModal({ open, onClose, rows }: { open: boolean; onClose: () => void; rows: TransferRow[] }) {
 	const [tab, setTab] = useState(0);
+	// Итог действия над задачей. Нужен потому, что «Повторить» может закончиться
+	// БЕЗ видимых последствий — файл уже синхронизирован или исчез с диска, задача
+	// снимается, и строка просто исчезает. Молчаливое исчезновение читается как
+	// «кнопка сломана», поэтому итог говорим словами.
+	const [notice, setNotice] = useState<string | null>(null);
 
 	return (
 		<Dialog open={open} onClose={onClose} maxWidth='md' fullWidth>
@@ -183,20 +193,32 @@ function SyncModal({ open, onClose, rows }: { open: boolean; onClose: () => void
 			<Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 2, minHeight: 36 }}>
 				<Tab label='Передачи' sx={{ minHeight: 36, fontSize: 12 }} />
 				<Tab label='Локальные копии' sx={{ minHeight: 36, fontSize: 12 }} />
+				<Tab label='Не в облаке' sx={{ minHeight: 36, fontSize: 12 }} />
 			</Tabs>
 
+			{notice && (
+				<Typography
+					variant='caption'
+					sx={{ px: 2, py: '6px', fontSize: 11, color: 'info.main', bgcolor: 'action.hover' }}
+				>
+					{notice}
+				</Typography>
+			)}
+
 			<DialogContent dividers sx={{ p: 0, minHeight: 300, maxHeight: '80%' }}>
-				{tab === 0 ? <TransfersTab rows={rows} /> : <LocalCopiesTab open={open && tab === 1} />}
+				{tab === 0 && <TransfersTab rows={rows} onNotice={setNotice} />}
+				{tab === 1 && <LocalCopiesTab open={open} />}
+				{tab === 2 && <NotUploadedTab open={open} onNotice={setNotice} />}
 			</DialogContent>
 		</Dialog>
 	);
 }
 
-function TransfersTab({ rows }: { rows: TransferRow[] }) {
+function TransfersTab({ rows, onNotice }: { rows: TransferRow[]; onNotice: (text: string) => void }) {
 	if (rows.length === 0) {
 		return (
 			<Typography variant='caption' sx={{ display: 'block', p: 2, color: 'text.disabled' }}>
-				Передач не было
+				Сейчас ничего не передаётся
 			</Typography>
 		);
 	}
@@ -215,7 +237,7 @@ function TransfersTab({ rows }: { rows: TransferRow[] }) {
 							) : (
 								<ArrowDown size={13} strokeWidth={1.5} opacity={0.7} />
 							)}
-							<Typography variant='body2' noWrap sx={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+							<Typography variant='body2' noWrap sx={{ flex: 1, minWidth: 0, fontSize: 16 }}>
 								{t.name}
 							</Typography>
 							<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 11 }}>
@@ -230,6 +252,34 @@ function TransfersTab({ rows }: { rows: TransferRow[] }) {
 										<X size={12} strokeWidth={1.5} />
 									</IconButton>
 								</Tooltip>
+							)}
+
+							{/* Упавшая передача требует решения человека, поэтому у неё свои
+							    действия: повторить или снять задачу. Без них строка висела
+							    вечно, и список переставал отвечать на вопрос «всё ли в порядке».
+							    Если исходник исчез, «Повторить» сам снимает задачу и говорит
+							    об этом текстом — молча удалять чужую задачу нельзя. */}
+							{t.state === 'error' && (
+								<>
+									<Tooltip title='Повторить' arrow>
+										<IconButton
+											size='small'
+											sx={{ p: '2px' }}
+											onClick={() => {
+												void commands.storageRetryTransfer(t.id).then((r) => {
+													onNotice(r.status === 'ok' ? r.data : `Не удалось повторить: ${r.error}`);
+												});
+											}}
+										>
+											<RotateCcw size={12} strokeWidth={1.5} />
+										</IconButton>
+									</Tooltip>
+									<Tooltip title='Убрать задачу' arrow>
+										<IconButton size='small' sx={{ p: '2px' }} onClick={() => void commands.storageDismissTransfer(t.id)}>
+											<Trash2 size={12} strokeWidth={1.5} />
+										</IconButton>
+									</Tooltip>
+								</>
 							)}
 						</Stack>
 
@@ -251,10 +301,135 @@ function TransfersTab({ rows }: { rows: TransferRow[] }) {
 	);
 }
 
+/** Что означает причина — словами, а не кодом. */
+const ПРИЧИНА: Record<string, string> = {
+	new: 'в облаке нет',
+	modified: 'правили здесь',
+	stopped: 'остановлено вручную',
+};
+
+/**
+ * «Не в облаке» — что лежит здесь и не уехало.
+ *
+ * Отдельная вкладка нужна из-за одного случая: остановленная вручную заливка сама
+ * больше не начнётся (иначе кнопка «Остановить» ничего не значила бы). Значок такого
+ * файла видно только в его папке, а вопрос «всё ли я отправил» — про зеркало целиком.
+ * Без списка такой файл остаётся незамеченным навсегда.
+ */
+function NotUploadedTab({ open, onNotice }: { open: boolean; onNotice: (text: string) => void }) {
+	const [rows, setRows] = useState<NotUploadedRow[] | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const [query, setQuery] = useState('');
+	const [sort, setSort] = useState<SortKey>('date');
+	const [desc, setDesc] = useState(true);
+
+	const load = useCallback(async () => {
+		const r = await commands.storageNotUploaded(null);
+		if (r.status === 'ok') {
+			setRows(r.data);
+			setError(null);
+		} else setError(r.error);
+	}, []);
+
+	useEffect(() => {
+		if (open) void load();
+	}, [open, load]);
+
+	const send = async (row: NotUploadedRow) => {
+		const r = await commands.storageUploadNow(row.path);
+		onNotice(
+			r.status === 'ok'
+				? `«${row.name}» поставлен в очередь заливки`
+				: `Не удалось отправить «${row.name}»: ${r.error}`,
+		);
+		await load();
+	};
+
+	if (error) {
+		return (
+			<Typography variant='caption' sx={{ display: 'block', p: 2, color: 'error.main' }}>
+				{error}
+			</Typography>
+		);
+	}
+	if (rows === null) return null;
+	if (rows.length === 0) {
+		return (
+			<Typography variant='caption' sx={{ display: 'block', p: 2, color: 'text.disabled' }}>
+				Всё отправлено — здесь нет ничего, чего не было бы в облаке
+			</Typography>
+		);
+	}
+
+	const view = applyListView(rows, query, sort, desc, {
+		name: (r) => r.name,
+		where: (r) => `${r.folder} ${r.path}`,
+		size: (r) => r.sizeBytes,
+		date: (r) => r.mtime,
+	});
+
+	return (
+		<>
+			<ListControls
+				query={query}
+				onQuery={setQuery}
+				sort={sort}
+				onSort={setSort}
+				desc={desc}
+				onDesc={setDesc}
+				dateLabel='По дате изменения'
+				shown={view.length}
+				total={rows.length}
+			/>
+
+			<List disablePadding>
+				{view.map((f) => (
+					<ListItem key={f.path} divider sx={{ py: '3px', gap: 1 }}>
+						{f.reason === 'stopped' ? (
+							<Tooltip title='Заливку остановили вручную — сама она не возобновится' arrow>
+								<OctagonPause size={13} strokeWidth={1.5} color='#e8a33d' />
+							</Tooltip>
+						) : (
+							<ArrowUp size={13} strokeWidth={1.5} opacity={0.6} />
+						)}
+
+						<Box sx={{ flex: 1, minWidth: 0 }}>
+							<Typography variant='body2' noWrap sx={{ fontSize: 16 }}>
+								{f.name}
+							</Typography>
+							<Typography variant='caption' noWrap sx={{ display: 'block', fontSize: 10, color: 'text.disabled' }}>
+								{f.folder || f.path} · {ПРИЧИНА[f.reason] ?? f.reason}
+							</Typography>
+						</Box>
+
+						<Typography variant='caption' sx={{ fontSize: 11, color: 'text.disabled', width: 90, textAlign: 'right' }}>
+							{sinceText(f.mtime)}
+						</Typography>
+						<Typography variant='caption' sx={{ fontSize: 11, width: 70, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+							{humanSize(f.sizeBytes)}
+						</Typography>
+
+						<Tooltip title='Отправить в облако сейчас' arrow>
+							<IconButton size='small' sx={{ p: '2px' }} onClick={() => void send(f)}>
+								<CloudUpload size={13} strokeWidth={1.5} />
+							</IconButton>
+						</Tooltip>
+					</ListItem>
+				))}
+			</List>
+		</>
+	);
+}
+
 function LocalCopiesTab({ open }: { open: boolean }) {
 	const [files, setFiles] = useState<LocalFileRow[] | null>(null);
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [query, setQuery] = useState('');
+	// По умолчанию сверху лежит то, к чему давно не обращались: именно это вытеснится
+	// первым, и именно это человек ищет, когда пришёл освобождать место.
+	const [sort, setSort] = useState<SortKey>('date');
+	const [desc, setDesc] = useState(false);
 
 	const load = useCallback(async () => {
 		const r = await commands.storageLocalFiles();
@@ -292,9 +467,29 @@ function LocalCopiesTab({ open }: { open: boolean }) {
 	}
 
 	const total = files.reduce((s, f) => s + f.sizeBytes, 0);
+	const view = applyListView(files, query, sort, desc, {
+		name: (f) => f.name,
+		// И подпись проекта, и полный путь: в строке видно «Пользователь X / test 1»,
+		// а искать человек может по вложенной папке («zzz») — она есть только в пути.
+		where: (f) => `${f.project} ${f.path}`,
+		size: (f) => f.sizeBytes,
+		date: (f) => f.lastAccess,
+	});
 
 	return (
 		<>
+			<ListControls
+				query={query}
+				onQuery={setQuery}
+				sort={sort}
+				onSort={setSort}
+				desc={desc}
+				onDesc={setDesc}
+				dateLabel='По дате обращения'
+				shown={view.length}
+				total={files.length}
+			/>
+
 			<Stack direction='row' spacing={1} sx={{ px: 2, py: '4px', alignItems: 'center' }}>
 				<HardDriveDownload size={13} strokeWidth={1} opacity={0.6} />
 				<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 11 }}>
@@ -304,10 +499,10 @@ function LocalCopiesTab({ open }: { open: boolean }) {
 			</Stack>
 
 			<List disablePadding>
-				{files.map((f) => (
+				{view.map((f) => (
 					<ListItem key={f.fileId} divider sx={{ py: '3px', gap: 1 }}>
 						<Box sx={{ flex: 1, minWidth: 0 }}>
-							<Typography variant='body2' noWrap sx={{ fontSize: 12 }}>
+							<Typography variant='body2' noWrap sx={{ fontSize: 16 }}>
 								{f.name}
 							</Typography>
 							<Typography variant='caption' noWrap sx={{ display: 'block', fontSize: 10, color: 'text.disabled' }}>
