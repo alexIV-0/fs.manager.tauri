@@ -4,6 +4,9 @@ import { RUN_PROCESSING } from '@/PROCESSING/runLanes';
 import { startPostScheduler, stopPostScheduler } from '@/PROCESSING/autoPost/scheduler';
 import { usePostingAvailable } from '@/PROCESSING/autoPost/usePostingAvailable';
 import { usePosting_store } from '@/Store/Processing/usePosting_store';
+import { startWorker, stopWorkerNow, stopWorkerSoft } from '@/PROCESSING/remoteWorker/runner';
+import { useWorkerAvailable } from '@/PROCESSING/remoteWorker/useWorkerAvailable';
+import { useWorker_store } from '@/Store/Processing/useWorker_store';
 import { commands } from '@/Utils/specta';
 import { greenColor, greyColor, steelColor } from '@/Store/Color/grayColor';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
@@ -12,7 +15,7 @@ import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
 import { pathPattern_store, programPathPattern_store, typeOfFile_store, typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { appSettings_client } from '@/Store/Settings/appSettings_client';
 import ThemeWrapper from '@/theme/ThemeWrapper';
-import { Box, IconButton, Typography } from '@mui/material';
+import { Box, IconButton } from '@mui/material';
 import { RotateCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
@@ -33,6 +36,8 @@ import { initializePlugins } from '@/Store/MainWin/plugin_store';
 import { MainFolderColumn } from './MainFolderColumn/MainFolderColumn';
 import MyButton from './Universal/myButton';
 import PostingStatusLine from './PostingStatusLine';
+import StatusRow from './Universal/StatusRow';
+import WorkerStatusLine from './WorkerStatusLine';
 import MyDivider from './Universal/myDivider';
 import { useColumnTabNavigation } from './hooks/useColumnTabNavigation';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
@@ -60,6 +65,10 @@ export default function AppMain() {
 	// Постинг показываем/разрешаем только когда есть чем собрать пайплайн finder → poster
 	// (плагин-источник `finder` + хотя бы один постер). Иначе прячем весь UI постинга.
 	const postingReady = usePostingAvailable();
+
+	// Режим воркера: есть плагин-адаптер очереди — показываем кнопки, нет — прячем.
+	const workerReady = useWorkerAvailable();
+	const { isWorking, stopRequested } = useWorker_store();
 
 	const bgLoading = greyColor(15);
 	const bgLoadingBar = greyColor(30);
@@ -162,6 +171,13 @@ export default function AppMain() {
 	useEffect(() => {
 		if (!postingReady && isPosting) stopPostScheduler();
 	}, [postingReady, isPosting]);
+
+	// То же для воркера: снесли плагин-адаптер на ходу — очередь спрашивать нечем.
+	// Гасим аварийно, чтобы взятая задача вернулась в очередь, а не висела до
+	// протухания аренды.
+	useEffect(() => {
+		if (!workerReady && isWorking) stopWorkerNow();
+	}, [workerReady, isWorking]);
 
 	const reLoadExtension = () => {
 		window.location.reload();
@@ -270,54 +286,36 @@ export default function AppMain() {
 				</Box>
 				<Box sx={{ ...bottomBoxStyle, mt: '5px', zIndex: 10 }}>
 					<MyDivider disablePadding />
-					<Box
-						sx={{
-							display: 'flex',
-							gap: '5px',
-							justifyContent: 'space-between',
-							alignItems: 'center',
-							overflow: 'hidden',
-							p: '0 10px',
-						}}
+					{/* Три раннера — три одинаковые строки. Общий StatusRow, чтобы они не расходились
+					    по стилю: раньше у обработки не было приглушения в простое, и это читалось как
+					    «другой шрифт», хотя размер везде одинаковый. */}
+					<StatusRow
+						label='обработка'
+						active={isScanning}
+						trailing={
+							<IconButton onClick={reLoadExtension}>
+								<RotateCw />
+							</IconButton>
+						}
 					>
-						<Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', minWidth: 0 }}>
-							<Typography
-								sx={{
-									fontSize: '0.7rem',
-									fontWeight: 700,
-									letterSpacing: '0.5px',
-									textTransform: 'uppercase',
-									color: greyColor(48),
-									flexShrink: 0,
-								}}
-							>
-								обработка
-							</Typography>
-							<StatusBar />
-						</Box>
-						<IconButton onClick={reLoadExtension}>
-							<RotateCw />
-						</IconButton>
-					</Box>
+						<StatusBar />
+					</StatusRow>
 					<MyDivider disablePadding />
-					{/* ── Статусбар ПОСТИНГА (виден только когда есть finder + постер) ── */}
+					{/* ── Воркер: виден только когда есть плагин очереди ── */}
+					{workerReady && (
+						<>
+							<StatusRow label='воркер' active={isWorking}>
+								<WorkerStatusLine />
+							</StatusRow>
+							<MyDivider disablePadding />
+						</>
+					)}
+					{/* ── Постинг: виден только когда есть finder + постер ── */}
 					{postingReady && (
 						<>
-							<Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', p: '2px 10px', minWidth: 0 }}>
-								<Typography
-									sx={{
-										fontSize: '0.7rem',
-										fontWeight: 700,
-										letterSpacing: '0.5px',
-										textTransform: 'uppercase',
-										color: greyColor(48),
-										flexShrink: 0,
-									}}
-								>
-									постинг
-								</Typography>
+							<StatusRow label='постинг' active={isPosting}>
 								<PostingStatusLine />
-							</Box>
+							</StatusRow>
 							<MyDivider disablePadding />
 						</>
 					)}
@@ -330,7 +328,10 @@ export default function AppMain() {
 						}}
 					>
 						{!isScanning ? (
-							<MyButton onClick={startButtClick} innerText={'START'} />
+							// Локальный запуск и режим воркера взаимоисключающие: два прогона по
+							// одной полосе делили бы семафоры и флаг прерывания, и стоп одного
+							// убивал бы процессы другого.
+							<MyButton onClick={startButtClick} innerText={'START LOCAL PROCESS'} disabled={isWorking} />
 						) : (
 							<Box sx={{ display: 'flex', flex: 20, flexDirection: 'row', gap: '5px' }}>
 								<MyButton
@@ -350,6 +351,45 @@ export default function AppMain() {
 							</Box>
 						)}
 					</Box>
+					{workerReady && (
+						<Box
+							sx={{
+								display: 'flex',
+								gap: '5px',
+								p: '0 5px 5px 5px',
+								overflow: 'hidden',
+							}}
+						>
+							{!isWorking ? (
+								<MyButton
+									onClick={startWorker}
+									innerText={'START ONLINE WORKER'}
+									// Пока идёт локальный прогон, за онлайн-задачами не ходим.
+									disabled={isScanning}
+								/>
+							) : (
+								<Box sx={{ display: 'flex', flex: 20, flexDirection: 'row', gap: '5px' }}>
+									<MyButton
+										sx={{ backgroundColor: colorGreen70, '&:hover': { bgcolor: colorGreen95 } }}
+										onClick={stopWorkerNow}
+										// Аварийная: рвёт обработку и возвращает задачу в очередь, чтобы
+										// её не ждали 15 минут до протухания аренды.
+										innerText={'Stop now and release task'}
+									/>
+									<MyButton
+										sx={
+											stopRequested
+												? { backgroundColor: colorSteel50, '&:hover': { bgcolor: colorSteel70 } }
+												: { backgroundColor: colorGreen70, '&:hover': { bgcolor: colorGreen95 } }
+										}
+										onClick={stopWorkerSoft}
+										innerText={stopRequested ? 'Finishing current task…' : 'Stop after current task'}
+										disabled={stopRequested}
+									/>
+								</Box>
+							)}
+						</Box>
+					)}
 					{postingReady && (
 						<Box
 							sx={{

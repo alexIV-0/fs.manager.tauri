@@ -31,6 +31,11 @@ pub struct SyncReport {
     /// Пришлось делать полный `/tree` вместо инкремента.
     pub rebootstrapped: bool,
     pub cursor: i64,
+    /// Какие сайдкары тронули на той стороне (маска, см. `Sidecar::bit`).
+    ///
+    /// Скачать их здесь нельзя: этот слой не пишет на диск и про зеркало не знает.
+    /// Поэтому только сообщаем наверх — подтягивает `StorageService`.
+    pub sidecars_dirty: u8,
 }
 
 pub struct Sync {
@@ -83,6 +88,12 @@ impl Sync {
             upserted: st.upserted,
             rebootstrapped: true,
             cursor: tree.cursor,
+            // Полный обход = знание о проекте собирается заново, а сайдкаров в `/tree`
+            // нет вовсе (строк в каталоге у них не бывает). Значит после обхода про них
+            // не известно ничего — помечаем все три как требующие подтягивания. Иначе
+            // свежая машина не узнала бы, что проект выключен на сайте, до первого
+            // изменения тумблера кем-то ещё.
+            sidecars_dirty: 0b111,
             ..Default::default()
         })
     }
@@ -142,6 +153,7 @@ impl Sync {
             report.upserted += st.upserted;
             report.deleted += st.deleted;
             report.skipped += st.skipped;
+            report.sidecars_dirty |= st.sidecars_dirty;
             cursor = page.cursor;
 
             if st.needs_resync {
@@ -149,6 +161,9 @@ impl Sync {
                 let mut boot = self.bootstrap(project_id).await?;
                 boot.pages += report.pages;
                 boot.skipped += report.skipped;
+                // Сайдкары к дереву отношения не имеют, полный обход о них ничего не
+                // скажет — сигнал обязан выжить и после пересбора.
+                boot.sidecars_dirty |= report.sidecars_dirty;
                 return Ok(boot);
             }
         }

@@ -10,6 +10,7 @@
 
 import { commands, unwrap } from '@/Utils/specta';
 import { joinPath } from '@/Utils/joinPath';
+import { ensureDir } from '@/Utils/storageSeam';
 
 const PLATFORM = 'telegram';
 // Реакция-«забрано». ✅ не входит в стандартный набор реакций Telegram → используем 👍.
@@ -105,7 +106,9 @@ async function resolveCollisionName(inDir: string, name: string): Promise<string
 
 async function moveToIn(projectPath: string, name: string, stagingPath: string): Promise<void> {
 	const inDir = joinPath(projectPath, 'IN');
-	unwrap(await commands.testAndCreateFolder(inDir));
+	// Через шов: в зеркале папка обязана появиться в каталоге, иначе для облака и
+	// сайта её не существует (нет `file_id`, нет значка, нельзя переименовать).
+	await ensureDir(inDir);
 	const finalName = await resolveCollisionName(inDir, name);
 	const dest = joinPath(inDir, finalName);
 	unwrap(await commands.moveItem(stagingPath, dest, null));

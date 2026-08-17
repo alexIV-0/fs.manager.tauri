@@ -21,8 +21,8 @@
 // Вызывается из SaveButton/TopPanel сразу после commands.saveFlowToOptionsFolder. Никогда
 // не бросает — ошибки только логируются, чтобы не ломать сохранение флоу.
 
-import { commands, unwrap } from '@/Utils/specta';
 import { joinPath } from '@/Utils/joinPath';
+import { ensureDir } from '@/Utils/storageSeam';
 
 const MAIN_SEARCH_TYPE = 'mainSearch';
 const GD_SAVE_TYPE = 'saveFileOnGD';
@@ -40,7 +40,12 @@ export async function ensureProjectFolders(path: string | null, flow: any): Prom
 		if (hasEnabledNode(nodes, MAIN_SEARCH_TYPE)) folders.push(joinPath(path, 'IN'));
 		if (hasEnabledNode(nodes, GD_SAVE_TYPE)) folders.push(joinPath(path, 'OUT'));
 
-		if (folders.length) unwrap(await commands.testAndCreateFolders(folders));
+		// Через шов, а не `testAndCreateFolders`: в зеркале папку надо заводить в
+		// КАТАЛОГЕ, иначе она существует только на диске — на сайте её нет, значка
+		// синхронизации нет, переименовать и удалить через API нельзя. Именно так и
+		// пропадала `IN`. По одной, последовательно: пакетной команды в шве нет, а
+		// папок здесь максимум две.
+		for (const folder of folders) await ensureDir(folder);
 	} catch (e) {
 		console.error('[ensureProjectFolders] ошибка создания папок проекта:', e);
 	}

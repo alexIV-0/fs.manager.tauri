@@ -261,7 +261,7 @@ async function runPipeline(route: PostRoute, file: string, signal: AbortSignal):
 	item[route.finderId].deleteAfter = route.deleteAfter;
 	item.description = await buildPostDescription(route, file);
 
-	const status = await processItem(item, signal, RUN_POSTING);
+	const { status } = await processItem(item, signal, RUN_POSTING);
 
 	if (status === 'done') {
 		try {

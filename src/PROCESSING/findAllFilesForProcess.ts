@@ -17,7 +17,8 @@ import { getProjectActivity, setProjectActivity, pruneActivity } from '@/Utils/p
 import { recordActivity, persistEnabled } from '@/Utils/folderState';
 import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
-import { catchUpProject, projectArchived } from '@/Utils/storageSeam';
+import { catchUpProject, isInMirror, projectArchived, setProjectPaused } from '@/Utils/storageSeam';
+import { archivedProjects_store } from '@/Store/MainWin/archivedProjects_store';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
@@ -57,6 +58,21 @@ export async function findAllFilesForProcess(clearQueue = true) {
 
 		const mainFolderName = basename(curMainFolder.path);
 
+		// Области видимости двух запусков НЕ пересекаются:
+		//   • локальный прогон (эта функция) — только локально подключённые папки;
+		//   • режим воркера — только задачи с сайта, локальные папки его не касаются.
+		//
+		// Иначе облачный проект обрабатывали бы обе стороны сразу: эта машина по своему
+		// расписанию и любая другая, взявшая ту же задачу из очереди. Результат — двойной
+		// рендер и гонка за один и тот же OUT, причём заметная только по факту.
+		//
+		// Первая колонка при этом остаётся общей: локальные и облачные папки видны рядом,
+		// синхронизатор работает как работал. Разделены запуски, а не интерфейс.
+		if (await isInMirror(curMainFolder.path)) {
+			console.log(`[scan] ${mainFolderName} — облачная папка, локальный прогон её не трогает (задачи берёт воркер)`);
+			continue;
+		}
+
 		// обновляем все папки, вдруг новые добавили — ПЕРЕД сканированием файлов
 		const finalArr = await reloadFolders(curMainFolder);
 		mainFolders_stor.getState().updateParameters({
@@ -93,6 +109,14 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			const offSet = new Set<string>(getOffArr);
 			for (const projectName of finalArr) {
 				if (offSet.has(projectName)) continue;
+				// Архивный проект авто-отключению не подлежит. Архив — блок ПЕРВОГО
+				// уровня: он и так снимает проект с обработки, а вкл/выкл при нём не
+				// значит ничего. Без этой проверки таймер «холодных» гасил бы архивные
+				// (они по определению холодные) и писал бы в облако бессмысленную
+				// смену флага — которую человек потом увидел бы при разархивации.
+				if (archivedProjects_store.getState().paths[
+					`${curMainFolder.path}/${projectName}`.replace(/[\\/]+$/, '').toLowerCase()
+				]) continue;
 				// Первая встреча проекта — засеваем «сейчас», чтобы при апгрейде
 				// (или у новой папки) ничего не отключилось задним числом.
 				let lastActivityMs = getProjectActivity(curMainFolder.id, projectName);
@@ -102,8 +126,15 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				}
 				if (lastActivityMs < cutoffMs) {
 					offSet.add(projectName);
-					// SSOT: фиксируем авто-отключение в файле папки (для сайта/др. машины).
-						persistEnabled(curMainFolder.id, projectName, false, 'auto');
+					// Фиксируем авто-отключение и в файле, и в каталоге: иначе сайт (и
+					// другая машина) продолжают считать проект включённым, а следующий
+					// `/projects` вернёт наш локальный флаг обратно.
+					persistEnabled(curMainFolder.id, projectName, false, 'auto');
+					if (curMainFolder.online) {
+						void setProjectPaused(joinPath(curMainFolder.path, projectName), true).catch((e) =>
+							console.error('[autoDisable] каталог отказал:', projectName, e),
+						);
+					}
 						console.log(`[autoDisable] ${mainFolderName}/${projectName} — idle > ${autoDisableDays}d`);
 				}
 			}

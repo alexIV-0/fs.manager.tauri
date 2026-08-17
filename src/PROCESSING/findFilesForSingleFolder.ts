@@ -1,7 +1,6 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
-import { folderPath_store, pathPattern_store, programPathPattern_store, typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { findItemAndCreateProps } from './findItemAndCreateProps';
 import { clearFileNameAndID } from './utils/clearFileNameAndID';
@@ -12,6 +11,7 @@ import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemT
 import { joinPath } from '@/Utils/joinPath';
 import { basename } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
+import { injectMachineLocals } from './utils/machineLocals';
 import { ensureLocal, pathInfo } from '@/Utils/storageSeam';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
@@ -91,20 +91,6 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 		void commands.sendLog('error', `[${projectName}] ${message}`).catch(() => {});
 	});
 
-	const typeOfFileRaw = typeOfFile_store.getState().patternStore;
-	const typeOfFile = Object.fromEntries(typeOfFileRaw.map((t: any) => [t.name, t.path]));
-	const programmPathRaw = programPathPattern_store.getState().patternStore;
-	const programmPath = Object.fromEntries(programmPathRaw.map((t: any) => [t.name, t.path]));
-	const folderPathRaw = folderPath_store.getState().patternStore;
-	const folderPath = Object.fromEntries(folderPathRaw.map((t: any) => [t.name, t.path]));
-
-	// Пользовательские алиасы путей (TabPaths → pathPattern_store). Используются как $<name>
-	// внутри масок путей в плагинах. Подстановка выполняется в formatNameByPattern.
-	const pathAliasesRaw = pathPattern_store.getState().patternStore;
-	const pathAliases = Object.fromEntries(
-		pathAliasesRaw.filter((t: any) => /^[A-Za-z0-9_]+$/.test(t.name)).map((t: any) => [t.name, joinPath(...(t.path ?? []))]),
-	);
-
 	const description = getDescription(nodesProps);
 	description.year = year;
 	description.findTime = findDateName;
@@ -112,12 +98,12 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	description.projectPathGD = projectPathOnGD;
 	description.mainFolderName = mainFolderName;
 	description.mainFolderPath = mainFolderPath;
-	description.localFolder = localFolder;
 	description.infoText = `${mainFolderName}/${projectName}`;
-	description.typeOfFile = typeOfFile;
-	description.programmPath = programmPath;
-	description.folderPath = folderPath;
-	description.pathAliases = pathAliases;
+
+	// Пути к программам, папки данных, алиасы масок, словарь типов, локальный корень —
+	// всё, что у каждой машины своё. Общая функция с режимом воркера: задача от сайта
+	// этих полей не несёт, и подставлять их обязаны обе точки входа одинаково.
+	injectMachineLocals(description);
 
 	const templateObj: any = {
 		processingQueue: [],

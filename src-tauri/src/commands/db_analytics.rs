@@ -362,10 +362,13 @@ const LOCAL_ARCHIVE_SCHEMA_VERSION: u32 = 1;
 /// - `started_at` — реальный старт обработки (из лог-группы), НЕ registeredAt (= время находки).
 /// - `duration`   — хронометраж ВЫХОДНЫХ медиафайлов ("HH:MM:SS"), считается ffprobe на фронте.
 /// - `out_files`  — абсолютные пути финальных файлов; здесь режутся до пути от корня проекта.
-/// Дописать имя машины перед расширением: `2026.08.jsonl` → `2026.08.alexeys-imac.jsonl`.
+/// Дописать метку машины перед расширением: `2026.08.jsonl` → `2026.08.alexeys-imac-a1b2.jsonl`.
 ///
-/// Имя хоста, а не uuid: его видно глазами в имени файла, и когда через полгода
-/// придётся разбираться, чья это статистика, отвечать будет само имя.
+/// Метка — hostname плюс хвост ключа машины (`crate::machine`). Только hostname не
+/// годится: дефолтные имена маков совпадают, и две такие машины писали бы в один
+/// объект, затирая строки друг друга, — ровно то, от чего метка и защищает. Только
+/// uuid тоже не годится: через полгода по имени файла никто не поймёт, чья это
+/// статистика.
 ///
 /// `in_mirror = false` — путь возвращается как есть. Флаг аргументом, а не чтением
 /// глобального состояния внутри: так функция чистая и её тест не зависит от того,
@@ -376,48 +379,7 @@ fn machine_scoped_if(path: &Path, in_mirror: bool) -> std::path::PathBuf {
     }
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("stat");
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
-    path.with_file_name(format!("{stem}.{}.{ext}", machine_id()))
-}
-
-/// Короткое и стабильное имя этой машины для имени файла.
-///
-/// `hostname` спрашиваем один раз за процесс: команда дешёвая, но зовётся она на
-/// каждый обработанный элемент, а имя хоста за прогон не меняется.
-fn machine_id() -> &'static str {
-    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ID.get_or_init(|| {
-        let raw = std::process::Command::new("hostname")
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .unwrap_or_default();
-        sanitize_machine(&raw)
-    })
-}
-
-/// Привести имя хоста к безопасному куску имени файла.
-///
-/// `Alexeys-iMac.local` → `alexeys-imac`: точки режем (иначе они выглядят как
-/// расширения), регистр вниз, длину ограничиваем — имя файла не место для
-/// корпоративного FQDN. Пусто → `machine`, чтобы файл всё равно получил имя.
-fn sanitize_machine(raw: &str) -> String {
-    let head = raw.trim().split('.').next().unwrap_or("").trim();
-    let cleaned: String = head
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('-').to_string();
-    if trimmed.is_empty() {
-        "machine".to_string()
-    } else {
-        trimmed.chars().take(20).collect()
-    }
+    path.with_file_name(format!("{stem}.{}.{ext}", crate::machine::slug()))
 }
 
 pub fn write_local_archive(
@@ -612,16 +574,8 @@ mod machine_tests {
         assert_eq!(machine_scoped_if(p, false), p.to_path_buf());
     }
 
-    #[test]
-    fn имя_хоста_приводится_к_короткому_и_безопасному() {
-        assert_eq!(sanitize_machine("Alexeys-iMac.local"), "alexeys-imac");
-        assert_eq!(sanitize_machine("  RENDER BOX 2  "), "render-box-2");
-        // Пусто — файл всё равно должен получить имя.
-        assert_eq!(sanitize_machine(""), "machine");
-        assert_eq!(sanitize_machine("..."), "machine");
-        // Длину ограничиваем: имя файла не место для корпоративного FQDN.
-        assert!(sanitize_machine(&"a".repeat(50)).len() <= 20);
-    }
+    // Санитизация имени хоста переехала в `crate::machine` вместе с ключом машины —
+    // её тесты там же.
 }
 
 #[cfg(test)]

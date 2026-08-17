@@ -332,6 +332,78 @@ pub async fn storage_refresh_projects(
     Ok(resp)
 }
 
+// ─── Очередь задач ───────────────────────────────────────────────────────────
+//
+// Тонкие обёртки: разобрал аргументы, позвал сервис. Идентичность машины
+// (`machineUuid` + `hostname`) подставляет сам сервис — renderer её не передаёт и
+// подменить не может.
+
+/// «Я на связи» без запроса задачи.
+///
+/// Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние
+/// «машина включена, воркер выключен» сайту не видно вовсе, и в админке один
+/// индикатор отвечал бы сразу за два разных факта.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_queue_ping(state: State<'_, StorageService>) -> Result<(), String> {
+    state.queue_ping().await
+}
+
+/// Взять следующую задачу. `null` — очередь пуста, это норма, а не ошибка.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_queue_claim(
+    state: State<'_, StorageService>,
+) -> Result<Option<crate::storage::QueueTask>, String> {
+    state.queue_claim().await
+}
+
+/// Двинуть шаг и продлить аренду.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_queue_progress(
+    state: State<'_, StorageService>,
+    task_id: String,
+    step_id: String,
+    status: crate::storage::QueueStepStatus,
+    message: Option<String>,
+) -> Result<(), String> {
+    state
+        .queue_progress(&task_id, &step_id, status, message.as_deref())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_queue_done(
+    state: State<'_, StorageService>,
+    task_id: String,
+    out_files: Vec<String>,
+    total_cost: f64,
+) -> Result<(), String> {
+    state.queue_done(&task_id, out_files, total_cost).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_queue_failed(
+    state: State<'_, StorageService>,
+    task_id: String,
+    error: String,
+) -> Result<(), String> {
+    state.queue_failed(&task_id, &error).await
+}
+
+/// Вернуть задачу в очередь — аварийный стоп, не дожидаясь протухания аренды.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_queue_release(
+    state: State<'_, StorageService>,
+    task_id: String,
+) -> Result<(), String> {
+    state.queue_release(&task_id).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn storage_clients(
@@ -824,6 +896,24 @@ pub async fn storage_delete(
     state
         .delete_in_cloud(std::path::Path::new(&path), allow_online.unwrap_or(false))
         .await
+}
+
+/// Выжечь проект: удалить в облаке всё содержимое и убрать локальную папку.
+///
+/// Одна ступень и без подтверждения здесь — по назначению: спрашивает интерфейс, до
+/// вызова, и спрашивает один раз про весь проект. Возвращённый отчёт обязан быть
+/// показан человеку целиком: **запись самого проекта остаётся** (удалять проект под
+/// machine token бэкенд не умеет, просьба 3.7), и `options` он защищает 403. Сказать
+/// «проект удалён» по успешному ответу этой команды — соврать.
+///
+/// `None` — путь не в зеркале, зовущий удаляет папку как обычную.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_purge_project(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<Option<crate::storage::PurgeReport>, String> {
+    state.purge_project(std::path::Path::new(&path)).await
 }
 
 /// Включить/выключить проект в каталоге (галочка во второй колонке).

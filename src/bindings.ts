@@ -5,6 +5,9 @@
 
 
 export const commands = {
+async machineIdentity() : Promise<MachineIdentity> {
+    return await TAURI_INVOKE("machine_identity");
+},
 async runScriptInAe(args: RunScriptInAEArgs) : Promise<Result<AEResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("run_script_in_ae", { args }) };
@@ -1477,6 +1480,70 @@ async storageRefreshProjects() : Promise<Result<ProjectsResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * «Я на связи» без запроса задачи.
+ * 
+ * Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние
+ * «машина включена, воркер выключен» сайту не видно вовсе, и в админке один
+ * индикатор отвечал бы сразу за два разных факта.
+ */
+async storageQueuePing() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_ping") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Взять следующую задачу. `null` — очередь пуста, это норма, а не ошибка.
+ */
+async storageQueueClaim() : Promise<Result<QueueTask | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_claim") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Двинуть шаг и продлить аренду.
+ */
+async storageQueueProgress(taskId: string, stepId: string, status: QueueStepStatus, message: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_progress", { taskId, stepId, status, message }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageQueueDone(taskId: string, outFiles: string[], totalCost: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_done", { taskId, outFiles, totalCost }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageQueueFailed(taskId: string, error: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_failed", { taskId, error }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Вернуть задачу в очередь — аварийный стоп, не дожидаясь протухания аренды.
+ */
+async storageQueueRelease(taskId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_release", { taskId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async storageClients() : Promise<Result<RemoteClient[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_clients") };
@@ -1923,6 +1990,25 @@ async storageMkdir(path: string) : Promise<Result<string | null, string>> {
 async storageDelete(path: string, allowOnline: boolean | null) : Promise<Result<DeleteStage | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_delete", { path, allowOnline }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Выжечь проект: удалить в облаке всё содержимое и убрать локальную папку.
+ * 
+ * Одна ступень и без подтверждения здесь — по назначению: спрашивает интерфейс, до
+ * вызова, и спрашивает один раз про весь проект. Возвращённый отчёт обязан быть
+ * показан человеку целиком: **запись самого проекта остаётся** (удалять проект под
+ * machine token бэкенд не умеет, просьба 3.7), и `options` он защищает 403. Сказать
+ * «проект удалён» по успешному ответу этой команды — соврать.
+ * 
+ * `None` — путь не в зеркале, зовущий удаляет папку как обычную.
+ */
+async storagePurgeProject(path: string) : Promise<Result<PurgeReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_purge_project", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2766,6 +2852,14 @@ project: string; sizeBytes: number;
  */
 lastAccess: number; pinned: boolean }
 export type LogHistory = { items: JsonValue[] }
+/**
+ * Ключ и подпись машины для renderer'а.
+ * 
+ * Нужны режиму воркера: `uuid` уходит в очередь («кто взял задачу»), `label` — в
+ * интерфейс. Секрета здесь нет: это идентификатор, а не токен, и отдавать его наружу
+ * безопасно — в отличие от `ConnectionConfig::token`, который редактируется.
+ */
+export type MachineIdentity = { uuid: string; label: string; slug: string }
 export type MoveToErrorsResult = { success: boolean; moved_to: string | null; error: string | null }
 /**
  * Строка вкладки «Не в облаке»: файл есть здесь, а в хранилище его нет.
@@ -2913,6 +3007,57 @@ export type ProjectsResponse = { clients?: RemoteClient[];
  * идентификаторов, добытых из ключей.
  */
 users?: RemoteUser[]; projects?: RemoteProject[] }
+/**
+ * Итог выжигания проекта: что ушло, что бэкенд не отдал.
+ * 
+ * Считается по каталогу «до минус после», а не сложением удалённых записей: папка
+ * удаляется одним запросом с каскадом на стороне бэкенда, и сколько файлов внутри
+ * него ушло, из ответа не видно.
+ */
+export type PurgeReport = { filesDeleted: number; freedBytes: number; 
+/**
+ * Осталось в облаке. `0` — проект пуст, и в нём осталась только запись самого
+ * проекта (её программа удалить не может, эндпоинта нет).
+ */
+filesLeft: number; 
+/**
+ * Локальную папку проекта убрали с диска.
+ */
+localRemoved: boolean; 
+/**
+ * Почему папку оставили. `None` — убрали, или её на диске и не было.
+ */
+localKept: string | null; 
+/**
+ * Что бэкенд не отдал — с его же текстом отказа. Догадка о причине здесь хуже
+ * цитаты: `options` защищён 403 по контракту, а сеть отваливается своими словами.
+ */
+skipped: PurgeSkipped[] }
+export type PurgeSkipped = { 
+/**
+ * Логический путь внутри проекта (`IN/a.mov`, `options`).
+ */
+path: string; error: string }
+/**
+ * Статус шага в `progress`.
+ */
+export type QueueStepStatus = "running" | "done" | "error"
+/**
+ * Задача из очереди сайта (`POST /api/storage/v1/queue`, action `claim`).
+ * 
+ * Ни путей, ни ссылок здесь нет намеренно: presigned URL живёт минуты, а задача
+ * может простоять в очереди часы и переретраиться завтра. В `payload` лежит
+ * идентичность файла — превращает её в локальный путь машина.
+ */
+export type QueueTask = { id: string; projectId: string; projectName?: string; ownerEmail?: string; 
+/**
+ * Собранный сайтом объект обработки: `processingQueue`, шаги, `description`.
+ */
+payload: JsonValue; attempts?: number; maxAttempts?: number; 
+/**
+ * До какого момента задача числится за этой машиной.
+ */
+leaseExpiresAt?: string | null }
 /**
  * Клиент — верхний уровень иерархии. Живёт только в Postgres:
  * в раскладке ключей R2 его нет, поэтому переименование бесплатно.
@@ -3113,7 +3258,19 @@ direction: string; name: string; bytesTotal: number | null; bytesDone: number;
 state: string; error: string | null; updatedAt: number }
 export type UploadField = { field: string; value: string }
 export type UploadFile = { field: string; path: string; mime?: string | null; filename?: string | null }
-export type UploadResult = { fileId: string; s3Key: string; bytes: number; strategy: UploadStrategy }
+export type UploadResult = { 
+/**
+ * Пусто у сайдкара: строки в каталоге у служебных JSON-ов нет вовсе.
+ */
+fileId: string; 
+/**
+ * Пусто у сайдкара: ключ ему назначает бэкенд, и он канонический, не физический.
+ */
+s3Key: string; bytes: number; strategy: UploadStrategy; 
+/**
+ * Ушло каналом сайдкаров (`PUT /sidecars`), а не `presign` + `notify`.
+ */
+sidecar?: boolean }
 /**
  * Как заливать. `Multipart` пока не реализован — поля `upload_id`/`parts_done`
  * в `transfers` уже есть, чтобы при появлении эндпоинтов не менять схему.

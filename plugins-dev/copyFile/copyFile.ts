@@ -81,7 +81,17 @@ export async function copyFileFunc(_item: any, _description: any, ctx: PluginCon
 		}
 
 		if (_item.deleteAfter) {
-			await fs.remove(fileFrom).catch(() => {});
+			// Исходник из зеркала `remove` убирает и с диска, и из каталога облака —
+			// иначе он остался бы «только онлайн» и вернулся бы в работу при первой
+			// же гидрации. Отказ (сеть отвалилась на удалении в облаке) больше не
+			// глотаем молча: «галочка стоит, а файл на месте» выглядит как поломка
+			// ноды, хотя причина совсем в другом месте.
+			await fs.remove(fileFrom).catch((e: unknown) => {
+				sendToMW('log', {
+					level: 'warn',
+					text: `[copyFile] Не удалось удалить исходник ${path.basename(fileFrom)}: ${String(e)}`,
+				});
+			});
 		}
 
 		finalFile.push(fileTo);

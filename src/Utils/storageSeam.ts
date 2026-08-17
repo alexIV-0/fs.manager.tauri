@@ -16,7 +16,7 @@
 // облако, которого нет. Пока корень зеркала не задан, все функции возвращают
 // ответ мгновенно и в Rust не ходят вообще.
 
-import { commands } from '@/Utils/specta';
+import { commands, unwrap } from '@/Utils/specta';
 
 /** `undefined` — ещё не спрашивали. `''` — облака нет. */
 let mirrorRoot: string | undefined;
@@ -246,6 +246,29 @@ export async function mkdirInCloud(path: string): Promise<boolean> {
 }
 
 /**
+ * Создать папку — ЕДИНСТВЕННЫЙ правильный способ сделать это в коде программы.
+ *
+ * В зеркале папка заводится в каталоге (`/mkdir`), вне зеркала — просто на диске.
+ * Звать `testAndCreateFolder` напрямую нельзя: папка, созданная только на диске,
+ * для облака не существует — нет `file_id`, значит ни переименования, ни удаления
+ * через API, ни значка синхронизации, и на сайте её не видно. Ровно так пропадала
+ * папка `IN`: её создавал `ensureProjectFolders` мимо каталога.
+ *
+ * Отказ облака НЕ отменяет создание на диске: работать без сети программа обязана,
+ * а папка с файлами внутри зарегистрируется сама — `folder_path` приезжает в
+ * каталог вместе с первым залитым файлом. Молчать об отказе при этом нельзя:
+ * пустая папка так и останется невидимой для сайта, и знать об этом надо из логов.
+ */
+export async function ensureDir(path: string): Promise<void> {
+	try {
+		if (await mkdirInCloud(path)) return;
+	} catch (err) {
+		console.error('[storage] папка не заведена в каталоге, создаю только на диске:', path, err);
+	}
+	unwrap(await commands.testAndCreateFolder(path));
+}
+
+/**
  * Удалить — **двухступенчато**. `null` — путь не в зеркале, удаляй как обычно.
  *
  * Первое нажатие убирает локальную копию (файл остаётся в облаке со значком «только
@@ -262,6 +285,47 @@ export async function deleteInCloud(path: string, allowOnline = false): Promise<
 	const r = await commands.storageDelete(path, allowOnline);
 	if (r.status !== 'ok') throw new Error(String(r.error));
 	return r.data;
+}
+
+/**
+ * Выжечь проект: содержимое в облаке + локальная папка. `null` — путь не в зеркале.
+ *
+ * **Полного удаления здесь не бывает, и это не недоделка.** Запись самого проекта
+ * программа удалить не может: под machine token у бэкенда нет такого эндпоинта
+ * (просьба 3.7), а папка проекта — не запись в каталоге файлов, чтобы уйти через
+ * `delete`. Плюс `options` бэкенд защищает 403. Поэтому отчёт возвращается целиком:
+ * интерфейс обязан показать, что осталось, а не сказать «проект удалён».
+ *
+ * Подтверждение — на вызывающем: команда не спрашивает, а делает.
+ */
+export async function purgeProject(path: string): Promise<import('@/bindings').PurgeReport | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storagePurgeProject(path);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data;
+}
+
+/**
+ * Сколько файлов и байт в проекте по каталогу — чтобы спросить с числами, а не вслепую.
+ *
+ * `null` — путь не в зеркале ИЛИ полного обхода проекта ещё не делали. Второе не то же
+ * самое, что «пусто»: показать «0 файлов» там, где мы просто не спрашивали, — худший
+ * вид вранья, поэтому неизвестность возвращаем неизвестностью.
+ */
+export async function projectCloudStats(path: string): Promise<{ files: number; bytes: number } | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	try {
+		const info = await commands.storageProjectInfo(path);
+		const projectId = info.status === 'ok' ? info.data?.projectId : null;
+		if (!projectId) return null;
+		const st = await commands.storageSubtreeStats(projectId, '');
+		if (st.status !== 'ok' || !st.data.known) return null;
+		return { files: st.data.files, bytes: st.data.bytes };
+	} catch {
+		return null;
+	}
 }
 
 /**

@@ -177,7 +177,8 @@ export async function hydrateMainFolder(
 	mainFolderId: string,
 	mainFolderPath: string,
 	projectNames: string[],
-): Promise<void> {
+	opts: { catalogWins?: boolean } = {},
+): Promise<Record<string, boolean>> {
 	let states: Record<string, FolderStateFile> = {};
 	try {
 		states = unwrap(await commands.readFolderStates(mainFolderPath)) as unknown as Record<
@@ -187,8 +188,12 @@ export async function hydrateMainFolder(
 	} catch (e) {
 		// Диск недоступен (GD ещё не примонтирован и т.п.) — оставляем LS-кэш как есть.
 		console.warn('[folderState] hydrate read failed:', mainFolderPath, e);
-		return;
+		return {};
 	}
+
+	// Что лежит в файлах — отдаём наружу. Вызывающий сравнивает с каталогом и
+	// дописывает разошедшиеся файлы; иначе пришлось бы читать их второй раз.
+	const вФайлах: Record<string, boolean> = {};
 
 	const off = new Set(getOffList(mainFolderId));
 	let offChanged = false;
@@ -197,8 +202,15 @@ export async function hydrateMainFolder(
 	for (const name of projectNames) {
 		const st = states[name];
 		if (st && typeof st.enabled === 'boolean') {
-			// Файл = SSOT: подхватываем enabled (правка с сайта / другой машины).
-			if (st.enabled && off.has(name)) {
+			вФайлах[name] = st.enabled;
+			// У ОБЛАЧНОГО проекта вкл/выкл живёт в каталоге (`projects.is_paused`) — его
+			// пишет сайт, и он приезжает в каждом `/projects`. Файл для таких проектов
+			// кэш, а не источник: дать ему «победить» здесь значило бы вернуть снятую на
+			// сайте галочку обратно. Активность (`lastActivityAt`) мёржим по-прежнему —
+			// её в каталоге нет вовсе.
+			if (opts.catalogWins) {
+				// enabled не трогаем; ниже — только активность.
+			} else if (st.enabled && off.has(name)) {
 				off.delete(name);
 				offChanged = true;
 			} else if (!st.enabled && !off.has(name)) {
@@ -232,4 +244,6 @@ export async function hydrateMainFolder(
 		setOffList(mainFolderId, Array.from(off));
 		notifyOffList(mainFolderId);
 	}
+
+	return вФайлах;
 }

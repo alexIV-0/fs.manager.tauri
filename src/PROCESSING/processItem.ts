@@ -146,7 +146,25 @@ async function moveToErrorsFolder(
 
 // ─── Главный orchestrator ────────────────────────────────────────────────────
 
-export async function processItem(item: any, signal: AbortSignal, runId: string): Promise<string> {
+/**
+ * Итог обработки элемента.
+ *
+ * Раньше возвращался один `status`, а пути результата и цена уходили только в
+ * событие `item:end` — то есть в окно логов, и больше никуда. Режиму воркера они
+ * нужны как значение: он обязан отчитаться о них на сайт (`taskDone`), а
+ * подписываться на собственное лог-событие ради этого было бы обходным путём.
+ */
+export interface ItemResult {
+	status: string;
+	/** Пути финальных файлов. Пусто — шаги упали или терминальных шагов не было. */
+	outFiles: string[];
+	/** Суммарная цена прогона. `undefined` — ни один шаг цену не считает. */
+	totalCost?: number;
+	/** Хронометраж выходных медиафайлов, `HH:MM:SS`. */
+	duration: string;
+}
+
+export async function processItem(item: any, signal: AbortSignal, runId: string): Promise<ItemResult> {
 	const desc = item.description ?? {};
 	const itemId: string =
 		desc.dbItemId ??
@@ -394,7 +412,7 @@ export async function processItem(item: any, signal: AbortSignal, runId: string)
 	}
 
 	send('item:end', { itemId, status: finalStatus, totalCost, duration, outFiles });
-	return finalStatus;
+	return { status: finalStatus, outFiles, totalCost, duration };
 }
 
 // ─── Выполнение шага ─────────────────────────────────────────────────────────

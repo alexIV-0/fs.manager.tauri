@@ -35,6 +35,36 @@ pub struct DropOwnerReport {
     pub kept_unsafe: i64,
 }
 
+/// Итог выжигания проекта: что ушло, что бэкенд не отдал.
+///
+/// Считается по каталогу «до минус после», а не сложением удалённых записей: папка
+/// удаляется одним запросом с каскадом на стороне бэкенда, и сколько файлов внутри
+/// него ушло, из ответа не видно.
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgeReport {
+    pub files_deleted: i64,
+    pub freed_bytes: i64,
+    /// Осталось в облаке. `0` — проект пуст, и в нём осталась только запись самого
+    /// проекта (её программа удалить не может, эндпоинта нет).
+    pub files_left: i64,
+    /// Локальную папку проекта убрали с диска.
+    pub local_removed: bool,
+    /// Почему папку оставили. `None` — убрали, или её на диске и не было.
+    pub local_kept: Option<String>,
+    /// Что бэкенд не отдал — с его же текстом отказа. Догадка о причине здесь хуже
+    /// цитаты: `options` защищён 403 по контракту, а сеть отваливается своими словами.
+    pub skipped: Vec<PurgeSkipped>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgeSkipped {
+    /// Логический путь внутри проекта (`IN/a.mov`, `options`).
+    pub path: String,
+    pub error: String,
+}
+
 /// Что сделало (или сделает) удаление. Интерфейсу нужно различать: после первой
 /// ступени файл остаётся в облаке, после второй — нет.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
@@ -841,6 +871,95 @@ impl StorageService {
         self.provider.lock().unwrap().clone()
     }
 
+    // ─── Очередь задач ───────────────────────────────────────────────────────
+    //
+    // Очередь к синхронизации каталога отношения не имеет и через `Sync` не идёт: там
+    // лок держится на время обхода дерева, а очередь дёргается на каждом пульсе и
+    // должна отвечать мгновенно. Поэтому — прямо через провайдера.
+    //
+    // Идентичность машины подставляется здесь, а не приходит от вызывающего: она одна
+    // на процесс, и давать renderer'у возможность прислать чужой uuid незачем.
+
+    fn require_provider(&self) -> Result<Provider, String> {
+        self.provider()
+            .ok_or_else(|| "Хранилище не подключено".to_string())
+    }
+
+    fn machine(&self) -> (&'static str, &'static str) {
+        let id = crate::machine::identity();
+        (id.uuid.as_str(), id.label.as_str())
+    }
+
+    pub async fn queue_ping(&self) -> Result<(), String> {
+        let p = self.require_provider()?;
+        let (uuid, hostname) = self.machine();
+        p.queue_ping(&super::client::MachineRef { uuid, hostname })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn queue_claim(&self) -> Result<Option<QueueTask>, String> {
+        let p = self.require_provider()?;
+        let (uuid, hostname) = self.machine();
+        p.queue_claim(&super::client::MachineRef { uuid, hostname })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn queue_progress(
+        &self,
+        task_id: &str,
+        step_id: &str,
+        status: QueueStepStatus,
+        message: Option<&str>,
+    ) -> Result<(), String> {
+        let p = self.require_provider()?;
+        let (uuid, hostname) = self.machine();
+        p.queue_progress(
+            &super::client::MachineRef { uuid, hostname },
+            task_id,
+            step_id,
+            status,
+            message,
+        )
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn queue_done(
+        &self,
+        task_id: &str,
+        out_files: Vec<String>,
+        total_cost: f64,
+    ) -> Result<(), String> {
+        let p = self.require_provider()?;
+        let (uuid, hostname) = self.machine();
+        p.queue_done(
+            &super::client::MachineRef { uuid, hostname },
+            task_id,
+            out_files,
+            total_cost,
+        )
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn queue_failed(&self, task_id: &str, error: &str) -> Result<(), String> {
+        let p = self.require_provider()?;
+        let (uuid, hostname) = self.machine();
+        p.queue_failed(&super::client::MachineRef { uuid, hostname }, task_id, error)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn queue_release(&self, task_id: &str) -> Result<(), String> {
+        let p = self.require_provider()?;
+        let (uuid, hostname) = self.machine();
+        p.queue_release(&super::client::MachineRef { uuid, hostname }, task_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     /// Короткий доступ к каталогу. Внутри замыкания `.await` быть не должно —
     /// в этом весь смысл дисциплины.
     pub async fn with_sync<T>(
@@ -1542,10 +1661,15 @@ impl StorageService {
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadResult {
+    /// Пусто у сайдкара: строки в каталоге у служебных JSON-ов нет вовсе.
     pub file_id: String,
+    /// Пусто у сайдкара: ключ ему назначает бэкенд, и он канонический, не физический.
     pub s3_key: String,
     pub bytes: i64,
     pub strategy: super::upload::UploadStrategy,
+    /// Ушло каналом сайдкаров (`PUT /sidecars`), а не `presign` + `notify`.
+    #[serde(default)]
+    pub sidecar: bool,
 }
 
 impl StorageService {
@@ -1564,6 +1688,18 @@ impl StorageService {
         }
         let loc = parse_mirror_path(&root, &self.dirs(), path)
             .ok_or_else(|| format!("Не разобран зеркальный путь: {}", path.display()))?;
+
+        // Служебные JSON-ы уходят ДРУГИМ каналом, и это не оптимизация: сайт читает
+        // их по фиксированному ключу, а `presign` выписал бы физический `{uuid}-имя`.
+        // Залитый обычным путём `folderState.json` лёг бы рядом с тем, который читает
+        // сайт, — то есть настройки уехали бы в никуда. См. `Sidecar`.
+        if let Some(which) = Sidecar::from_logical(&loc.folder_path, &loc.name) {
+            return self.upload_sidecar(&loc, which, path).await;
+        }
+
+        // Имя проверяем ДО байтов: его валидирует `/notify`, то есть уже после PUT —
+        // объект оказался бы в бакете без строки в каталоге и без способа его удалить.
+        super::upload::check_logical_name(&loc.name).map_err(|e| e.to_string())?;
 
         let meta = std::fs::metadata(path)
             .map_err(|e| format!("Нет файла {}: {e}", path.display()))?;
@@ -1670,6 +1806,10 @@ impl StorageService {
                     // Файл мог быть новым — тогда в каталоге его ещё нет. Добавляем
                     // из ответа `notify`, чтобы дерево не ждало следующей дельты.
                     s.index.upsert_from_file(&f)?;
+                    // Версия в облаке = то, что мы только что залили. `upsert_from_file`
+                    // её не пишет (в ответе `notify` хэша нет), а без неё значок сразу
+                    // после заливки показывает «в облаке новее».
+                    s.index.set_remote_version(&f.id, &etag_for_baseline)?;
                     s.index.mark_synced(
                         &f.id,
                         "Fresh",
@@ -1686,6 +1826,7 @@ impl StorageService {
                     s3_key,
                     bytes: size,
                     strategy: super::upload::UploadStrategy::SinglePut,
+                    sidecar: false,
                 })
             }
             Err(e) => {
@@ -1695,6 +1836,158 @@ impl StorageService {
                 Err(e)
             }
         }
+    }
+
+    // ─── Сайдкары: служебные JSON-ы проекта ──────────────────────────────────
+    //
+    // Здесь нет ни presign, ни notify, ни строки в каталоге, ни передачи байтов в
+    // R2 напрямую: тело едет ЧЕРЕЗ бэкенд одним запросом. Для файлов такое было бы
+    // недопустимо (гигабайты через API), но сайдкар — это сотни байт настроек, и
+    // взамен мы получаем единственное, что здесь важно: попадание в канонический
+    // ключ, по которому файл читает сайт.
+
+    /// Отдать сайдкар в облако.
+    ///
+    /// **Сначала читаем то, что там лежит.** Причина не в экономии запроса: подтянув
+    /// правку с сайта, мы пишем файл на диск, вотчер видит запись и ставит его в
+    /// очередь на заливку — и без этой сверки мы бы тут же вернули в облако то, что
+    /// только что оттуда взяли. Один GET разрывает эту петлю.
+    async fn upload_sidecar(
+        &self,
+        loc: &super::paths::MirrorLocation,
+        which: Sidecar,
+        path: &Path,
+    ) -> Result<UploadResult, String> {
+        let provider = self
+            .provider()
+            .ok_or_else(|| "Хранилище не подключено".to_string())?;
+
+        let body = std::fs::read_to_string(path)
+            .map_err(|e| format!("Не прочитан {}: {e}", path.display()))?;
+        let bytes = body.len() as i64;
+
+        let remote = provider
+            .sidecar_get(&loc.project_id, which)
+            .await
+            .map_err(|e| e.to_string())?;
+        if remote.as_deref() == Some(body.as_str()) {
+            return Ok(sidecar_upload_result(bytes));
+        }
+
+        provider
+            .sidecar_put(&loc.project_id, which, &body, None)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Строки каталога у сайдкаров быть не должно. Если она есть — это наследство
+        // прежней (неверной) заливки обычным путём, и её надо убрать, иначе интерфейс
+        // продолжит показывать значок синхронизации у файла, которого в каталоге
+        // концептуально нет, а вытеснение будет считать его обычной копией.
+        if let Err(e) = self.purge_sidecar_row(&loc.project_id, which).await {
+            eprintln!("[storage] не удалось убрать каталожную строку сайдкара: {e}");
+        }
+
+        self.emit_changed(&[path.to_string_lossy().to_string()]);
+        Ok(sidecar_upload_result(bytes))
+    }
+
+    /// Подтянуть сайдкар из облака на диск. `true` — файл на диске изменился.
+    ///
+    /// Пишем только при РАСХОЖДЕНИИ содержимого: лишняя запись двигает mtime, вотчер
+    /// принимает это за правку человека и ставит файл в очередь на заливку.
+    ///
+    /// Папку проекта не создаём, даже если её нет: сайдкар без проекта на диске —
+    /// это гонка (проект переименовали или удалили), и воскрешать папку записью
+    /// служебного файла нельзя.
+    pub async fn pull_sidecar(&self, project_id: &str, which: Sidecar) -> Result<bool, String> {
+        let provider = self
+            .provider()
+            .ok_or_else(|| "Хранилище не подключено".to_string())?;
+
+        let Some(body) = provider
+            .sidecar_get(project_id, which)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(false);
+        };
+
+        let root = self.mirror_root();
+        let Some(path) = super::paths::mirror_path(
+            &root,
+            &self.dirs(),
+            project_id,
+            super::types::SIDECAR_FOLDER,
+            which.file_name(),
+        ) else {
+            return Ok(false);
+        };
+        let Some(project_dir) = path.parent().and_then(|p| p.parent()) else {
+            return Ok(false);
+        };
+        if !project_dir.is_dir() {
+            return Ok(false);
+        }
+
+        if std::fs::read_to_string(&path).ok().as_deref() == Some(body.as_str()) {
+            return Ok(false);
+        }
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&path, body.as_bytes())
+            .map_err(|e| format!("write {}: {e}", path.display()))?;
+        self.emit_changed(&[path.to_string_lossy().to_string()]);
+        Ok(true)
+    }
+
+    /// Убрать каталожную строку сайдкара — наследство заливки обычным путём.
+    ///
+    /// Удаляем ЧЕРЕЗ API, вместе с объектом: этот объект (`options/{uuid}-имя.json`)
+    /// не читает никто, он существует только потому, что мы однажды залили служебный
+    /// файл не тем каналом.
+    ///
+    /// **Строку с каноническим ключом не трогаем.** Если `s3_key` кончается ровно на
+    /// логическое имя, значит объект — тот самый, который читает сайт (например, его
+    /// подобрал `/reindex`), и удалить его значило бы снести живые настройки проекта.
+    async fn purge_sidecar_row(&self, project_id: &str, which: Sidecar) -> Result<(), String> {
+        let pid = project_id.to_string();
+        let entry = self
+            .with_sync(move |s| {
+                s.index.entry_by_path(
+                    &pid,
+                    super::types::SIDECAR_FOLDER,
+                    which.file_name(),
+                )
+            })
+            .await?;
+        let Some(entry) = entry else { return Ok(()) };
+
+        let canonical_tail = format!("/{}/{}", super::types::SIDECAR_FOLDER, which.file_name());
+        if entry
+            .s3_key
+            .as_deref()
+            .is_some_and(|k| k.ends_with(&canonical_tail))
+        {
+            return Ok(());
+        }
+
+        let provider = self
+            .provider()
+            .ok_or_else(|| "Хранилище не подключено".to_string())?;
+        provider
+            .delete(project_id, &entry.id, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        // `forget_files`, а не tombstone: строки быть не должно вообще, а не «есть,
+        // но удалена». Локальный файл на диске остаётся — это рабочие настройки,
+        // удалялась только его ошибочная копия в каталоге.
+        let ids = vec![entry.id.clone()];
+        self.with_sync(move |s| s.index.forget_files(&ids).map(|_| ()))
+            .await?;
+        Ok(())
     }
 
     /// Писать прогресс в базу, ПОКА передача ещё идёт.
@@ -1839,6 +2132,18 @@ impl StorageService {
     }
 }
 
+/// Результат заливки сайдкара. `file_id`/`s3_key` пусты не «пока», а по существу:
+/// строки в каталоге у сайдкара нет, а ключ канонический и известен бэкенду.
+fn sidecar_upload_result(bytes: i64) -> UploadResult {
+    UploadResult {
+        file_id: String::new(),
+        s3_key: String::new(),
+        bytes,
+        strategy: super::upload::UploadStrategy::SinglePut,
+        sidecar: true,
+    }
+}
+
 async fn provider_notify(
     provider: &Provider,
     loc: &super::paths::MirrorLocation,
@@ -1919,14 +2224,27 @@ impl StorageService {
         // Пока ждали лок, обход мог сделать сосед.
         let pid = project_id.to_string();
         let done = self.with_sync(move |s| s.index.tree_at(&pid)).await?.is_some();
+        let mut sidecars_dirty = 0u8;
         if !done {
             let mut g = self.sync_mut().await;
             if let Some(s) = g.as_mut() {
-                s.catch_up(project_id).await.map_err(|e| e.to_string())?;
+                let report = s.catch_up(project_id).await.map_err(|e| e.to_string())?;
+                sidecars_dirty = report.sidecars_dirty;
             }
         }
         drop(guard);
         self.drop_file_lock(&key);
+
+        // Первый обход проекта — единственный момент, когда сайдкары надо подтянуть
+        // без всякого сигнала: в `/tree` их нет, а на диске у новой машины тоже.
+        for which in super::types::Sidecar::from_mask(sidecars_dirty) {
+            if let Err(e) = self.pull_sidecar(project_id, which).await {
+                eprintln!(
+                    "[storage] сайдкар {} проекта {project_id}: {e}",
+                    which.file_name()
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1998,13 +2316,31 @@ impl StorageService {
     }
 
     /// Догнать дельты одного проекта. Отдельно от команды — зовёт и демон.
+    ///
+    /// Заодно подтягиваем сайдкары, если журнал сообщил, что их тронули: иначе
+    /// «выключил проект на сайте» до машины не доходит вовсе — вкл/выкл живёт в
+    /// `options/folderState.json`, а его читает локальный `read_folder_states` с диска.
     pub async fn catch_up_project(&self, project_id: &str) -> Result<(), String> {
         self.touch_project(project_id);
         let mut g = self.sync_mut().await;
         let s = g
             .as_mut()
             .ok_or_else(|| "Хранилище не подключено".to_string())?;
-        s.catch_up(project_id).await.map_err(|e| e.to_string())?;
+        let report = s.catch_up(project_id).await.map_err(|e| e.to_string())?;
+        // Лок каталога отпускаем ДО сетевых запросов за сайдкарами: держать его на
+        // время трёх GET значит подвесить листинг колонок на всё это время.
+        drop(g);
+
+        for which in super::types::Sidecar::from_mask(report.sidecars_dirty) {
+            // Ошибка одного сайдкара не должна ронять догон: дельты уже применены,
+            // а настройки подтянутся на следующем проходе.
+            if let Err(e) = self.pull_sidecar(project_id, which).await {
+                eprintln!(
+                    "[storage] сайдкар {} проекта {project_id}: {e}",
+                    which.file_name()
+                );
+            }
+        }
         Ok(())
     }
 
@@ -2425,6 +2761,145 @@ impl StorageService {
         remove_path(path)?;
         self.emit_changed(&[path.to_string_lossy().to_string()]);
         Ok(())
+    }
+
+    /// Выжечь проект: удалить в облаке всё его содержимое и убрать локальную папку.
+    ///
+    /// **Почему это отдельная команда, а не «удалить папку проекта».** Папка проекта —
+    /// не запись в каталоге файлов, а строка в `projects`: у неё нет `file_id`, и
+    /// `DELETE /object` её не принимает. Удалять проект под machine token бэкенд пока
+    /// не умеет вообще (просьба 3.7), поэтому программа делает всё, что API позволяет:
+    /// сносит содержимое и локальную копию. **Запись проекта остаётся**, и интерфейс
+    /// обязан сказать это прямо, а не изобразить полное удаление.
+    ///
+    /// Порядок «сначала облако, потом диск» тот же, что у переименования: при отказе
+    /// сервера файлы остаются на диске. Обратный порядок оставил бы человека без
+    /// локальных копий и с теми же файлами в облаке.
+    ///
+    /// `options` бэкенд защищает 403 (контракт, п. 7). Отказ на папке не считаем
+    /// провалом всей операции: спускаемся внутрь и пробуем файлы по одному — тогда
+    /// проект хотя бы перестанет занимать место. Внутрь идём только на `forbidden`:
+    /// на отвалившейся сети это превратило бы один отказ в сотню запросов.
+    ///
+    /// `None` — путь не в зеркале, зовущий удаляет папку как обычную.
+    pub async fn purge_project(&self, path: &Path) -> Result<Option<PurgeReport>, String> {
+        let root = self.mirror_root();
+        if !under_mirror(&root, path) {
+            return Ok(None);
+        }
+        let dirs = self.dirs();
+        let project_id = match paths::classify(&root, &dirs, path) {
+            Some(super::MirrorNode::Folder {
+                project_id,
+                folder_path,
+            }) if folder_path.is_empty() => project_id,
+            _ => return Err("Ожидалась папка проекта (второй уровень зеркала)".into()),
+        };
+
+        // Каталог мог отстать. Без свежих дельт мы не тронем файл, залитый другой
+        // машиной, — и «удалённый» проект вернётся им при первом же обходе.
+        self.catch_up_project(&project_id).await?;
+
+        let before = self
+            .with_sync({
+                let pid = project_id.clone();
+                move |s| s.index.subtree_stats(&pid, "")
+            })
+            .await?;
+
+        let mut skipped: Vec<PurgeSkipped> = Vec::new();
+        let mut refused: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Проход 1 — верхний уровень: папку бэкенд удаляет каскадом, то есть проект в
+        // три-четыре запроса вместо запроса на файл.
+        let top: Vec<TreeEntry> = self
+            .with_sync({
+                let pid = project_id.clone();
+                move |s| s.index.list_dir(&pid, "")
+            })
+            .await?;
+
+        // Проход 2 — всё, что осталось в каталоге, по одной записи. Нужен не только
+        // из-за `options`: запись файла может существовать без записи его папки
+        // (заливка создаёт первую, дерево — вторую), и обход сверху её не нашёл бы.
+        // Порядок внутри задаёт `project_entries`: файлы раньше папок.
+        for pass in 0..2 {
+            let entries: Vec<TreeEntry> = if pass == 0 {
+                top.clone()
+            } else {
+                self.with_sync({
+                    let pid = project_id.clone();
+                    move |s| s.index.project_entries(&pid)
+                })
+                .await?
+            };
+
+            for entry in entries {
+                let logical = if entry.folder_path.is_empty() {
+                    entry.name.clone()
+                } else {
+                    format!("{}/{}", entry.folder_path, entry.name)
+                };
+                // Второй раз в тот же отказ не идём: `options` ответит тем же 403, а в
+                // отчёте появится дубль.
+                if refused.contains(&logical) {
+                    continue;
+                }
+                let loc = super::MirrorLocation {
+                    project_id: project_id.clone(),
+                    folder_path: entry.folder_path.clone(),
+                    name: entry.name.clone(),
+                };
+                // Путь на диске нужен `delete_online`: он уносит и локальную копию.
+                let local = paths::mirror_path(&root, &dirs, &project_id, &entry.folder_path, &entry.name)
+                    .unwrap_or_else(|| path.join(&entry.name));
+
+                if let Err(e) = self.delete_online(&loc, &entry, &local).await {
+                    // Записываем всё, включая папку `options`: «что именно осталось» —
+                    // это ответ на вопрос «почему проект ещё виден на сайте».
+                    refused.insert(logical.clone());
+                    skipped.push(PurgeSkipped { path: logical, error: e });
+                }
+            }
+        }
+
+        let after = self
+            .with_sync({
+                let pid = project_id.clone();
+                move |s| s.index.subtree_stats(&pid, "")
+            })
+            .await?;
+
+        // Локальную папку — в самом конце и только целиком: то, что удалилось в
+        // облаке, `delete_online` с диска уже унёс, а остаток (незалитое, мусор шагов)
+        // человек удалять и просил.
+        //
+        // Но только если в облаке всё прошло. `forbidden` — постоянный отказ по
+        // контракту (`options`), с ним удалять локальное можно. Сеть, 5xx, отсутствие
+        // эндпоинта — «попробуй позже», и снести здесь диск значило бы уничтожить
+        // единственную копию незалитого, оставив проект в облаке целым.
+        let mut local_removed = false;
+        let mut local_kept: Option<String> = None;
+        let blocked = skipped.iter().any(|s| !s.error.starts_with("forbidden"));
+        if blocked {
+            local_kept = Some("в облаке удалилось не всё — папку оставили, попробуйте ещё раз".into());
+        } else if path.exists() {
+            match remove_path(path) {
+                Ok(_) => local_removed = true,
+                Err(e) => local_kept = Some(e),
+            }
+        }
+
+        self.emit_changed(&[path.to_string_lossy().to_string()]);
+
+        Ok(Some(PurgeReport {
+            files_deleted: (before.files - after.files).max(0),
+            freed_bytes: (before.bytes - after.bytes).max(0),
+            files_left: after.files,
+            local_removed,
+            local_kept,
+            skipped,
+        }))
     }
 
     /// Включить/выключить проект в каталоге. `None` — путь не проект зеркала.
@@ -3519,6 +3994,121 @@ mod tests {
         d
     }
 
+    // ─── Сайдкары ────────────────────────────────────────────────────────────
+
+    /// Служебный JSON обязан уходить каналом сайдкаров, а не обычной заливкой.
+    ///
+    /// Это главный тест всей истории: залитый через `presign` + `notify`
+    /// `folderState.json` получает физический ключ `{uuid}-имя` и ложится РЯДОМ с тем
+    /// объектом, который читает сайт. Настройки при этом уезжают в облако и никем
+    /// не читаются — «сохранил, а на сайте не появилось».
+    #[tokio::test]
+    async fn служебный_json_уходит_сайдкаром_а_не_обычной_заливкой() {
+        let tmp = tmpdir("sidecar-up");
+        let svc = service(None, &tmp).await;
+
+        let path = mpath(&tmp, "options", "folderState.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"enabled":false}"#).unwrap();
+
+        let r = svc.upload_local(&path).await.unwrap();
+
+        assert!(r.sidecar, "служебный JSON обязан уйти каналом сайдкаров");
+        assert!(
+            r.s3_key.is_empty() && r.file_id.is_empty(),
+            "у сайдкара нет ни строки в каталоге, ни физического ключа"
+        );
+        // `notify` не звался вовсе: иначе в каталоге появилась бы строка с uuid-ключом.
+        let notifies = svc
+            .with_sync(|s| {
+                Ok(match &s.provider {
+                    Provider::Mock(m) => m.with(|st| st.notify_calls),
+                    _ => usize::MAX,
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(notifies, 0, "сайдкар не должен подтверждаться как обычный файл");
+
+        let body = svc
+            .provider()
+            .unwrap()
+            .sidecar_get("p1", Sidecar::FolderState)
+            .await
+            .unwrap();
+        assert_eq!(body.as_deref(), Some(r#"{"enabled":false}"#));
+    }
+
+    /// Тот же файл во ДРУГОЙ папке — обычный файл, канал подменять нельзя.
+    #[test]
+    fn folderstate_вне_options_остаётся_обычным_файлом() {
+        assert!(Sidecar::from_logical("options", "folderState.json").is_some());
+        assert!(
+            Sidecar::from_logical("IN", "folderState.json").is_none(),
+            "имя файла само по себе сайдкаром его не делает — только путь options/"
+        );
+        assert!(Sidecar::from_logical("", "options.json").is_none());
+    }
+
+    /// Подтянули с сайта → не отправили тут же обратно.
+    ///
+    /// Петля реальна: `pull_sidecar` пишет файл, вотчер видит запись и ставит его в
+    /// очередь на заливку. Спасает сверка с тем, что уже лежит в облаке.
+    #[tokio::test]
+    async fn подтянутый_сайдкар_не_уезжает_обратно() {
+        let tmp = tmpdir("sidecar-loop");
+        let svc = service(None, &tmp).await;
+        let project_dir = tmp.join("Клиент").join("Проект");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        // Сайт что-то записал.
+        svc.provider()
+            .unwrap()
+            .sidecar_put("p1", Sidecar::FolderState, r#"{"enabled":true}"#, None)
+            .await
+            .unwrap();
+
+        let changed = svc.pull_sidecar("p1", Sidecar::FolderState).await.unwrap();
+        assert!(changed, "первое подтягивание обязано создать файл на диске");
+
+        let path = mpath(&tmp, "options", "folderState.json");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            r#"{"enabled":true}"#
+        );
+
+        // Повторное подтягивание не должно трогать файл: иначе mtime поедет и вотчер
+        // поставит файл в очередь на заливку без всякой правки.
+        assert!(
+            !svc.pull_sidecar("p1", Sidecar::FolderState).await.unwrap(),
+            "совпадающий сайдкар перезаписывать нельзя — это ложная правка для вотчера"
+        );
+
+        // А заливка того же содержимого не должна дойти до PUT.
+        let r = svc.upload_local(&path).await.unwrap();
+        assert!(r.sidecar);
+    }
+
+    /// Проекта нет на диске — сайдкар его не воскрешает.
+    #[tokio::test]
+    async fn сайдкар_не_создаёт_папку_удалённого_проекта() {
+        let tmp = tmpdir("sidecar-ghost");
+        let svc = service(None, &tmp).await;
+
+        svc.provider()
+            .unwrap()
+            .sidecar_put("p1", Sidecar::Options, "{}", None)
+            .await
+            .unwrap();
+
+        // Папки проекта на диске нет вообще.
+        assert!(
+            !svc.pull_sidecar("p1", Sidecar::Options).await.unwrap(),
+            "запись служебного файла не должна воскрешать папку проекта"
+        );
+        assert!(!mpath(&tmp, "options", "options.json").exists());
+    }
+
     /// Прогресс заливки обязан попадать в базу ПОСРЕДИ передачи.
     ///
     /// Тест смотрит в базу изнутри самой «передачи» — то есть до того, как та
@@ -4141,6 +4731,72 @@ mod tests {
         let stage = svc.delete_in_cloud(&p, false).await.unwrap();
         assert_eq!(stage, Some(crate::storage::DeleteStage::LocalOnly));
         assert!(!p.exists());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ─── Выжигание проекта ───────────────────────────────────────────────────
+
+    /// Отказ в облаке НЕ должен уносить локальную папку.
+    ///
+    /// Иначе один обрыв сети превращает «удалить проект» в «удалить только мою
+    /// работу»: в облаке проект целый, а незалитого на диске больше нет. Мок удаление
+    /// не поддерживает — это и есть отказ, который нужен для проверки.
+    #[tokio::test]
+    async fn выжигание_при_отказе_облака_щадит_диск() {
+        let tmp = tmpdir("purge-refuse");
+        let svc = service(None, &tmp).await;
+        let p = seed_hydrated(&svc, &tmp, "f1", b"hello world").await;
+        let project = tmp.join("Клиент").join("Проект");
+
+        let r = svc.purge_project(&project).await.unwrap().unwrap();
+
+        assert!(!r.skipped.is_empty(), "мок обязан отказать в удалении");
+        assert!(!r.local_removed, "в облаке ничего не удалилось — папку сносить нельзя");
+        assert!(r.local_kept.is_some(), "и надо сказать, почему оставили");
+        assert!(p.exists(), "локальный файл обязан остаться на диске");
+        assert_eq!(r.files_left, 1, "файл остался в облаке");
+        assert_eq!(r.files_deleted, 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Файл без записи его ПАПКИ в каталоге обязан попасть под выжигание.
+    ///
+    /// Каталог это допускает: `/notify` создаёт запись файла, а записи папок приезжают
+    /// деревом. Обход «сверху вниз» такой файл не нашёл бы — и он остался бы в облаке
+    /// как раз в тот момент, когда человек считает проект удалённым. У мока в дереве
+    /// ровно такой случай: `IN/a.mov` есть, записи папки `IN` нет.
+    #[tokio::test]
+    async fn выжигание_видит_файл_без_записи_его_папки() {
+        let tmp = tmpdir("purge-orphan");
+        let svc = service(None, &tmp).await;
+        let project = tmp.join("Клиент").join("Проект");
+
+        // Верхний уровень пуст — значит проход «сверху» ничего бы не дал.
+        let top = svc.with_sync(|s| s.index.list_dir("p1", "")).await.unwrap();
+        assert!(top.is_empty(), "предпосылка теста: записи папки IN в каталоге нет");
+
+        let r = svc.purge_project(&project).await.unwrap().unwrap();
+        assert_eq!(r.skipped.len(), 1, "до файла всё равно дошли (и получили отказ мока)");
+        assert_eq!(r.skipped[0].path, "IN/a.mov");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Выжигать можно только сам проект: папка внутри удаляется обычным
+    /// двухступенчатым удалением, и путать эти две семантики нельзя.
+    #[tokio::test]
+    async fn выжигание_принимает_только_папку_проекта() {
+        let tmp = tmpdir("purge-level");
+        let svc = service(None, &tmp).await;
+
+        let inside = tmp.join("Клиент").join("Проект").join("IN");
+        assert!(svc.purge_project(&inside).await.is_err(), "папка внутри проекта — не проект");
+
+        // Вне зеркала — не наше дело: зовущий удалит папку как обычную.
+        let outside = std::env::temp_dir();
+        assert!(svc.purge_project(&outside).await.unwrap().is_none());
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

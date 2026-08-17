@@ -60,7 +60,7 @@ export async function startProcessing() {
 		try {
 			// Прямой вызов в renderer'е — никаких IPC. processItem импортирует плагины
 			// через plugin:// протокол, вызывает их как JS-функции, прокидывает ctx.
-			const status: string = await processItem(item, signal, RUN_PROCESSING);
+			const { status } = await processItem(item, signal, RUN_PROCESSING);
 			totalProcessedFile++;
 			const { incSuccess, incErrorItems } = useProcessingStats_store.getState();
 			if (status === 'done') incSuccess();

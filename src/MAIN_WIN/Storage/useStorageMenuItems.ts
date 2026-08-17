@@ -4,7 +4,7 @@
 // у него так же есть «Открыть», «Переименовать», «Удалить». Отличие ровно в
 // трёх действиях, которых у локального файла быть не может.
 
-import { CloudDownload, CloudUpload, Pin, PinOff, RotateCw } from 'lucide-react';
+import { CloudDownload, CloudUpload, Pin, PinOff, RotateCw, Trash2 } from 'lucide-react';
 
 import type { ContextMenuItem } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
 import type { FileItem } from '@/Store/helpers/readDirContent';
@@ -44,6 +44,29 @@ export function storageFolderMenuItems(path: string, isMirror: boolean): Context
 					store.refreshAffectedColumns('local', [path, parent]);
 				});
 			},
+		},
+	];
+}
+
+/**
+ * Пункт «Удалить проект полностью» — только для проекта зеркала (2-я колонка).
+ *
+ * Отдельно от `storageFolderMenuItems`: те пункты общие для любой папки зеркала, а этот
+ * относится только к уровню проекта. Обычное «Удалить» на проекте не работает и работать
+ * не может — папка проекта не запись в каталоге файлов, `delete` её не принимает.
+ *
+ * Название без слова «безвозвратно», хотя удаление необратимо: подробности и числа —
+ * в подтверждении, которое показывает обработчик. Пункт меню не место для дисклеймера.
+ */
+export function storageProjectMenuItems(isMirror: boolean, onPurge: () => void): ContextMenuItem[] {
+	if (!isMirror) return [];
+	return [
+		{
+			id: 'storage-purge-project',
+			label: 'Удалить проект полностью…',
+			icon: Trash2,
+			dividerBefore: true,
+			onClick: onPurge,
 		},
 	];
 }

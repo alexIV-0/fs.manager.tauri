@@ -1,14 +1,11 @@
 import { usePathStore } from '@/Store/Node/usePathStore';
-import { commands, unwrap } from '@/Utils/specta';
 import { useSavedState } from '@/Store/Node/useSavedState';
 import { Button } from '@mui/material';
 import { useEdges, useNodes, useReactFlow, type Edge, type Node } from '@xyflow/react';
 import { Save } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
-import { syncTgSearchSidecar } from '@/NODE_WIN/utils/syncTgSearchSidecar';
-import { syncPostSourcesSidecar } from '@/NODE_WIN/utils/syncPostSourcesSidecar';
-import { ensureProjectFolders } from '@/NODE_WIN/utils/ensureProjectFolders';
+import { saveFlow } from '@/NODE_WIN/utils/saveFlow';
 
 type DirtyKind = 'saved' | 'layout' | 'structural';
 
@@ -105,10 +102,7 @@ function SaveButton() {
 	const handleSaveFlow = useCallback(async () => {
 		setIsSaving(true);
 		const flow = reactFlow.toObject();
-		unwrap(await commands.saveFlowToOptionsFolder(path, flow as any));
-		await ensureProjectFolders(path, flow);
-		await syncTgSearchSidecar(path, flow);
-		await syncPostSourcesSidecar(path, flow);
+		await saveFlow(path, flow);
 		setSavedSig({
 			struct: structSig(flow.nodes, flow.edges),
 			layout: layoutSig(flow.nodes),

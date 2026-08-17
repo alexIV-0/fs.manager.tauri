@@ -239,6 +239,51 @@ pub struct DeltaResponse {
     pub truncated: bool,
 }
 
+// ─── Очередь задач ───────────────────────────────────────────────────────────
+
+/// Задача из очереди сайта (`POST /api/storage/v1/queue`, action `claim`).
+///
+/// Ни путей, ни ссылок здесь нет намеренно: presigned URL живёт минуты, а задача
+/// может простоять в очереди часы и переретраиться завтра. В `payload` лежит
+/// идентичность файла — превращает её в локальный путь машина.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueTask {
+    pub id: String,
+    pub project_id: String,
+    #[serde(default)]
+    pub project_name: String,
+    #[serde(default)]
+    pub owner_email: String,
+    /// Собранный сайтом объект обработки: `processingQueue`, шаги, `description`.
+    pub payload: serde_json::Value,
+    #[serde(default)]
+    pub attempts: i64,
+    #[serde(default)]
+    pub max_attempts: i64,
+    /// До какого момента задача числится за этой машиной.
+    #[serde(default)]
+    pub lease_expires_at: Option<String>,
+}
+
+/// Ответ `claim`. `task: None` — очередь пуста; это штатный ответ, а не ошибка:
+/// машина спрашивает на каждом пульсе и почти всегда получает именно его.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueClaimResponse {
+    #[serde(default)]
+    pub task: Option<QueueTask>,
+}
+
+/// Статус шага в `progress`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum QueueStepStatus {
+    Running,
+    Done,
+    Error,
+}
+
 // ─── Presign ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -290,6 +335,101 @@ pub struct ProjectFile {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct FileEnvelope {
     pub file: ProjectFile,
+}
+
+// ─── Сайдкары: служебные JSON-ы проекта ──────────────────────────────────────
+
+/// Три служебных файла в `options/`, которые живут НЕ по правилам обычных файлов.
+///
+/// Разница принципиальная, и на ней мы один раз обожглись (см. раздел 12
+/// `STORAGE_CLIENT_REQUESTS.md`). Обычный файл едет `presign` → `PUT` → `notify`, и
+/// ключ ему выписывает бэкенд — физический, с uuid: `options/{uuid}-folderState.json`.
+/// А сайт читает эти три файла по ФИКСИРОВАННОМУ ключу (`projectFolderStateKey`,
+/// `projectOptionsKey`, `projectDescriptionKey`). То есть залитый обычным путём
+/// `folderState.json` ложился рядом с тем, который сайт читает, и **сайт наших
+/// настроек не видел никогда**, а мы не видели его правок.
+///
+/// Поэтому здесь отдельный канал — `PUT/GET /sidecars`: он пишет ровно в
+/// канонический ключ. Строки в каталоге (`project_files`) у сайдкаров нет, значит
+/// нет ни `file_id`, ни значка синхронизации, ни дельт с `fileId` — событие в
+/// журнале приходит без него, и это наш сигнал «сайт тронул сайдкар, подтяни».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sidecar {
+    /// `options/folderState.json` — вкл/выкл проекта и дата активности.
+    FolderState,
+    /// `options/options.json` — снимок настроек пайплайна.
+    Options,
+    /// `options/description.md` — описание проекта.
+    Description,
+}
+
+impl Sidecar {
+    /// Имя в API (`?name=` и поле `sidecar`).
+    pub fn api_name(self) -> &'static str {
+        match self {
+            Self::FolderState => "folder-state",
+            Self::Options => "options",
+            Self::Description => "description",
+        }
+    }
+
+    /// Имя файла на диске и в логическом пути.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::FolderState => "folderState.json",
+            Self::Options => "options.json",
+            Self::Description => "description.md",
+        }
+    }
+
+    /// Все сайдкары — для обхода при подтягивании.
+    pub const ALL: [Sidecar; 3] = [Self::FolderState, Self::Options, Self::Description];
+
+    /// Разряд в маске «что тронули» (`ApplyStats::sidecars_dirty`).
+    pub fn bit(self) -> u8 {
+        match self {
+            Self::FolderState => 1,
+            Self::Options => 2,
+            Self::Description => 4,
+        }
+    }
+
+    /// Разобрать маску обратно в сайдкары.
+    pub fn from_mask(mask: u8) -> impl Iterator<Item = Sidecar> {
+        Self::ALL.into_iter().filter(move |s| mask & s.bit() != 0)
+    }
+
+    /// Сайдкар ли это по логическому пути внутри проекта.
+    ///
+    /// Требуем ровно `options/<имя>`: файл с тем же именем в любой другой папке —
+    /// обычный файл, и подменять ему канал нельзя.
+    pub fn from_logical(folder_path: &str, name: &str) -> Option<Self> {
+        if folder_path.trim_matches('/') != SIDECAR_FOLDER {
+            return None;
+        }
+        Self::ALL.into_iter().find(|s| s.file_name() == name)
+    }
+}
+
+/// Единственная папка, где живут сайдкары. Бэкенд её имя резервирует (403 на `mkdir`).
+pub const SIDECAR_FOLDER: &str = "options";
+
+/// Ответ `GET /sidecars`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarBody {
+    /// Канонический ключ в R2 — для логов, решений на нём не принимаем.
+    #[allow(dead_code)]
+    pub key: String,
+    pub body: String,
+}
+
+/// Ответ `PUT /sidecars` с `kind: "raw"`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarPutResult {
+    #[serde(default)]
+    pub etag: Option<String>,
 }
 
 // ─── Ошибки ──────────────────────────────────────────────────────────────────

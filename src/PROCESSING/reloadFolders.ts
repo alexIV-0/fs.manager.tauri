@@ -1,6 +1,6 @@
 import { commands, unwrap } from '@/Utils/specta';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
-import { hydrateMainFolder } from '@/Utils/folderState';
+import { hydrateMainFolder, persistEnabled } from '@/Utils/folderState';
 import { browseMirror } from '@/Utils/storageSeam';
 import { archivedProjects_store } from '@/Store/MainWin/archivedProjects_store';
 
@@ -51,7 +51,12 @@ export async function reloadFolders(_obj: any) {
 		//    подхватываем внешние правки (сайт/др. машина: enabled — файл выигрывает,
 		//    lastActivityAt — max) и делаем ленивую миграцию legacy off-списка в файлы.
 		//    На КАЖДОМ reload/проходе — чтобы состояние сходилось с папкой.
-		if (_obj.path) await hydrateMainFolder(_obj.id, _obj.path, finalArr);
+		// `catalogWins` для облачной папки: у её проектов вкл/выкл живёт в БД, и файл
+		// не должен перебивать каталог (см. ниже). Возвращённая карта — то, что лежит
+		// в файлах: по ней видно расхождение, не читая их второй раз.
+		const вФайлах = _obj.path
+			? await hydrateMainFolder(_obj.id, _obj.path, finalArr, { catalogWins: Boolean(fromMirror) })
+			: {};
 
 		// ── Активность ОНЛАЙН-проекта: каталог важнее сайдкара ────────────────
 		// Порядок здесь и был ошибкой. Раньше этот блок стоял ДО `hydrateMainFolder`,
@@ -81,6 +86,29 @@ export async function reloadFolders(_obj: any) {
 				saveToLocalStorage(_obj.id, Array.from(off));
 				// Галочки читают LS через свой хук — без события они не узнают.
 				window.dispatchEvent(new CustomEvent('folders-off-list-changed', { detail: { key: _obj.id } }));
+			}
+
+			// ── Файл догоняет каталог ────────────────────────────────────────
+			// Сайт переключает флаг в БД и `folderState.json` не трогает вовсе
+			// (проверено: во всех файлах `updatedBy: app:*`, ни одного `site`).
+			// Значит после правки с сайта файл остаётся со старым значением — и на
+			// каждой гидрации спорит с каталогом, а другие машины и офлайн-режим
+			// видят устаревшее «включён». Поэтому расхождение дописываем сразу.
+			//
+			// Цикла не будет: пишем только когда значения разошлись, а после записи
+			// файл каталогу равен.
+			for (const row of fromMirror) {
+				if (!row.isDir || !row.storage) continue;
+				const enabled = !row.storage.paused;
+				const вФайле = вФайлах[row.name];
+				// Файла нет и проект включён — писать нечего: «включён» это дефолт, а
+				// плодить `options/folderState.json` у каждого проекта незачем (так было
+				// задумано с самого начала). Файл появляется только когда есть что
+				// сказать: выключён или значение разошлось.
+				if (вФайле === undefined ? enabled : вФайле === enabled) continue;
+				// Решение с сайта принял человек, поэтому причина «manual»: авто-логика
+				// холодных проектов не должна считать это своим отключением.
+				persistEnabled(_obj.id, row.name, enabled, 'manual');
 			}
 		}
 	}

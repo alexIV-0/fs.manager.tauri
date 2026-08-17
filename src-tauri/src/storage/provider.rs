@@ -6,7 +6,7 @@
 // `PlainFolder` (локальная папка без облака) появится здесь же — тогда программа
 // с ненастроенным хранилищем работает как раньше, без единого `if` в прикладном коде.
 
-use super::client::StorageApi;
+use super::client::{MachineRef, StorageApi};
 use super::mock::MockApi;
 use super::types::*;
 
@@ -36,6 +36,50 @@ impl Provider {
         dispatch!(self, projects())
     }
 
+    // ─── Очередь задач ───────────────────────────────────────────────────────
+
+    pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<()> {
+        dispatch!(self, queue_ping(machine))
+    }
+
+    pub async fn queue_claim(&self, machine: &MachineRef<'_>) -> StorageResult<Option<QueueTask>> {
+        dispatch!(self, queue_claim(machine))
+    }
+
+    pub async fn queue_progress(
+        &self,
+        machine: &MachineRef<'_>,
+        task_id: &str,
+        step_id: &str,
+        status: QueueStepStatus,
+        message: Option<&str>,
+    ) -> StorageResult<()> {
+        dispatch!(self, queue_progress(machine, task_id, step_id, status, message))
+    }
+
+    pub async fn queue_done(
+        &self,
+        machine: &MachineRef<'_>,
+        task_id: &str,
+        out_files: Vec<String>,
+        total_cost: f64,
+    ) -> StorageResult<()> {
+        dispatch!(self, queue_done(machine, task_id, out_files, total_cost))
+    }
+
+    pub async fn queue_failed(
+        &self,
+        machine: &MachineRef<'_>,
+        task_id: &str,
+        error: &str,
+    ) -> StorageResult<()> {
+        dispatch!(self, queue_failed(machine, task_id, error))
+    }
+
+    pub async fn queue_release(&self, machine: &MachineRef<'_>, task_id: &str) -> StorageResult<()> {
+        dispatch!(self, queue_release(machine, task_id))
+    }
+
     pub async fn tree(&self, project_id: &str, prefix: Option<&str>) -> StorageResult<TreeResponse> {
         dispatch!(self, tree(project_id, prefix))
     }
@@ -51,6 +95,30 @@ impl Provider {
         ttl_sec: Option<i64>,
     ) -> StorageResult<PresignResponse> {
         dispatch!(self, presign_get(project_id, s3_key, ttl_sec))
+    }
+
+    // ─── Сайдкары ────────────────────────────────────────────────────────────
+    //
+    // Мок держит их в памяти, а не отказывает (в отличие от `mkdir`): сайдкары —
+    // основной канал для вкл/выкл проекта, и демо-режим без них выглядел бы
+    // сломанным там, где на живом бэкенде всё работает.
+
+    pub async fn sidecar_get(
+        &self,
+        project_id: &str,
+        which: Sidecar,
+    ) -> StorageResult<Option<String>> {
+        dispatch!(self, sidecar_get(project_id, which))
+    }
+
+    pub async fn sidecar_put(
+        &self,
+        project_id: &str,
+        which: Sidecar,
+        body: &str,
+        if_match: Option<&str>,
+    ) -> StorageResult<Option<String>> {
+        dispatch!(self, sidecar_put(project_id, which, body, if_match))
     }
 
     /// `s3_key` — ключ существующего объекта при перезаливке. См. `StorageApi::presign_put`.

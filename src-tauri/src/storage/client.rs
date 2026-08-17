@@ -28,6 +28,14 @@ impl StorageConfig {
     }
 }
 
+/// Кто спрашивает очередь. Ссылками, а не владением: зовётся часто, а строки
+/// живут в `crate::machine` весь процесс.
+#[derive(Debug, Clone, Copy)]
+pub struct MachineRef<'a> {
+    pub uuid: &'a str,
+    pub hostname: &'a str,
+}
+
 #[derive(Debug, Clone)]
 pub struct StorageApi {
     cfg: StorageConfig,
@@ -124,6 +132,59 @@ impl StorageApi {
         self.send(Method::GET, "tree", &q, None).await
     }
 
+    /// Прочитать сайдкар. `Ok(None)` — файла ещё нет, это нормальное состояние:
+    /// нетронутый проект `options/` не имеет вовсе.
+    pub async fn sidecar_get(
+        &self,
+        project_id: &str,
+        which: Sidecar,
+    ) -> StorageResult<Option<String>> {
+        let q = [
+            ("projectId", project_id.to_string()),
+            ("name", which.api_name().to_string()),
+        ];
+        match self
+            .send::<SidecarBody>(Method::GET, "sidecars", &q, None)
+            .await
+        {
+            Ok(r) => Ok(Some(r.body)),
+            // 404 — «ещё не создан», а не отказ. Отличать обязательно: иначе первый
+            // же нетронутый проект выглядел бы как сломанная связь с бэкендом.
+            Err(StorageError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Записать сайдкар целиком (`kind: "raw"`).
+    ///
+    /// Именно этот вызов кладёт файл по каноническому ключу, который читает сайт.
+    /// Обычная заливка (`presign` → `PUT` → `notify`) для этих трёх имён не годится:
+    /// бэкенд выпишет физический ключ с uuid, и сайт файла не увидит.
+    ///
+    /// `if_match` — оптимистичная блокировка по etag предыдущей версии. `None` =
+    /// «пишу поверх», бэкенд ответит 409 только если сам этого захочет.
+    pub async fn sidecar_put(
+        &self,
+        project_id: &str,
+        which: Sidecar,
+        body: &str,
+        if_match: Option<&str>,
+    ) -> StorageResult<Option<String>> {
+        let mut payload = json!({
+            "kind": "raw",
+            "projectId": project_id,
+            "sidecar": which.api_name(),
+            "body": body,
+        });
+        if let Some(tag) = if_match {
+            payload["ifMatch"] = json!(tag);
+        }
+        let r: SidecarPutResult = self
+            .send(Method::PUT, "sidecars", &[], Some(payload))
+            .await?;
+        Ok(r.etag)
+    }
+
     /// Одна страница журнала (до 5000 событий). Цикл до догона — уровнем выше.
     pub async fn delta(&self, project_id: &str, since: i64) -> StorageResult<DeltaResponse> {
         let q = [
@@ -131,6 +192,100 @@ impl StorageApi {
             ("since", since.to_string()),
         ];
         self.send(Method::GET, "delta", &q, None).await
+    }
+
+    // ─── Очередь задач ───────────────────────────────────────────────────────
+    //
+    // Одна ручка `queue` с полем `action`, а не пять путей — так сделано на сайте.
+    // Идентичность машины едет в каждом запросе (`machineUuid` + `hostname`): наш
+    // токен не привязан к компьютеру, и сайт по этому uuid сам заводит машине строку.
+    // Второй токен (`rc_…`) поэтому не нужен.
+    //
+    // Транспорт живёт здесь, а не в плагине, по одной причине: токен хранится в Rust
+    // и в renderer не отдаётся (`ConnectionConfig::redacted`). Плагин зовёт эти
+    // команды через `ctx.invoke`.
+
+    async fn queue_call<T: serde::de::DeserializeOwned>(
+        &self,
+        action: &str,
+        machine: &MachineRef<'_>,
+        mut props: serde_json::Value,
+    ) -> StorageResult<T> {
+        props["action"] = json!(action);
+        props["machineUuid"] = json!(machine.uuid);
+        props["hostname"] = json!(machine.hostname);
+        self.send(Method::POST, "queue", &[], Some(props)).await
+    }
+
+    /// «Я на связи» без запроса задачи.
+    ///
+    /// Нужен отдельно от `claim`, иначе состояние «машина включена, воркер выключен»
+    /// сайту не видно вовсе: он слышит нас только когда воркер спрашивает задачу.
+    pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<()> {
+        let _: serde_json::Value = self.queue_call("ping", machine, json!({})).await?;
+        Ok(())
+    }
+
+    /// Взять следующую задачу. `None` — очередь пуста, это норма.
+    pub async fn queue_claim(&self, machine: &MachineRef<'_>) -> StorageResult<Option<QueueTask>> {
+        let r: QueueClaimResponse = self.queue_call("claim", machine, json!({})).await?;
+        Ok(r.task)
+    }
+
+    /// Двинуть шаг и продлить аренду.
+    pub async fn queue_progress(
+        &self,
+        machine: &MachineRef<'_>,
+        task_id: &str,
+        step_id: &str,
+        status: QueueStepStatus,
+        message: Option<&str>,
+    ) -> StorageResult<()> {
+        let _: serde_json::Value = self
+            .queue_call(
+                "progress",
+                machine,
+                json!({ "taskId": task_id, "stepId": step_id, "status": status, "message": message }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn queue_done(
+        &self,
+        machine: &MachineRef<'_>,
+        task_id: &str,
+        out_files: Vec<String>,
+        total_cost: f64,
+    ) -> StorageResult<()> {
+        let _: serde_json::Value = self
+            .queue_call(
+                "done",
+                machine,
+                json!({ "taskId": task_id, "outFiles": out_files, "totalCost": total_cost }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn queue_failed(
+        &self,
+        machine: &MachineRef<'_>,
+        task_id: &str,
+        error: &str,
+    ) -> StorageResult<()> {
+        let _: serde_json::Value = self
+            .queue_call("failed", machine, json!({ "taskId": task_id, "error": error }))
+            .await?;
+        Ok(())
+    }
+
+    /// Вернуть задачу в очередь — аварийный стоп, не дожидаясь протухания аренды.
+    pub async fn queue_release(&self, machine: &MachineRef<'_>, task_id: &str) -> StorageResult<()> {
+        let _: serde_json::Value = self
+            .queue_call("release", machine, json!({ "taskId": task_id }))
+            .await?;
+        Ok(())
     }
 
     // ─── Подписанные ссылки ──────────────────────────────────────────────────
@@ -291,10 +446,12 @@ impl StorageApi {
 
     /// Включить/выключить проект (`projects.is_paused`).
     ///
-    /// Колонка в БД уже есть — её пишет сайт, и она приезжает в каждом `/projects`.
-    /// Не хватает только эндпоинта под machine token (просьба 5.1): без него
-    /// направление «выключил в программе → выключилось на сайте» не работает, хотя
-    /// обратное работает уже сегодня.
+    /// Колонка в БД есть, её пишет сайт, и она приезжает в каждом `/projects`.
+    ///
+    /// Эндпоинт `project-state` (просьба 5.1) на проде, судя по данным, уже появился:
+    /// после локального переключения `projects.updated_at` в каталоге сдвигается через
+    /// доли секунды после нашей записи. Если он всё же ответит 404/405, переключение
+    /// упадёт с ошибкой — молча в индекс мы её не пишем (порядок: сперва бэкенд).
     pub async fn set_project_paused(&self, project_id: &str, paused: bool) -> StorageResult<()> {
         let body = json!({ "projectId": project_id, "paused": paused });
         let _: serde_json::Value = self

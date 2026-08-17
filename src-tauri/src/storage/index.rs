@@ -454,6 +454,11 @@ pub struct ApplyStats {
     pub deleted: usize,
     pub skipped: usize,
     pub needs_resync: bool,
+    /// Битовая маска сайдкаров, которые кто-то тронул (см. `Sidecar::bit`).
+    ///
+    /// Маска, а не список: `ApplyStats` и `SyncReport` — `Copy`-структуры, их
+    /// передают по значению, а сайдкаров всего три.
+    pub sidecars_dirty: u8,
 }
 
 impl Index {
@@ -534,7 +539,17 @@ impl Index {
 
         for c in changes {
             let Some(file_id) = c.file_id.as_deref() else {
-                // Без file_id событие неприменимо: ключ у нас именно он.
+                // Событие про САЙДКАР приходит без `file_id` всегда и по устройству:
+                // строки в `project_files` у служебных JSON-ов нет, поэтому и ссылаться
+                // событию не на что (`setProjectPaused` → `journalStorageEvent`).
+                // Это не дыра в индексе, а сигнал «сайт тронул настройки — подтяни
+                // сайдкар». Считать его неприменимым значило бы гонять полный `/tree`
+                // на каждое переключение тумблера на сайте.
+                if let Some(which) = sidecar_of_change(c) {
+                    st.sidecars_dirty |= which.bit();
+                    continue;
+                }
+                // Всё остальное без `file_id` действительно неприменимо: ключ у нас он.
                 st.skipped += 1;
                 st.needs_resync = true;
                 continue;
@@ -590,9 +605,19 @@ impl Index {
                             folder_path,
                             name,
                             c.is_folder.unwrap_or(false) as i64,
-                            // Журнал отдаёт логический `key`, а не s3_key: для папок
-                            // s3_key вообще не существует. Оставляем то, что знали.
-                            Option::<String>::None,
+                            // `key` в журнале — это НАСТОЯЩИЙ s3-ключ, но только у
+                            // файлов: бэкенд журналит `key: s3Key` (`writeFilePut`,
+                            // `writeNotifyUpload`). У папок ключа не существует, и
+                            // там журналится логический путь (`logicalKeyForFile`) —
+                            // записать его в `s3_key` нельзя.
+                            //
+                            // Раньше мы не брали ключ вообще, и это стоило дорого:
+                            // строка, впервые узнанная из дельты, оставалась без
+                            // `s3_key`; при следующей заливке в тот же путь передать
+                            // существующий ключ было нечем, `/presign` выписывал
+                            // новый `{uuid}-имя`, а прежний объект оставался в бакете
+                            // сиротой навсегда.
+                            delta_s3_key(c),
                             c.size,
                             c.content_type,
                             c.etag,
@@ -758,6 +783,49 @@ impl Index {
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
+    /// ВСЕ записи проекта — для операций «по всему проекту» (выжигание).
+    ///
+    /// Отдельно от `list_dir`: тот перечисляет одну папку и опирается на записи-папки,
+    /// а здесь нужны и файлы, у чьей папки записи в каталоге нет. Каталог такое
+    /// допускает: заливка создаёт запись файла (`/notify`), а записи папок приезжают
+    /// деревом — и обход «сверху вниз» такой файл не нашёл бы вообще.
+    ///
+    /// Порядок: файлы раньше папок, глубокие раньше поверхностных. Удалять папку
+    /// осмысленно после её содержимого — иначе бэкенд может отказать «папка не пуста».
+    pub fn project_entries(&self, project_id: &str) -> Result<Vec<TreeEntry>, String> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT file_id, project_id, folder_path, name, is_folder, s3_key,
+                        size_bytes, content_type, etag, content_hash, origin_mtime, last_seq
+                   FROM remote_entries
+                  WHERE project_id = ?1 AND deleted = 0
+                  ORDER BY is_folder ASC, LENGTH(folder_path) DESC, name COLLATE NOCASE",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = st
+            .query_map(params![project_id], |r| {
+                Ok(TreeEntry {
+                    id: r.get(0)?,
+                    project_id: r.get(1)?,
+                    folder_path: r.get(2)?,
+                    name: r.get(3)?,
+                    is_folder: r.get::<_, i64>(4)? != 0,
+                    s3_key: r.get(5)?,
+                    size_bytes: r.get(6)?,
+                    content_type: r.get(7)?,
+                    etag: r.get(8)?,
+                    content_hash: r.get(9)?,
+                    origin_mtime: r.get(10)?,
+                    created_at: None,
+                    updated_at: None,
+                    last_seq: r.get(11)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
     /// Логические пути всех папок проекта — для создания их на диске.
     ///
     /// Папка в каталоге лежит отдельной записью, поэтому её путь — это
@@ -890,6 +958,28 @@ impl Index {
             )
             .map(|_| ())
             .map_err(|e| format!("mark_synced {file_id}: {e}"))
+    }
+
+    /// Записать версию, которая теперь лежит в облаке, — после НАШЕЙ заливки.
+    ///
+    /// Без этого значок врёт сразу после успешной заливки, и врёт неприятно: baseline
+    /// локальной копии стал новым (`mark_synced` пишет свежий sha), а `content_hash`
+    /// каталога остался прежним — и `derive_state` честно выводит «в облаке новее».
+    /// Файл, который мы только что сами отдали в облако, просил обновиться из облака.
+    ///
+    /// Взять версию из ответа `/notify` нельзя: он не возвращает ни `etag`, ни
+    /// `contentHash` (`FILE_FIELDS`, просьба 12.3 бэкенду). Но и угадывать нечего —
+    /// в облаке лежит ровно то содержимое, которое мы отправили, а его sha посчитан
+    /// перед заливкой. До правки расхождение чинилось само, но лишь до следующей
+    /// дельты, то есть значок «обновись» жил у файла минутами.
+    pub fn set_remote_version(&self, file_id: &str, content_hash: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE remote_entries SET content_hash = ?2 WHERE file_id = ?1",
+                params![file_id, content_hash],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("set_remote_version {file_id}: {e}"))
     }
 
     /// Сменить состояние, не трогая baseline (переходы вида Fresh → Downloading,
@@ -1457,6 +1547,25 @@ impl Index {
     }
 }
 
+/// Какой сайдкар описывает событие журнала. `None` — обычный файл или папка.
+///
+/// Смотрим на логические `name`/`folder_path` события, а не на `key`: у сайдкара
+/// ключ канонический, но полагаться на его форму незачем — логическая пара точнее.
+fn sidecar_of_change(c: &Change) -> Option<Sidecar> {
+    if c.is_folder.unwrap_or(false) {
+        return None;
+    }
+    Sidecar::from_logical(c.folder_path.as_deref()?, c.name.as_deref()?)
+}
+
+/// s3-ключ из события журнала — только у файлов (см. вызов в `apply_delta`).
+fn delta_s3_key(c: &Change) -> Option<String> {
+    if c.is_folder.unwrap_or(false) || c.key.trim().is_empty() {
+        return None;
+    }
+    Some(c.key.clone())
+}
+
 /// `options` и всё с подчёркиванием — служебное. Правило по существующей
 /// конвенции проекта (`_stats`, `_post`, `_collect_pending.json`), одно на
 /// программу и бэкенд.
@@ -1620,6 +1729,64 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "f1");
         assert_eq!(out[0].name, "new.mov");
+    }
+
+    /// Ключ из журнала обязан попадать в `s3_key` — иначе плодим сирот в бакете.
+    ///
+    /// Стоимость потери ключа не абстрактная: без него следующая заливка в тот же
+    /// путь не может передать существующий ключ, бэкенд выписывает новый
+    /// `{uuid}-имя`, и прежний объект остаётся в R2 навсегда.
+    #[test]
+    fn ключ_из_дельты_попадает_в_s3_key() {
+        let mut idx = Index::open_in_memory().unwrap();
+        let c = change(2, ChangeOp::Put, "f7", "IN", "новый.mov");
+        let expected = c.key.clone();
+        idx.apply_delta("p1", &[c], 2).unwrap();
+
+        assert_eq!(
+            idx.entry("f7").unwrap().unwrap().s3_key.as_deref(),
+            Some(expected.as_str()),
+            "ключ файла из журнала — настоящий s3_key, его надо запоминать"
+        );
+    }
+
+    /// У ПАПКИ ключа не существует: в журнале там логический путь, и записать его
+    /// в `s3_key` значило бы соврать — по нему потом попытаются скачать объект.
+    #[test]
+    fn у_папки_из_дельты_ключа_не_появляется() {
+        let mut idx = Index::open_in_memory().unwrap();
+        let mut c = change(2, ChangeOp::Put, "d7", "", "IN");
+        c.is_folder = Some(true);
+        idx.apply_delta("p1", &[c], 2).unwrap();
+
+        assert_eq!(
+            idx.entry("d7").unwrap().unwrap().s3_key,
+            None,
+            "у логической папки объекта в R2 нет, значит и ключа быть не должно"
+        );
+    }
+
+    /// Событие сайдкара приходит без `file_id` ВСЕГДА — строки в каталоге у него нет.
+    ///
+    /// Раньше такое событие считалось неприменимым и вызывало полный `/tree`: каждое
+    /// переключение тумблера на сайте стоило нам обхода всего проекта.
+    #[test]
+    fn событие_сайдкара_не_требует_полного_обхода() {
+        let mut idx = Index::open_in_memory().unwrap();
+        let mut c = change(2, ChangeOp::Put, "unused", "options", "folderState.json");
+        c.file_id = None;
+
+        let st = idx.apply_delta("p1", &[c], 2).unwrap();
+
+        assert!(
+            !st.needs_resync,
+            "сайдкар без file_id — это норма контракта, а не дыра в индексе"
+        );
+        assert_eq!(st.sidecars_dirty, Sidecar::FolderState.bit());
+        assert_eq!(
+            Sidecar::from_mask(st.sidecars_dirty).collect::<Vec<_>>(),
+            vec![Sidecar::FolderState]
+        );
     }
 
     #[test]

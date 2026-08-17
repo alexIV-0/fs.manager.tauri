@@ -22,6 +22,8 @@ import {
 	topShadowFor,
 } from '../mainStyles';
 import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { persistEnabled } from '@/Utils/folderState';
+import { setProjectPaused, ensureDir } from '@/Utils/storageSeam';
 import { useColumnFocus_store } from '@/Store/MainWin/columnFocus_store';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
@@ -150,14 +152,38 @@ export function ProjectFolderColumn() {
 	});
 
 	const onOffAllAutomation = () => {
-		if (onOffVal) {
-			saveToLocalStorage(activeMainFolder || '', []);
-		} else {
-			const allFoldersArr = mainFolderArr.find((f) => f.id === activeMainFolder)?.projectFolders || [];
-			saveToLocalStorage(activeMainFolder || '', allFoldersArr);
-		}
+		const main = mainFolderArr.find((f) => f.id === activeMainFolder);
+		const allFoldersArr: string[] = main?.projectFolders || [];
+		// `onOffVal === true` означает «сейчас всё включено», то есть нажатие ВЫКЛючает.
+		const enabling = onOffVal === true ? false : true;
+
+		saveToLocalStorage(activeMainFolder || '', enabling ? [] : allFoldersArr);
 		setOnOffVal(!onOffVal);
 		setOnOffRefreshKey((k) => k + 1);
+
+		// Раньше кнопка писала ТОЛЬКО LocalStorage — ни в каталог, ни в сайдкар. То есть
+		// массовое включение/выключение не видел ни сайт, ни другая машина, а следующий
+		// `/projects` возвращал прежние значения и «отменял» нажатие. Одиночный тумблер
+		// это делал, массовый — нет: разница, которую никто не замечал.
+		if (!main?.path) return;
+		for (const name of allFoldersArr) {
+			persistEnabled(main.id, name, enabling, 'manual');
+		}
+		if (!main.online) return;
+
+		// По проекту за раз, последовательно: пачка параллельных запросов к бэкенду на
+		// двадцати проектах ничего не ускорит, а лимиты подёргает.
+		void (async () => {
+			for (const name of allFoldersArr) {
+				try {
+					await setProjectPaused(joinPath(main.path, name), !enabling);
+				} catch (err) {
+					console.error('[ON/OFF ALL] каталог отказал:', name, err);
+					window.alert(`Не удалось переключить «${name}» в облаке.\n\n${String(err)}`);
+					return; // одна ошибка — дальше молотить бессмысленно
+				}
+			}
+		})();
 	};
 
 	const addNewFolder = async () => {
@@ -169,7 +195,9 @@ export function ProjectFolderColumn() {
 		const newFolderName = getUniqueFolderName('newFolder', allFoldersArr.folders);
 		if (!activeMain) return;
 		const newPath = joinPath(activeMain.path, newFolderName);
-		unwrap(await commands.testAndCreateFolder(newPath));
+		// Через шов: в зеркале папка проекта обязана появиться в каталоге, иначе на
+		// сайте её нет и переименовать/удалить её через API нельзя.
+		await ensureDir(newPath);
 		updateParameters({
 			id: activeMain.id,
 			projectFolders: [...activeMain.projectFolders, newFolderName],

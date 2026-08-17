@@ -62,6 +62,77 @@ pub fn choose_strategy(
     Ok(UploadStrategy::SinglePut)
 }
 
+// ─── Имя, пригодное для каталога ─────────────────────────────────────────────
+
+/// Дубль правил `validateLogicalName` бэкенда (`lib/storage/file-names.ts`).
+///
+/// **Проверять обязаны ДО передачи байтов.** Имя валидирует `/notify`, то есть уже
+/// после успешного PUT: объект в бакете есть, строки в каталоге нет, удалить его нам
+/// нечем (`delete` работает по `file_id`). Один результат с двоеточием в имени —
+/// и мы платим за мусор, который никто не прочитает, а человек видит
+/// «Байты залиты, но подтверждение не прошло» вместо причины.
+///
+/// Ручной дубль правила чужой стороны — как `apply_vars` для масок: сверять глазами.
+/// Расхождение безопасно в одну сторону: если бэкенд строже, отказ придёт от него,
+/// как раньше. Строже здесь быть нельзя — отклоним то, что он бы принял.
+pub fn check_logical_name(name: &str) -> Result<(), StorageError> {
+    let trimmed = name.trim();
+    let bad = |msg: String| Err(StorageError::Other(msg));
+
+    if trimmed.is_empty() {
+        return bad("Пустое имя файла хранилище не примет".into());
+    }
+    if trimmed == "." || trimmed == ".." {
+        return bad("Имя «.» или «..» хранилище не примет".into());
+    }
+    // Те же символы, что запрещает бэкенд: разделители путей, запретное в Windows
+    // и управляющие байты.
+    if let Some(ch) = trimmed
+        .chars()
+        .find(|c| matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control())
+    {
+        let shown = if ch.is_control() {
+            "управляющий символ".to_string()
+        } else {
+            format!("«{ch}»")
+        };
+        return bad(format!(
+            "В имени «{trimmed}» есть символ, недопустимый в хранилище: {shown}. \
+             Запрещены \\ / : * ? \" < > | и управляющие символы"
+        ));
+    }
+    // Точка в конце — отказ. Пробел в конце бэкенд не отвергает, а СРЕЗАЕТ (`trim`
+    // перед проверкой), поэтому и мы здесь молчим: отклонить значило бы не пустить
+    // файл, который он бы принял. Побочный эффект чужого `trim` — имя в каталоге
+    // окажется без пробела, и локальную копию потом переставит `reconcile_local_paths`.
+    if trimmed.ends_with('.') {
+        return bad(format!(
+            "Имя «{trimmed}» кончается точкой — хранилище такое не примет"
+        ));
+    }
+    if trimmed.len() > MAX_NAME_BYTES {
+        return bad(format!(
+            "Имя длиннее {MAX_NAME_BYTES} байт ({} байт) — хранилище такое не примет",
+            trimmed.len()
+        ));
+    }
+    // Зарезервированные в Windows: `con`, `prn`, `aux`, `nul`, `com1..9`, `lpt1..9`,
+    // с расширением или без.
+    let stem = trimmed.split('.').next().unwrap_or(trimmed).to_lowercase();
+    let reserved = matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0');
+    if reserved {
+        return bad(format!("Имя «{trimmed}» зарезервировано в Windows"));
+    }
+    Ok(())
+}
+
+/// Предел длины имени у бэкенда — в БАЙТАХ utf-8, не в символах.
+const MAX_NAME_BYTES: usize = 180;
+
 pub fn human_size(bytes: i64) -> String {
     const K: f64 = 1024.0;
     let b = bytes as f64;
@@ -219,6 +290,54 @@ mod tests {
         assert_eq!(human_size(512), "512 Б");
         assert_eq!(human_size(2 * MB), "2.0 МБ");
         assert_eq!(human_size(3 * GB), "3.0 ГБ");
+    }
+
+    /// Имя с двоеточием обязано отлетать ДО передачи байтов.
+    ///
+    /// Живой случай: воркер получил задачу, в которой сайт прислал `findTime` сырой
+    /// ISO-строкой, маска `$findTime` попала в имя результата —
+    /// `2026-08-17T20:42:18.165Z_….mp4`. Байты уехали, `/notify` отказал 400-м, объект
+    /// остался в бакете сиротой, а человек увидел «подтверждение не прошло».
+    #[test]
+    fn имя_с_запрещённым_символом_не_доходит_до_заливки() {
+        let err = check_logical_name("2026-08-17T20:42:18.165Z_123.mp4").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(':'), "в сообщении должен быть виден сам символ: {msg}");
+
+        for bad in [r"a\b.mp4", "a/b.mp4", "a*b.mp4", "a?b.mp4", "a\"b.mp4", "a<b.mp4", "a>b.mp4", "a|b.mp4"] {
+            assert!(check_logical_name(bad).is_err(), "должно отклоняться: {bad}");
+        }
+        assert!(check_logical_name("файл\u{1}.mp4").is_err(), "управляющий символ");
+    }
+
+    #[test]
+    fn нормальные_имена_проходят() {
+        for ok in [
+            "17.08-11.06_123.mp4",
+            "ролик финал.mov",
+            "Демо_Letuchiy-Korabl_Rus-ENG.mp4",
+            "folderState.json",
+        ] {
+            assert!(check_logical_name(ok).is_ok(), "должно приниматься: {ok}");
+        }
+    }
+
+    #[test]
+    fn пограничные_правила_имени() {
+        assert!(check_logical_name("").is_err(), "пустое");
+        assert!(check_logical_name("..").is_err(), "точки");
+        assert!(check_logical_name("файл.").is_err(), "точка в конце");
+        // Пробел в конце бэкенд СРЕЗАЕТ, а не отвергает — значит и мы пропускаем:
+        // отклонять то, что он принимает, нельзя.
+        assert!(check_logical_name("файл ").is_ok(), "пробел бэкенд срезает сам");
+        assert!(check_logical_name("con").is_err(), "зарезервировано в Windows");
+        assert!(check_logical_name("com1.mp4").is_err(), "com1 зарезервировано");
+        // `com0` и `common` не зарезервированы — правило не должно быть шире чужого.
+        assert!(check_logical_name("com0.mp4").is_ok());
+        assert!(check_logical_name("common.mp4").is_ok());
+        // Предел в БАЙТАХ: кириллица занимает по два.
+        assert!(check_logical_name(&"я".repeat(91)).is_err(), "182 байта");
+        assert!(check_logical_name(&"я".repeat(90)).is_ok(), "180 байт");
     }
 
     #[test]

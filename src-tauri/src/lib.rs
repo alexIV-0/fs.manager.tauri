@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod machine;
 mod storage;
 
 use commands::{
@@ -51,6 +52,8 @@ use tauri::menu::{Menu, Submenu, PredefinedMenuItem};
 fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
+            // Ключ и подпись этой машины (режим воркера + имя файла статистики).
+            machine::machine_identity,
             run_script_in_ae,
             launch_ae_with_script,
             // fs watcher (мигрирован Stage 1 — call-sites на commands.*, camel-обёртки удалены)
@@ -216,6 +219,13 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             storage_disconnect,
             storage_status,
             storage_refresh_projects,
+            // Очередь задач конвейера (режим воркера).
+            storage_queue_ping,
+            storage_queue_claim,
+            storage_queue_progress,
+            storage_queue_done,
+            storage_queue_failed,
+            storage_queue_release,
             storage_clients,
             storage_projects,
             storage_catch_up,
@@ -252,6 +262,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             storage_set_project_paused,
             storage_mkdir,
             storage_delete,
+            storage_purge_project,
             storage_resolve_conflict,
             storage_sync_now,
             storage_drop_owner_local,
@@ -374,6 +385,11 @@ pub fn run() {
             let app_data_dir = app.path()
                 .app_data_dir()
                 .expect("Failed to get app data dir");
+
+            // Идентичность машины: UUID заводится при первом запуске и дальше только
+            // читается. Здесь, а не по требованию, потому что `AppHandle` есть только
+            // тут, а спрашивают её из мест без него (имя файла статистики).
+            machine::init(&app_data_dir);
 
             let mut plugin_state = PluginManagerState::new(cfg!(debug_assertions), app_data_dir);
 

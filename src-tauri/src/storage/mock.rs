@@ -48,6 +48,10 @@ pub struct MockState {
     /// Последний `notify`: ключ, content_hash, origin_mtime. Тест проверяет, что
     /// мы действительно присылаем хэш и время, а не молча их теряем.
     pub last_notify: Option<(String, Option<String>, Option<i64>)>,
+    /// Сайдкары: `"<project_id>/<api_name>"` → тело. В отличие от файлов, у них нет
+    /// ни строки в каталоге, ни ключа — только содержимое по фиксированному адресу,
+    /// поэтому и в моке это просто карта строк.
+    pub sidecars: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +103,95 @@ impl MockApi {
             return Err(e);
         }
         Ok(self.with(|s| s.caps.clone()))
+    }
+
+    // ─── Сайдкары ────────────────────────────────────────────────────────────
+
+    pub async fn sidecar_get(
+        &self,
+        project_id: &str,
+        which: Sidecar,
+    ) -> StorageResult<Option<String>> {
+        if let Some(e) = self.take_failure() {
+            return Err(e);
+        }
+        let key = sidecar_key(project_id, which);
+        Ok(self.with(|s| s.sidecars.get(&key).cloned()))
+    }
+
+    pub async fn sidecar_put(
+        &self,
+        project_id: &str,
+        which: Sidecar,
+        body: &str,
+        _if_match: Option<&str>,
+    ) -> StorageResult<Option<String>> {
+        if let Some(e) = self.take_failure() {
+            return Err(e);
+        }
+        let key = sidecar_key(project_id, which);
+        let body = body.to_string();
+        // etag изображаем длиной: сравнение «то же самое или нет» на нём работает,
+        // а больше от него в моке ничего не требуется.
+        let etag = format!("mock-{}", body.len());
+        self.with(|s| s.sidecars.insert(key, body));
+        Ok(Some(etag))
+    }
+
+    // ─── Очередь задач ───────────────────────────────────────────────────────
+    //
+    // У демо-режима очереди нет и быть не должно: фикстуры изображают ХРАНИЛИЩЕ, а
+    // очередь — это состояние сайта, живущее в его базе. Поэтому `claim` всегда
+    // отвечает «пусто», а отчёты молча принимаются: воркер на моке крутится вхолостую
+    // и ничего не ломает, вместо того чтобы падать на каждом запросе.
+
+    pub async fn queue_ping(&self, _machine: &super::client::MachineRef<'_>) -> StorageResult<()> {
+        Ok(())
+    }
+
+    pub async fn queue_claim(
+        &self,
+        _machine: &super::client::MachineRef<'_>,
+    ) -> StorageResult<Option<QueueTask>> {
+        Ok(None)
+    }
+
+    pub async fn queue_progress(
+        &self,
+        _machine: &super::client::MachineRef<'_>,
+        _task_id: &str,
+        _step_id: &str,
+        _status: QueueStepStatus,
+        _message: Option<&str>,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    pub async fn queue_done(
+        &self,
+        _machine: &super::client::MachineRef<'_>,
+        _task_id: &str,
+        _out_files: Vec<String>,
+        _total_cost: f64,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    pub async fn queue_failed(
+        &self,
+        _machine: &super::client::MachineRef<'_>,
+        _task_id: &str,
+        _error: &str,
+    ) -> StorageResult<()> {
+        Ok(())
+    }
+
+    pub async fn queue_release(
+        &self,
+        _machine: &super::client::MachineRef<'_>,
+        _task_id: &str,
+    ) -> StorageResult<()> {
+        Ok(())
     }
 
     pub async fn projects(&self) -> StorageResult<ProjectsResponse> {
@@ -292,6 +385,10 @@ impl MockApi {
             expires_in: ttl_sec.or(Some(3600)),
         })
     }
+}
+
+fn sidecar_key(project_id: &str, which: Sidecar) -> String {
+    format!("{project_id}/{}", which.api_name())
 }
 
 // ─── Демо-данные ─────────────────────────────────────────────────────────────

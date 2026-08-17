@@ -14,6 +14,7 @@
 
 import { commands, unwrap } from '@/Utils/specta';
 import { joinPath } from '@/Utils/joinPath';
+import { ensureDir } from '@/Utils/storageSeam';
 import { createProcessQueue } from '@/PROCESSING/utils/createProcessQueue';
 import { getDescription } from '@/PROCESSING/utils/getDesription';
 import { findPoster } from '@/PROCESSING/autoPost/posters';
@@ -114,10 +115,11 @@ export async function syncPostSourcesSidecar(path: string, flow: any): Promise<v
 		const sidecar = { baseDescription, finders };
 		await commands.writeFileAtomic(sidecarPath, JSON.stringify(sidecar, null, 2));
 
-		// Создаём папки-источники, чтобы юзеру было куда складывать файлы.
+		// Создаём папки-источники, чтобы юзеру было куда складывать файлы. Через шов:
+		// в зеркале папка обязана появиться в каталоге, иначе для сайта её нет.
 		for (const f of finders) {
 			const abs = isAbsPath(f.folder) ? f.folder : joinPath(path, f.folder);
-			await commands.testAndCreateFolder(abs).catch(() => {});
+			await ensureDir(abs).catch(() => {});
 		}
 	} catch (e) {
 		console.error('[syncPostSourcesSidecar] ошибка синка postSources.json:', e);
