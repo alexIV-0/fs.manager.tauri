@@ -15,6 +15,8 @@ import { loadAllUINodes, type CollectedUINode } from '@/Utils/loadAllUINodes';
 import { buildNodeDefinitions } from './definitions';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { listen } from '@tauri-apps/api/event';
+import { ensureLocalStrict } from '@/Utils/storageSeam';
+import { joinPath } from '@/Utils/joinPath';
 
 import SaveButton from './layout/SaveButton';
 import TopPanel from './layout/TopPanel';
@@ -113,6 +115,12 @@ interface LoadedNodeAppProps {
 }
 
 function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, pluginUINodes }: LoadedNodeAppProps) {
+	// Ошибка ЧТЕНИЯ графа — отдельно от initError (тот про инициализацию окна).
+	// reloadKey нужен, чтобы «Повторить» перезапускал эффект, не перезагружая окно:
+	// путь приходит событием от главного окна, и после reload его пришлось бы ждать снова.
+	const [loadError, setLoadError] = useState<string | null>(null);
+	const [reloadKey, setReloadKey] = useState(0);
+
 	useEffect(() => {
 		const handler = (_: unknown, data: string) => {
 			addPath(data);
@@ -134,12 +142,37 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 
 		let cancelled = false;
 		setSavedState(null);
+		setLoadError(null);
 
 		const init = async () => {
 			// Папки IN/OUT/options здесь БОЛЬШЕ НЕ создаём: незачем засорять диск у пустого,
 			// нетронутого проекта. options появится при первом сохранении (внутри
 			// save_flow_to_options_folder), IN/OUT — через ensureProjectFolders по составу
-			// флоу. Здесь только читаем options.json (если его нет — вернётся {}).
+			// флоу.
+			//
+			// ГИДРАЦИЯ ДО ЧТЕНИЯ. Проект может жить только в облаке: options.json есть в
+			// каталоге, а байтов на диске нет. `get_node_obj_from_file` смотрит диск
+			// напрямую (`json_path.exists()`) и в этом случае вернул бы `{}` — редактор
+			// открылся бы пустым, как будто проект новый.
+			//
+			// Почему сбой гидрации фатален, а не «покажем что есть»: первое же сохранение
+			// зальёт пустой граф ПОВЕРХ облачного, причём безусловно. В `needs_upload`
+			// (storage/service.rs) отсутствие baseline трактуется как «это наша новая
+			// версия, пайплайн перезаписал облачный файл не скачивая» — ветка правильная
+			// для обработки, но здесь она означает, что матрица расхождений конфликт не
+			// увидит и работа пропадёт молча. Поэтому мягкий `ensureLocal` тут не годится:
+			// он глотает ошибку хранилища и вернул бы ровно этот пустой граф.
+			try {
+				await ensureLocalStrict(joinPath(path, 'options', 'options.json'));
+			} catch (e) {
+				if (cancelled) return;
+				setLoadError(e instanceof Error ? e.message : String(e));
+				return;
+			}
+			if (cancelled) return;
+
+			// Дальше файла может не быть вовсе — ни на диске, ни в каталоге. Это и есть
+			// новый проект: вернётся `{}` и холст откроется чистым.
 			const newState = unwrap(await commands.getNodeObjFromFile(path));
 			if (cancelled) return;
 			setSavedState(newState as unknown as SavedState);
@@ -150,7 +183,13 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 		return () => {
 			cancelled = true;
 		};
-	}, [path, setSavedState]);
+	}, [path, setSavedState, reloadKey]);
+
+	// Пустой холст при неудавшейся гидрации не показываем ВООБЩЕ, а не просто без
+	// нод: иначе рядом остаются Save и Sidebar, и одно нажатие затирает облачный граф.
+	if (loadError) {
+		return <FlowLoadError message={loadError} onRetry={() => setReloadKey((n) => n + 1)} />;
+	}
 
 	return (
 		<div style={{ width: '100vw', height: '100vh' }}>
@@ -168,6 +207,50 @@ function LoadedNodeApp({ path, addPath, savedState, setSavedState, initialized, 
 					<ProcessingStatusBar />
 				</ReactFlowProvider>
 			</ThemeWrapper>
+		</div>
+	);
+}
+
+/** Граф есть, но недоступен. Отдельно от initError: там окно не поднялось, а здесь
+ *  не прочитался конкретный проект, и повтор имеет смысл. */
+function FlowLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+	return (
+		<div
+			style={{
+				width: '100vw',
+				height: '100vh',
+				display: 'flex',
+				justifyContent: 'center',
+				alignItems: 'center',
+				backgroundColor: '#1a1a1a',
+				color: 'white',
+				flexDirection: 'column',
+				gap: '16px',
+				padding: '40px',
+				textAlign: 'center',
+			}}
+		>
+			<div style={{ fontSize: '22px', fontWeight: 500 }}>Не удалось получить настройки нод</div>
+			<div style={{ fontSize: '14px', color: '#bbb', maxWidth: '640px', lineHeight: 1.5 }}>
+				Файл <code>options.json</code> есть в облаке, но скачать его не получилось. Пустой холст не
+				показываем намеренно: сохранение затёрло бы облачный граф.
+			</div>
+			<div style={{ fontSize: '13px', color: '#e57373', maxWidth: '640px', wordBreak: 'break-word' }}>{message}</div>
+			<button
+				onClick={onRetry}
+				style={{
+					marginTop: '8px',
+					padding: '8px 20px',
+					fontSize: '14px',
+					color: 'white',
+					backgroundColor: '#2f6f3f',
+					border: '1px solid #4CAF50',
+					borderRadius: '4px',
+					cursor: 'pointer',
+				}}
+			>
+				Повторить
+			</button>
 		</div>
 	);
 }

@@ -5,6 +5,8 @@
 //
 // ── Три вида шва, путать нельзя ──────────────────────────────────────────────
 //   • нужны БАЙТЫ            → `ensureLocal` (ждём скачивания);
+//     то же, но сбой фатален → `ensureLocalStrict` (читателю важно отличить
+//                              «файла нет вовсе» от «не скачалось»);
 //   • нужны МЕТАДАННЫЕ       → `pathInfo` (из каталога, НЕ качаем);
 //   • нужно ЗНАТЬ, ЕСТЬ ЛИ   → `pathExists` (из каталога, НЕ качаем).
 //
@@ -17,6 +19,7 @@
 // ответ мгновенно и в Rust не ходят вообще.
 
 import { commands, unwrap } from '@/Utils/specta';
+import type { EnsureOutcome } from '@/bindings';
 
 /** `undefined` — ещё не спрашивали. `''` — облака нет. */
 let mirrorRoot: string | undefined;
@@ -81,6 +84,24 @@ export async function ensureLocalAll(paths: string[]): Promise<string[]> {
 	await ensureProbed();
 	if (!paths.some(maybeMirror)) return paths;
 	return Promise.all(paths.map((p) => ensureLocal(p)));
+}
+
+/**
+ * То же, что `ensureLocal`, но сбой НЕ прощает — бросает.
+ *
+ * Мягкость `ensureLocal` сделана для обработки: падать из-за облака посреди
+ * витка нельзя. Но есть чтения, где «не скачалось» нельзя пережить как «файла нет»:
+ * пустой `options.json` выглядит ровно как новый проект, а первое же сохранение
+ * зальёт эту пустоту поверх облачного графа.
+ *
+ * Исход возвращается, чтобы вызывающий мог различить случаи: `notInMirror` —
+ * файла нет ни в каталоге, ни под зеркалом (законный новый проект), `localOnly` —
+ * лежит только на диске, остальные — байты на месте.
+ */
+export async function ensureLocalStrict(p: string): Promise<EnsureOutcome> {
+	await ensureProbed();
+	if (!maybeMirror(p)) return 'notInMirror';
+	return unwrap(await commands.storageEnsureLocal(p)).outcome;
 }
 
 /** Строка листинга в формате колонок — тот же тип, что отдаёт чтение диска. */
