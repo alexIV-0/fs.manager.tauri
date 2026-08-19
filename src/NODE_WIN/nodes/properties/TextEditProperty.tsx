@@ -1,4 +1,4 @@
-import { TextEditProperty, TextEditLanguage, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { TextEditProperty, TextEditLanguage, CustomNodeData, Property, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useUpdateFlow } from '@/NODE_WIN/hooks/useUpdateFlow';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
@@ -42,7 +42,7 @@ function TextEditPropertyComponent({ property }: { property: TextEditProperty })
 	const { controlProps } = property;
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 	const runnable = controlProps?.runnable ?? false;
 
 	const [isOpen, setIsOpen] = useState(false);

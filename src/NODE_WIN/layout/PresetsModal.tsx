@@ -18,6 +18,7 @@ import {
 import { BookmarkPlus, Check, LogIn, LogOut, Save, Search, Trash2, X } from 'lucide-react';
 import { useNodes, useReactFlow } from '@xyflow/react';
 import { nanoid } from 'nanoid';
+import { migrateTimecodeSeconds } from '../utils/migrateTimecodeSeconds';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
 import { joinPath } from '@/Utils/joinPath';
 import { tauriAPI } from '@/Utils/tauri-api';
@@ -273,7 +274,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 			try {
 				const raw = unwrap(await commands.readFileSync(preset.filePath));
 				const flow = JSON.parse(raw);
-				if (flow.nodes) reactFlow.setNodes(flow.nodes);
+				if (flow.nodes) reactFlow.setNodes(migrateTimecodeSeconds(flow.nodes));
 				if (flow.edges) reactFlow.setEdges(flow.edges ?? []);
 				if (flow.viewport) reactFlow.setViewport(flow.viewport);
 				onClose();
@@ -296,7 +297,7 @@ function PresetsModal({ open, onClose }: PresetsModalProps) {
 				}
 
 				const excludedTypes = new Set(['mainSearch', 'description']);
-				const candidateNodes = flow.nodes.filter((n: any) => !excludedTypes.has(n.type));
+				const candidateNodes = migrateTimecodeSeconds(flow.nodes).filter((n: any) => !excludedTypes.has(n.type));
 				if (!candidateNodes.length) {
 					onClose();
 					return;

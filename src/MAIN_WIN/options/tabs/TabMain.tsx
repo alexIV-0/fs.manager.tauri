@@ -379,6 +379,12 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 
 			{/* ============ ЛОКАЛЬНЫЙ АРХИВ ============ */}
 			<Section title='Локальный архив'>
+				<Typography sx={{ color: greyColor(55), fontSize: '0.82rem', mb: 1 }}>
+					Статистика по каждому обработанному файлу всегда пишется в сам проект —
+					options/_stats/$YYYY.$MM.jsonl, настраивать это не нужно и отключить нельзя: из этих
+					файлов статистику читает сайт. Здесь задаются ДОПОЛНИТЕЛЬНЫЕ архивы: сводки по дням,
+					месяцам, проектам и свой JSONL в отдельной папке.
+				</Typography>
 				{settings.storage.localArchives.map((archive, idx) => (
 					<Box key={idx} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
 						<Checkbox

@@ -21,10 +21,23 @@ import { getFormattedDateTime } from '@/Utils/getFormattedDateTime';
 import { ensureLocal, flushUploads, pathInfo } from '@/Utils/storageSeam';
 import { clearFileNameAndID } from '../utils/clearFileNameAndID';
 import { injectMachineLocals } from '../utils/machineLocals';
+import { sendFindItemToRegistrationProcessDatabase } from '../utils/sendFindItemToRegistrationProcessDatabase';
 import { processItem } from '../processItem';
 import { RUN_PROCESSING } from '../runLanes';
 
-/** Как часто продлеваем аренду, пока идёт обработка. */
+/**
+ * Как часто продлеваем аренду, пока ИДЁТ ШАГ.
+ *
+ * Продление привязано к текущему шагу, а не к тому, что `runTask` ещё не вернулась, — и
+ * это не деталь. Прежний пульс шёл по таймеру всегда: обработка кончилась в 08:30, а в
+ * 08:34 уходило очередное «обработка идёт», аренда сдвигалась ещё на 15 минут, и
+ * сборщик протухших аренд такую задачу не подобрал бы никогда. Пока шаг реально идёт
+ * (рендер AE — это сорок минут), продлевать обязаны, иначе задачу заберёт другая машина
+ * посреди работы.
+ *
+ * «Машина жива» через это НЕ сообщается: `ping` шлёт демон синхронизации сам, раз в
+ * пульс, независимо от режима воркера (`storage/daemon.rs`).
+ */
 const LEASE_RENEW_MS = 5 * 60 * 1000;
 /**
  * Формат метки прогона, принятый в программе: `17.08-20.42` — день.месяц-часы.минуты.
@@ -68,20 +81,154 @@ function projectRootFromFile(filePath: string, folderPath: string): string {
 	return root;
 }
 
-/** Ждём, пока по проекту не останется неотправленного. */
-async function waitUploads(signal: AbortSignal): Promise<boolean> {
+/**
+ * Ждём, пока не останется неотправленного **по этому проекту**.
+ *
+ * Фильтр по проекту обязателен: `storageNotUploaded` отдаёт весь список зеркала, а в нём
+ * может годами лежать чужой файл, который не заливается вовсе (заливку остановили
+ * руками, имя не принимает хранилище). Без фильтра каждая задача упиралась бы в чужой
+ * мусор и висела все десять минут вместо того, чтобы отчитаться, — ровно это и
+ * выглядело как «задача навсегда в работе».
+ *
+ * Файлы с `reason: 'stopped'` не ждём: остановленная вручную заливка сама не
+ * возобновится, ждать её — значит гарантированно проесть весь таймаут. Пишем их в лог,
+ * чтобы «отчитались, а файла в облаке нет» не было загадкой.
+ */
+async function waitUploads(
+	projectPath: string,
+	signal: AbortSignal,
+	log: (level: 'info' | 'warn' | 'error', text: string) => void,
+): Promise<boolean> {
 	// Заливка идёт своей очередью и о завершении шага знает раннер, поэтому сначала
 	// объявляем всё готовым, а потом ждём, пока демон разгребёт.
 	await flushUploads();
 
+	const mine = (rows: any[]) => rows.filter((r) => typeof r?.path === 'string' && r.path.startsWith(projectPath));
+
 	const until = Date.now() + UPLOAD_WAIT_MS;
+	let told = false;
 	while (Date.now() < until) {
 		if (signal.aborted) return false;
-		const rest = unwrap(await commands.storageNotUploaded(50));
-		if (!Array.isArray(rest) || rest.length === 0) return true;
+		const all = unwrap(await commands.storageNotUploaded(500));
+		const rest = mine(Array.isArray(all) ? all : []);
+		const stopped = rest.filter((r) => r.reason === 'stopped');
+		if (rest.length === stopped.length) {
+			if (stopped.length > 0) {
+				log('warn', `[worker] заливка остановлена вручную, эти файлы в облако не уехали: ${stopped.map((r) => r.name).join(', ')}`);
+			}
+			return true;
+		}
+		// Сказать, ЧЕГО ждём, — один раз и не сразу (пара секунд ожидания это норма).
+		// Без этой строки затянувшееся ожидание выглядит как «задача зависла на сайте», и
+		// искать причину приходится в отчётности, хотя дело в конкретном файле.
+		if (!told && Date.now() - (until - UPLOAD_WAIT_MS) > 10_000) {
+			told = true;
+			log('info', `[worker] ждём заливки: ${rest.map((r) => `${r.name} (${r.reason})`).join(', ')}`);
+		}
 		await new Promise((r) => setTimeout(r, 2000));
 	}
+	log('warn', '[worker] ждать заливку больше не будем — таймаут. Отчитываемся, но в облаке может быть не всё');
 	return false;
+}
+
+/**
+ * Мост «шаги пайплайна → отчёты в очередь».
+ *
+ * ── Почему через шину событий ─────────────────────────────────────────────────
+ * `processItem` уже рассылает `node:start` / `node:done` / `node:error` в локальную шину
+ * `processing:event` (её слушает и окно логов, и граф в NODE_WIN). Отдельный колбэк в
+ * движок означал бы второй, параллельный способ узнать одно и то же — и обязанность
+ * поддерживать их согласованными. Воркер живёт в том же realm'е, что `processItem`,
+ * поэтому шина ему доступна как есть.
+ *
+ * ── Почему `graphNodeId` ──────────────────────────────────────────────────────
+ * Сайт сопоставляет отчёты со шагами по тем id, которые сам положил в
+ * `payload.processingQueue` (`mainSearch`, `MQx1_`, `W4eDu`, …). Мы раньше слали
+ * синтетические `start`/`running` — они не совпадали ни с чем, сайт принимал их молча, и
+ * все шаги оставались `queued` при работающей обработке. У саб-шагов `loop` `nodeId`
+ * суффиксирован (`X#3`), а `graphNodeId` — исходный id ноды; в очередь идёт он.
+ *
+ * ── Фильтр по элементу ────────────────────────────────────────────────────────
+ * Шина глобальная, поэтому берём только события своего элемента: `itemId` у элемента
+ * воркера равен `taskId` (`description.dbItemId`, см. `processItem`).
+ */
+function reportSteps(
+	taskId: string,
+	queue: { progress: (t: string, s: string, st: any, m?: string) => Promise<void> },
+	log: (level: 'info' | 'warn' | 'error', text: string) => void,
+) {
+	let current: { id: string; since: number } | null = null;
+
+	// Отчёт не должен ронять обработку: сайт может лежать, а работа уже сделана и её
+	// надо довести. Поэтому fire-and-forget с записью в лог.
+	const report = (stepId: string, status: 'running' | 'done' | 'error', message?: string) => {
+		void queue.progress(taskId, stepId, status, message).catch((e: any) => {
+			log('warn', `[worker] отчёт о шаге ${stepId} не ушёл: ${e?.message ?? e}`);
+		});
+	};
+
+	const onEvent = (ev: Event) => {
+		const detail = (ev as CustomEvent).detail ?? {};
+		const { type, payload } = detail;
+		if (!payload || payload.itemId !== taskId) return;
+
+		const stepId: string | undefined = payload.graphNodeId ?? payload.nodeId;
+		if (!stepId) return;
+
+		if (type === 'node:start') {
+			current = { id: stepId, since: Date.now() };
+			report(stepId, 'running');
+		} else if (type === 'node:done') {
+			if (current?.id === stepId) current = null;
+			report(stepId, 'done');
+		} else if (type === 'node:error') {
+			if (current?.id === stepId) current = null;
+			report(stepId, 'error', payload.message ?? 'шаг упал');
+		}
+	};
+
+	window.addEventListener('processing:event', onEvent);
+
+	return {
+		report,
+		/** Какой шаг идёт прямо сейчас — по нему продлевается аренда. */
+		current: () => current,
+		stop: () => window.removeEventListener('processing:event', onEvent),
+	};
+}
+
+/**
+ * Локальные пути результата → логические, относительно корня проекта.
+ *
+ * В `taskDone` нельзя слать `/Users/имя/Desktop/r2cloud/…` — это машинно-локальное, а
+ * контракт очереди про него ничего не знает (`PIPELINE.md` §5: ни путей, ни ссылок).
+ * Сайт кладёт присланное в `tasks.payload`, и с абсолютным путём чужой машины он не
+ * сделает ничего: сопоставить с каталогом можно только по `folder_path` + `name`.
+ * Поэтому отдаём `OUT/08 August/18.08-01.30_123.mp4`.
+ *
+ * Файлы вне папки проекта не отдаём вовсе: их нет в облаке (например, промежуточное в
+ * локальной рабочей папке), и ссылаться на них сайту не на что. Молчать об этом нельзя —
+ * пишем в лог, иначе «результат есть, а в отчёте пусто» превращается в загадку.
+ */
+function logicalOutFiles(
+	outFiles: string[],
+	projectPath: string,
+	log: (level: 'info' | 'warn' | 'error', text: string) => void,
+): string[] {
+	const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
+	const inside: string[] = [];
+	const outside: string[] = [];
+
+	for (const p of outFiles) {
+		if (typeof p !== 'string' || !p) continue;
+		if (p.startsWith(prefix)) inside.push(p.slice(prefix.length));
+		else outside.push(p);
+	}
+
+	if (outside.length > 0) {
+		log('warn', `[worker] в отчёт не попали файлы вне папки проекта (их нет в облаке): ${outside.join(', ')}`);
+	}
+	return inside;
 }
 
 export async function runTask(
@@ -175,32 +322,64 @@ export async function runTask(
 	payload.description = description;
 	payload.mainSearch = { ...(payload.mainSearch ?? {}), output: [filePath] };
 
-	// 4. Продление аренды на всё время обработки. AE может рендерить сорок минут, а аренда
-	//    живёт пятнадцать: без продления задачу перезаберёт другая машина, и один и тот же
-	//    файл отрендерят дважды.
+	// 3.1. Регистрация элемента — без неё нет статистики.
+	//
+	// Локальный прогон делает это в `findFilesForSingleFolder`, а воркер собирает элемент
+	// сам и мимо той ветки проходил целиком: `write_analytics` на финише искал запись по
+	// `itemId` в `DbState`, не находил и выходил первой же строкой. Наружу это выглядело
+	// так, будто настройка архива не работает, — а работа просто не регистрировалась.
+	//
+	// Ключом ложится `dbItemId`, то есть `taskId`: именно с ним придёт `item:end`, и
+	// именно он должен оказаться в `_stats`, чтобы строка сшивалась с задачей на сайте.
+	await sendFindItemToRegistrationProcessDatabase(payload);
+
+	// 4. Отчёты о шагах. Подписываемся ДО запуска обработки, иначе первый шаг успеет
+	//    начаться молча.
+	const steps = reportSteps(task.taskId, queue, log);
+
+	// Шаг-источник закрываем сами: `processItem` идёт по очереди с ВТОРОГО элемента
+	// (первый — `mainSearch`, его выход подставляется до входа в движок). Без этого отчёта
+	// шаг остался бы `queued` навсегда, и полоса прогресса на сайте не дошла бы до конца
+	// даже у полностью успешной задачи. Отчёт правдив: идентичность разобрана, байты на
+	// диске — это и есть вся работа `mainSearch` здесь.
+	const mainSearchId = Array.isArray(payload.processingQueue) ? payload.processingQueue[0] : null;
+	if (typeof mainSearchId === 'string' && mainSearchId) {
+		steps.report(mainSearchId, 'done', `источник получен: ${curItemName}`);
+	}
+
+	// 5. Продление аренды — только пока реально идёт шаг (см. `LEASE_RENEW_MS`).
 	const renew = setInterval(() => {
-		void queue.progress(task.taskId, 'running', 'running', 'обработка идёт').catch((e: any) => {
-			log('warn', `[worker] аренда не продлилась: ${e?.message ?? e}`);
-		});
+		const cur = steps.current();
+		if (!cur) return; // между шагами и на ожидании заливки аренду не двигаем
+		const mins = Math.round((Date.now() - cur.since) / 60000);
+		steps.report(cur.id, 'running', `шаг идёт ${mins} мин`);
 	}, LEASE_RENEW_MS);
 
 	try {
-		await queue.progress(task.taskId, 'start', 'running', `начата обработка ${curItemName}`);
-
 		const result = await processItem(payload, signal, RUN_PROCESSING);
 
 		if (result.status !== 'done') {
-			return { status: 'error', outFiles: result.outFiles, totalCost: result.totalCost ?? 0, error: 'обработка завершилась с ошибкой' };
+			return {
+				status: 'error',
+				outFiles: logicalOutFiles(result.outFiles, projectPath, log),
+				totalCost: result.totalCost ?? 0,
+				error: 'обработка завершилась с ошибкой',
+			};
 		}
 
-		// 5. Отчитываться можно только после того, как результат реально уехал. Иначе сайт
+		// 6. Отчитываться можно только после того, как результат реально уехал. Иначе сайт
 		//    отметит задачу готовой раньше, чем увидит файлы, и следующий шаг конвейера
 		//    пойдёт по пустой папке.
-		const uploaded = await waitUploads(signal);
+		const uploaded = await waitUploads(projectPath, signal, log);
 		if (!uploaded) log('warn', '[worker] заливка не завершилась в отведённое время — отчитываемся как есть');
 
-		return { status: 'done', outFiles: result.outFiles, totalCost: result.totalCost ?? 0 };
+		return {
+			status: 'done',
+			outFiles: logicalOutFiles(result.outFiles, projectPath, log),
+			totalCost: result.totalCost ?? 0,
+		};
 	} finally {
 		clearInterval(renew);
+		steps.stop();
 	}
 }

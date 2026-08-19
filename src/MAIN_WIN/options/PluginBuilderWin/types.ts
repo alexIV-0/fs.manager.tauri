@@ -194,15 +194,15 @@ export const CONTROL_TYPE_REGISTRY: ControlTypeConfig[] = [
 		color: '#5181b8',
 		defaultProps: {
 			controlType: 'valueRange',
+			// Таймкод показывается, вводится и ХРАНИТСЯ в секундах (HH:MM:SS).
+			// step/decimals не пишем — дефолты берутся из Utils/numericFormat.ts.
 			controlProps: {
 				label: 'Time window',
 				tooltip: '',
-				value: [0, 1440],
+				value: [0, 86400],
 				format: 'timecode',
-				unit: 'minutes',
-				step: 5,
-				range: [0, 1440],
-				decimals: 2,
+				range: [0, 86400],
+				step: 60,
 				allowManualOverride: true,
 			},
 			outputType: 'array',

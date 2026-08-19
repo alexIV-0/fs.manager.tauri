@@ -16,15 +16,15 @@ function isHtml(s: string): boolean {
 	return /<[a-z][^>]*>/i.test(s);
 }
 
-export default function MyToolTip({ tooltip, placement = 'right', ...props }: MyToolTipProps) {
-	const [open, setOpen] = React.useState(false);
+/**
+ * Отрисовка текста подсказки: HTML как есть, иначе Markdown.
+ * Вынесено отдельно, чтобы редактор своей подсказки (`EditableTooltip`)
+ * показывал ровно то же, что и обычный tooltip.
+ */
+export function TooltipBody({ tooltip }: { tooltip: string }) {
 	const gray15 = greyColor(15);
 	const gray70 = greyColor(70);
 
-	const handleTooltipClose = () => setOpen(false);
-	const handleTooltipOpen = () => setOpen(true);
-
-	// Общие стили для компонентов ReactMarkdown
 	const markdownComponents = {
 		p: ({ node, ...props }: any) => <p style={{ margin: '0 0 6px 0' }} {...props} />,
 		ul: ({ node, ...props }: any) => <ul style={{ paddingLeft: 20, margin: '6px 0' }} {...props} />,
@@ -62,6 +62,24 @@ export default function MyToolTip({ tooltip, placement = 'right', ...props }: My
 		h3: ({ node, ...props }: any) => <h3 style={{ fontSize: 14, fontWeight: 600, margin: '6px 0 4px 0' }} {...props} />,
 	};
 
+	return isHtml(tooltip) ? (
+		<div
+			// eslint-disable-next-line react/no-danger
+			dangerouslySetInnerHTML={{ __html: tooltip }}
+			style={{ fontSize: 13, lineHeight: 1.6 }}
+		/>
+	) : (
+		<ReactMarkdown components={markdownComponents}>{tooltip}</ReactMarkdown>
+	);
+}
+
+export default function MyToolTip({ tooltip, placement = 'right', ...props }: MyToolTipProps) {
+	const [open, setOpen] = React.useState(false);
+	const gray70 = greyColor(70);
+
+	const handleTooltipClose = () => setOpen(false);
+	const handleTooltipOpen = () => setOpen(true);
+
 	return (
 		<ClickAwayListener onClickAway={handleTooltipClose}>
 			<Box {...props}>
@@ -76,18 +94,7 @@ export default function MyToolTip({ tooltip, placement = 'right', ...props }: My
 								color: gray70,
 							}}
 						>
-							{isHtml(tooltip) ? (
-								<div
-									// eslint-disable-next-line react/no-danger
-									dangerouslySetInnerHTML={{ __html: tooltip }}
-									style={{
-										fontSize: 13,
-										lineHeight: 1.6,
-									}}
-								/>
-							) : (
-								<ReactMarkdown components={markdownComponents}>{tooltip}</ReactMarkdown>
-							)}
+							<TooltipBody tooltip={tooltip} />
 						</div>
 					}
 					placement={placement}

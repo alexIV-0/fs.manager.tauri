@@ -110,11 +110,18 @@
 				"controlType": "valueRange",
 				"controlProps": {
 					"label": "Time window",
-					"tooltip": "Окно времени суток. 00:00–24:00 = весь день.",
+					"tooltip": "Окно времени суток. 00:00:00–24:00:00 = весь день.",
 					"value": [
 						0,
-						1440
-					]
+						86400
+					],
+					"format": "timecode",
+					"range": [
+						0,
+						86400
+					],
+					"step": 60,
+					"allowManualOverride": true
 				},
 				"outputType": "string"
 			},

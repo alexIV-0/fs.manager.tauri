@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Box, Button, Checkbox, Chip, FormControlLabel, IconButton, Stack, TextField, Typography } from '@mui/material';
 import { NumInput } from '@/components/NumInput';
+import { TimecodeInput } from '@/components/TimecodeInput';
 import { X } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
 import type { UiPropertyData } from './types';
@@ -10,6 +11,7 @@ import { typeOfFile_store, typeOfdata_store } from '@/Store/MainWin/pathPattern_
 import { OptionsPickerModal } from './OptionsPickerModal';
 import { TooltipEditorModal } from './TooltipEditorModal';
 import { CONVERT_THEMES } from '@/NODE_WIN/nodes/properties/ConvertEdit/convertThemes';
+import { NUMERIC_FORMATS, numericConfigFor } from '@/Utils/numericFormat';
 
 interface PropertySettingsPanelProps {
 	property: UiPropertyData;
@@ -91,6 +93,63 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 		width: w,
 		padding: '2px 4px',
 	});
+
+	const selStyle: React.CSSProperties = {
+		background: 'transparent',
+		border: `1px solid ${gray40}`,
+		outline: 'none',
+		color: '#cdd6f4',
+		fontFamily: 'monospace',
+		fontSize: 13,
+		padding: '2px 4px',
+		borderRadius: 4,
+	};
+
+	// Числовые контролы (slider/valueRange): формат решает, какие поля показывать
+	// и чем вводить границы — таймкодом HH:MM:SS или числом.
+	const numCfg = numericConfigFor(property.controlType, cp);
+	const isTimecode = numCfg.format === 'timecode';
+	const numFormatSelect = (
+		<JsonField label='format'>
+			<select value={numCfg.format} onChange={(e) => setCp('format', e.target.value)} style={selStyle}>
+				{NUMERIC_FORMATS.map((f) => (
+					<option key={f} value={f} style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
+						{f}
+					</option>
+				))}
+			</select>
+		</JsonField>
+	);
+	const numDecimals =
+		numCfg.format === 'float' ? (
+			<JsonField label='decimals'>
+				<NumInput value={numCfg.decimals} onChange={(v) => setCp('decimals', v)} style={inp(40, '#fab387')} integer />
+			</JsonField>
+		) : null;
+	const numStep = (
+		<JsonField label='step'>
+			<Stack direction='row' alignItems='center' gap={0.5}>
+				<NumInput value={numCfg.step} onChange={(v) => setCp('step', v)} style={inp(60, '#fab387')} />
+				{isTimecode && (
+					<Box component='span' sx={{ color: greyColor(50), fontFamily: 'monospace', fontSize: 10, fontStyle: 'italic' }}>
+						в секундах
+					</Box>
+				)}
+			</Stack>
+		</JsonField>
+	);
+	const numOverride = (
+		<JsonField label='allowManualOverride'>
+			<Checkbox size='small' checked={numCfg.allowManualOverride} onChange={(e) => setCp('allowManualOverride', e.target.checked)} sx={{ py: 0 }} />
+		</JsonField>
+	);
+	/** Ввод одной границы/значения: таймкод HH:MM:SS либо число. */
+	const numBound = (value: number, onChange: (v: number) => void, w = 70) =>
+		isTimecode ? (
+			<TimecodeInput value={value} onChange={onChange} min={0} style={inp(w + 20, '#fab387')} />
+		) : (
+			<NumInput value={value} onChange={onChange} style={inp(w, '#fab387')} />
+		);
 
 	return (
 		<Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -434,18 +493,12 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 
 				{property.controlType === 'slider' && (
 					<>
-						<JsonField label='minValue'>
-							<NumInput value={cp.minValue ?? 0} onChange={(v) => setCp('minValue', v)} style={inp(60, '#fab387')} />
-						</JsonField>
-						<JsonField label='maxValue'>
-							<NumInput value={cp.maxValue ?? 100} onChange={(v) => setCp('maxValue', v)} style={inp(60, '#fab387')} />
-						</JsonField>
-						<JsonField label='step'>
-							<NumInput value={cp.step ?? 1} onChange={(v) => setCp('step', v)} style={inp(60, '#fab387')} />
-						</JsonField>
-						<JsonField label='value'>
-							<NumInput value={cp.value ?? 50} onChange={(v) => setCp('value', v)} style={inp(60, '#fab387')} />
-						</JsonField>
+						{numFormatSelect}
+						<JsonField label='minValue'>{numBound(numCfg.min, (v) => setCp('minValue', v), 60)}</JsonField>
+						<JsonField label='maxValue'>{numBound(numCfg.max, (v) => setCp('maxValue', v), 60)}</JsonField>
+						{numStep}
+						{numDecimals}
+						<JsonField label='value'>{numBound(cp.value ?? 50, (v) => setCp('value', v), 60)}</JsonField>
 						<JsonField label='isTextInput'>
 							<Checkbox
 								size='small'
@@ -462,6 +515,7 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 								sx={{ py: 0 }}
 							/>
 						</JsonField>
+						{numOverride}
 					</>
 				)}
 
@@ -590,86 +644,19 @@ export function PropertySettingsPanel({ property, outputSourceId, allPropertyIds
 							</Box>
 						</Box>
 					</Box>
-					<JsonField label='format'>
-						<select
-							value={cp.format ?? 'timecode'}
-							onChange={(e) => setCp('format', e.target.value)}
-							style={{
-								background: 'transparent',
-								border: `1px solid ${gray40}`,
-								outline: 'none',
-								color: '#cdd6f4',
-								fontFamily: 'monospace',
-								fontSize: 13,
-								padding: '2px 4px',
-								borderRadius: 4,
-							}}
-						>
-							<option value='timecode' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
-								timecode
-							</option>
-							<option value='float' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
-								float
-							</option>
-							<option value='integer' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
-								integer
-							</option>
-						</select>
-					</JsonField>
-					<JsonField label='unit'>
-						<select
-							value={cp.unit ?? 'minutes'}
-							onChange={(e) => setCp('unit', e.target.value)}
-							style={{
-								background: 'transparent',
-								border: `1px solid ${gray40}`,
-								outline: 'none',
-								color: '#cdd6f4',
-								fontFamily: 'monospace',
-								fontSize: 13,
-								padding: '2px 4px',
-								borderRadius: 4,
-							}}
-						>
-							<option value='minutes' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
-								minutes
-							</option>
-							<option value='seconds' style={{ background: '#1e1e2e', color: '#cdd6f4' }}>
-								seconds
-							</option>
-						</select>
-					</JsonField>
-					<JsonField label='step'>
-						<NumInput value={cp.step ?? 5} onChange={(v) => setCp('step', v)} style={inp(60, '#fab387')} />
-					</JsonField>
+					{numFormatSelect}
+					{numStep}
 					<JsonField label='range'>
-						<Stack direction='row' gap={0.5}>
-							<NumInput
-								value={Array.isArray(cp.range) ? cp.range[0] : 0}
-								onChange={(v) => setCp('range', [v, Array.isArray(cp.range) ? cp.range[1] : 1440])}
-								style={inp(50, '#fab387')}
-							/>
+						<Stack direction='row' gap={0.5} alignItems='center'>
+							{numBound(numCfg.min, (v) => setCp('range', [v, numCfg.max]), 50)}
 							<Box component='span' sx={{ color: gray40, fontFamily: 'monospace', fontSize: 13, pt: 0.3 }}>
 								…
 							</Box>
-							<NumInput
-								value={Array.isArray(cp.range) ? cp.range[1] : 1440}
-								onChange={(v) => setCp('range', [Array.isArray(cp.range) ? cp.range[0] : 0, v])}
-								style={inp(50, '#fab387')}
-							/>
+							{numBound(numCfg.max, (v) => setCp('range', [numCfg.min, v]), 50)}
 						</Stack>
 					</JsonField>
-					<JsonField label='decimals'>
-						<NumInput value={cp.decimals ?? 2} onChange={(v) => setCp('decimals', v)} style={inp(40, '#fab387')} />
-					</JsonField>
-					<JsonField label='allowManualOverride'>
-						<Checkbox
-							size='small'
-							checked={cp.allowManualOverride !== false}
-							onChange={(e) => setCp('allowManualOverride', e.target.checked)}
-							sx={{ py: 0 }}
-						/>
-					</JsonField>
+					{numDecimals}
+					{numOverride}
 				</>
 			)}
 		</Box>

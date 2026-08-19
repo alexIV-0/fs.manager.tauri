@@ -27,12 +27,13 @@ function dayAllowed(now: Date, days: any): boolean {
 	return list.includes(DAY_LABELS[now.getDay()]);
 }
 
+// Окно суток хранится в СЕКУНДАХ от полуночи (таймкод HH:MM:SS в ноде).
 function windowAllowed(now: Date, win: any): boolean {
 	if (!Array.isArray(win) || win.length < 2) return true;
 	const start = Number(win[0]);
 	const end = Number(win[1]);
 	if (!(end > start)) return true; // вырожденное окно = весь день
-	const cur = now.getHours() * 60 + now.getMinutes();
+	const cur = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
 	return cur >= start && cur < end;
 }
 

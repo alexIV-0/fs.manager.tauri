@@ -41,16 +41,12 @@ fn default_app_settings() -> Value {
         },
         "resourcePools": {},
         "storage": {
-            // Дефолтный локальный архив статистики (JSONL рядом с проектом).
+            // Пусто намеренно: архив статистики В ПАПКУ ПРОЕКТА
+            // (`options/_stats/$YYYY.$MM.jsonl`) больше не настройка — он пишется всегда,
+            // см. `PROJECT_STATS_SEGMENTS` в `db_analytics.rs`. Здесь живут только
+            // ДОПОЛНИТЕЛЬНЫЕ архивы, которые человек завёл себе сам.
             // Держать синхронно с DEFAULT_APP_SETTINGS в src/types/appSettings.ts.
-            // Применяется только к СВЕЖИМ settings.json (существующие не мёржатся, см. app_settings_get).
-            "localArchives": [
-                {
-                    "enabled": true,
-                    "templateId": "local-archive",
-                    "path": ["$projectPathGD", "options", "_stats", "$YYYY.$MM"]
-                }
-            ],
+            "localArchives": [],
             "onlineDb": { "enabled": false, "url": "", "templateId": "database-sync" }
         },
         "cleanup": { "retentionDays": null, "autoDisableDays": null },
@@ -470,7 +466,22 @@ pub fn db_register_found(
         .unwrap_or("");
     let find_time = desc.get("findTime").and_then(|v| v.as_str()).unwrap_or("");
 
-    let id = if !path_for_delete.is_empty() && !find_time.is_empty() {
+    // Идентификатор, назначенный сайтом (задача из очереди), — в приоритете.
+    //
+    // Локальный id считается из `pathForDelete`, а это путь на ЭТОЙ машине: один и тот
+    // же файл, обработанный на двух машинах, получил бы два разных `itemId`, и склейка
+    // архивов на сайте увидела бы одну работу как две. Кто владеет жизненным циклом
+    // задачи, тот и владеет её идентичностью (`SITE_STATS_LINK_PLAN.md`).
+    let site_id = desc
+        .get("dbItemId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let id = if !site_id.is_empty() {
+        site_id
+    } else if !path_for_delete.is_empty() && !find_time.is_empty() {
         format!("{}:{}", path_for_delete, find_time)
     } else if !path_for_delete.is_empty() {
         path_for_delete.to_string()

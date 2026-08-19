@@ -14,6 +14,7 @@ import { useCallback } from 'react';
 import { getNodeDefinitions } from '../definitions';
 import { isValueValid } from '../utils/validation';
 import { syncCostsFromManifest } from '../utils/syncCostsFromManifest';
+import { migrateTimecodeSeconds } from '../utils/migrateTimecodeSeconds';
 import { findLoopAtPoint, getAbsolutePosition, getNodeSize, sortLoopsFirst } from '../utils/loopGrouping';
 import { useCascadeValidation } from './useCascadeValidation';
 import { useUndoRedo } from './useUndoRedo';
@@ -188,7 +189,8 @@ export const useFlowActions = () => {
 			// ✅ Восстанавливаем сохранённые ноды (у них уже должен быть isValid и computedOutput)
 			// Перезаписываем cost/costUnit актуальными значениями из plugin.json — старые флоу
 			// подхватывают централизованную цену, новые продолжают работать как раньше.
-			setNodes(syncCostsFromManifest(savedState.nodes));
+			// migrateTimecodeSeconds переводит таймкод-valueRange из минут в секунды.
+			setNodes(syncCostsFromManifest(migrateTimecodeSeconds(savedState.nodes)));
 		}
 
 		setEdges(savedState.edges || []);

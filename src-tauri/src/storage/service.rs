@@ -1870,21 +1870,57 @@ impl StorageService {
             .sidecar_get(&loc.project_id, which)
             .await
             .map_err(|e| e.to_string())?;
-        if remote.as_deref() == Some(body.as_str()) {
-            return Ok(sidecar_upload_result(bytes));
+        let same = remote.as_deref() == Some(body.as_str());
+
+        if !same {
+            provider
+                .sidecar_put(&loc.project_id, which, &body, None)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // Строки каталога с ФИЗИЧЕСКИМ ключом у сайдкара быть не должно — это
+            // наследство прежней (неверной) заливки обычным путём. Строку с
+            // каноническим ключом бэкенд теперь создаёт сам, её не трогаем.
+            if let Err(e) = self.purge_sidecar_row(&loc.project_id, which).await {
+                eprintln!("[storage] не удалось убрать каталожную строку сайдкара: {e}");
+            }
         }
 
-        provider
-            .sidecar_put(&loc.project_id, which, &body, None)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Строки каталога у сайдкаров быть не должно. Если она есть — это наследство
-        // прежней (неверной) заливки обычным путём, и её надо убрать, иначе интерфейс
-        // продолжит показывать значок синхронизации у файла, которого в каталоге
-        // концептуально нет, а вытеснение будет считать его обычной копией.
-        if let Err(e) = self.purge_sidecar_row(&loc.project_id, which).await {
-            eprintln!("[storage] не удалось убрать каталожную строку сайдкара: {e}");
+        // Отметить копию синхронизированной — ОБЯЗАТЕЛЬНО, и не для значка.
+        //
+        // Заливка сайдкара идёт мимо `notify`, поэтому и мимо `mark_synced`, которым
+        // обычный путь снимает метку «правлено локально». Без этой отметки строка
+        // навсегда остаётся `LocalModified`: демон видит правку, ставит файл в очередь,
+        // заливка сравнивает содержимое, находит совпадение, выходит — и метка на месте.
+        // Файл вечно числится незалитым.
+        //
+        // Цена этого была не косметическая: `runTask` воркера ждёт, пока по проекту не
+        // останется неотправленного, прежде чем сказать сайту `taskDone`. Вечно
+        // «незалитый» `options.json` держал это ожидание все десять минут таймаута, и
+        // задача на сайте висела «в работе» при готовом и залитом результате.
+        //
+        // Версия облака = наш sha: содержимое там либо только что от нас, либо уже
+        // совпадало (`same`). Обе ветки дают одно и то же.
+        if let Some(entry) = self
+            .with_sync({
+                let pid = loc.project_id.clone();
+                move |s| {
+                    s.index
+                        .entry_by_path(&pid, super::types::SIDECAR_FOLDER, which.file_name())
+                }
+            })
+            .await?
+        {
+            let sha = super::upload::sha256_file(path)?;
+            let mtime = file_mtime(path).unwrap_or(0);
+            let local = path.to_string_lossy().to_string();
+            let id = entry.id.clone();
+            self.with_sync(move |s| {
+                s.index.set_remote_version(&id, &sha)?;
+                s.index
+                    .mark_synced(&id, "Fresh", &local, bytes, mtime, Some(&sha))
+            })
+            .await?;
         }
 
         self.emit_changed(&[path.to_string_lossy().to_string()]);
@@ -4037,6 +4073,117 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body.as_deref(), Some(r#"{"enabled":false}"#));
+    }
+
+    /// После заливки сайдкара метка «правлено локально» обязана сниматься.
+    ///
+    /// Иначе файл вечно числится незалитым, и это ломает не значок, а ОТЧЁТНОСТЬ: воркер
+    /// ждёт опустевшей очереди заливки, прежде чем сказать сайту `taskDone`, и вечно
+    /// «незалитый» `options.json` держал это ожидание весь таймаут — задача висела
+    /// «в работе» при готовом и залитом результате.
+    #[tokio::test]
+    async fn после_заливки_сайдкара_метка_правки_снимается() {
+        let tmp = tmpdir("sidecar-state");
+        let svc = service(None, &tmp).await;
+
+        // Строка каталога с КАНОНИЧЕСКИМ ключом — так её теперь отдаёт бэкенд.
+        svc.with_sync(|s| {
+            s.index.upsert_from_file(&ProjectFile {
+                id: "sc1".into(),
+                project_id: "p1".into(),
+                folder_path: "options".into(),
+                name: "options.json".into(),
+                is_folder: false,
+                s3_key: Some(
+                    "innohub/projects/3fa85f64-5717-4562-b3fc-2c963f66afa6/p1/options/options.json"
+                        .into(),
+                ),
+                size_bytes: Some(2),
+                content_type: Some("application/json".into()),
+                created_at: None,
+            })
+        })
+        .await
+        .unwrap();
+
+        let path = mpath(&tmp, "options", "options.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"a":1}"#).unwrap();
+
+        // Демон увидел правку: файл в очереди на заливку.
+        svc.with_sync(|s| s.index.set_state("sc1", "LocalModified", None))
+            .await
+            .unwrap();
+
+        svc.upload_local(&path).await.unwrap();
+
+        let state = svc
+            .with_sync(|s| s.index.badge_state("sc1"))
+            .await
+            .unwrap()
+            .expect("состояние должно быть известно");
+        assert_eq!(
+            state.state,
+            FileState::Fresh,
+            "после заливки сайдкар синхронизирован, а не «правлен локально»"
+        );
+
+        // И его больше нет в списке незалитого — именно этот список ждёт воркер.
+        let rest = svc.not_uploaded(50).await.unwrap();
+        assert!(
+            !rest.iter().any(|r| r.path == path.to_string_lossy()),
+            "залитый сайдкар не должен числиться незалитым: {:?}",
+            rest.iter().map(|r| &r.name).collect::<Vec<_>>()
+        );
+    }
+
+    /// Повторная заливка того же содержимого тоже снимает метку.
+    ///
+    /// Ветка «в облаке уже это же» выходит до PUT, и раньше она выходила ДО отметки —
+    /// то есть метка не снималась никогда, сколько бы раз заливка ни повторялась.
+    #[tokio::test]
+    async fn совпадающий_сайдкар_тоже_снимает_метку() {
+        let tmp = tmpdir("sidecar-state-same");
+        let svc = service(None, &tmp).await;
+
+        svc.with_sync(|s| {
+            s.index.upsert_from_file(&ProjectFile {
+                id: "sc2".into(),
+                project_id: "p1".into(),
+                folder_path: "options".into(),
+                name: "folderState.json".into(),
+                is_folder: false,
+                s3_key: Some(
+                    "innohub/projects/3fa85f64-5717-4562-b3fc-2c963f66afa6/p1/options/folderState.json"
+                        .into(),
+                ),
+                size_bytes: Some(2),
+                content_type: Some("application/json".into()),
+                created_at: None,
+            })
+        })
+        .await
+        .unwrap();
+
+        let body = br#"{"enabled":true}"#;
+        let path = mpath(&tmp, "options", "folderState.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+
+        // В облаке лежит ровно то же самое.
+        svc.provider()
+            .unwrap()
+            .sidecar_put("p1", Sidecar::FolderState, std::str::from_utf8(body).unwrap(), None)
+            .await
+            .unwrap();
+        svc.with_sync(|s| s.index.set_state("sc2", "LocalModified", None))
+            .await
+            .unwrap();
+
+        svc.upload_local(&path).await.unwrap();
+
+        let state = svc.with_sync(|s| s.index.badge_state("sc2")).await.unwrap().unwrap();
+        assert_eq!(state.state, FileState::Fresh, "совпадение — тоже синхронизировано");
     }
 
     /// Тот же файл во ДРУГОЙ папке — обычный файл, канал подменять нельзя.

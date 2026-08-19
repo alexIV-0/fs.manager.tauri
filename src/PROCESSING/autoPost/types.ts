@@ -13,7 +13,7 @@ export interface PostRoute {
 	order: string; // by Time | by Name | Random
 	interval: number; // сек между постами (капля)
 	daysOfWeek: string[]; // ['Mon',...]; пусто = все дни
-	window: [number, number]; // [startMin, endMin] суток
+	window: [number, number]; // [startSec, endSec] от полуночи (0…86400)
 	deleteAfter: boolean; // удалить исходник после успешного графа (читает processItem)
 	account: string; // аккаунт (из ноды Poster) — для тайминга интервала
 	platform: string; // площадка (vk|youtube|tg…) — ключ дедупа и тайминга интервала (дефолт 'vk')

@@ -1,119 +1,17 @@
-import { ValueRangeProperty, CustomNodeData } from '@/NODE_WIN/definitions/types';
+import { ValueRangeProperty, CustomNodeData, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { Slider, Stack, TextField } from '@mui/material';
 import { useNodesData, useReactFlow } from '@xyflow/react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import PropertyLabelEditor from './PropertyLabelEditor';
 import TooltipOrDelete from './TooltipOrDelete';
 import { blueColor } from '@/Store/Color/grayColor';
+import { clampForFormat, formatNumeric, normalizeNumeric, numericConfigKey, parseNumeric, valueRangeConfig } from '@/Utils/numericFormat';
 
 interface ValueRangeProps {
 	property: ValueRangeProperty;
 	onChange?: (value: [number, number]) => void;
-}
-
-const DAY_MIN = 1440; // 24:00 в минутах
-const MAX_SECONDS = 86400; // 24 часа в секундах
-
-type FormatType = 'timecode' | 'float' | 'integer';
-
-interface FormatConfig {
-	format: FormatType;
-	step?: number;
-	unit?: 'minutes' | 'seconds'; // по умолчанию 'minutes' для совместимости
-	range?: [number, number]; // [min, max]
-	decimals?: number;
-	allowManualOverride?: boolean; // позволить ввод за пределами слайдера
-}
-
-function getFormatConfig(controlProps: any): FormatConfig {
-	const unit = controlProps?.unit ?? 'minutes';
-	const defaultRange: [number, number] = unit === 'seconds' ? [0, MAX_SECONDS] : [0, DAY_MIN];
-	const range = Array.isArray(controlProps?.range) ? (controlProps.range as [number, number]) : defaultRange;
-
-	return {
-		format: controlProps?.format ?? 'timecode',
-		step: controlProps?.step ?? 5,
-		unit,
-		range,
-		decimals: controlProps?.decimals ?? 2,
-		allowManualOverride: controlProps?.allowManualOverride ?? true,
-	};
-}
-
-function clampValue(v: number, min: number, max: number): number {
-	if (!Number.isFinite(v)) return min;
-	return Math.max(min, Math.min(max, Math.round(v)));
-}
-
-function clampValueToRange(v: number, config: FormatConfig): number {
-	const [min, max] = config.range!;
-	return clampValue(v, min, max);
-}
-
-// Форматирование в зависимости от типа
-function formatValue(val: number, config: FormatConfig): string {
-	const [min, max] = config.range!;
-	const v = clampValue(val, min, max);
-	if (config.format === 'timecode') {
-		if (config.unit === 'seconds') {
-			const m = Math.floor(v / 60);
-			const s = v % 60;
-			return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-		} else {
-			const h = Math.floor(v / 60);
-			const m = v % 60;
-			return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-		}
-	} else if (config.format === 'float') {
-		return v.toFixed(config.decimals!);
-	} else {
-		return String(Math.round(v));
-	}
-}
-
-// Парсинг в зависимости от типа
-function parseValue(input: string, config: FormatConfig, allowOverride: boolean = false): number {
-	const t = input.trim();
-	if (t === '') return config.range![0];
-	const [min, max] = config.range!;
-
-	let parsed = 0;
-	if (config.format === 'timecode') {
-		if (t.includes(':')) {
-			const parts = t.split(':');
-			const first = parseInt(parts[0], 10) || 0;
-			const second = parseInt(parts[1], 10) || 0;
-			if (config.unit === 'seconds') {
-				parsed = first * 60 + second;
-			} else {
-				parsed = first * 60 + second;
-			}
-		} else {
-			// число — для секунд это просто число, для минут трактуем как часы
-			const n = parseFloat(t.replace(',', '.'));
-			if (!Number.isFinite(n)) return min;
-			if (config.unit === 'seconds') {
-				parsed = Math.round(n);
-			} else {
-				parsed = Math.round(n * 60);
-			}
-		}
-	} else if (config.format === 'float') {
-		const n = parseFloat(t.replace(',', '.'));
-		parsed = Number.isFinite(n) ? n : min;
-	} else {
-		const n = parseInt(t, 10);
-		parsed = Number.isFinite(n) ? n : min;
-	}
-
-	// Если allowOverride — не ограничиваем диапазоном (позволяем ручной ввод)
-	// Иначе зажимаем к диапазону слайдера
-	if (allowOverride) {
-		return parsed;
-	}
-	return clampValue(parsed, min, max);
 }
 
 export default function ValueRange({ property, onChange }: ValueRangeProps) {
@@ -121,8 +19,9 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 	const reactFlow = useReactFlow();
 	const { controlProps } = property;
 	const colorTypes = colorTypes_store((s) => s.colorTypes);
-	const config = getFormatConfig(controlProps);
-	const [sliderMin, sliderMax] = config.range!;
+	const config = valueRangeConfig(controlProps);
+	const configKey = numericConfigKey(config);
+	const { min: sliderMin, max: sliderMax } = config;
 	const minColor = blueColor(40, 80);
 	const maxColor = blueColor(70, 80);
 
@@ -132,31 +31,45 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 
 	const initVal = Array.isArray(controlProps.value) ? controlProps.value : [sliderMin, sliderMax];
 	const [range, setRange] = useState<[number, number]>([
-		clampValueToRange(initVal[0] ?? sliderMin, config),
-		clampValueToRange(initVal[1] ?? sliderMax, config),
+		normalizeNumeric(initVal[0] ?? sliderMin, config),
+		normalizeNumeric(initVal[1] ?? sliderMax, config),
 	]);
-	const [startText, setStartText] = useState<string>(formatValue(range[0], config));
-	const [endText, setEndText] = useState<string>(formatValue(range[1], config));
+	const [startText, setStartText] = useState<string>(() => formatNumeric(range[0], config));
+	const [endText, setEndText] = useState<string>(() => formatNumeric(range[1], config));
+
+	// Пересобираем окошки, когда настройки правят снаружи (шестерёнка/pluginBuilder)
+	// или значение пришло извне. Без этого смена format/range оставляла бы в полях
+	// текст в старом формате до перемонтирования ноды.
+	const valueKey = Array.isArray(controlProps.value) ? controlProps.value.join(',') : '';
+	useEffect(() => {
+		const v = Array.isArray(controlProps.value) ? controlProps.value : [sliderMin, sliderMax];
+		const lo = normalizeNumeric(v[0] ?? sliderMin, config);
+		const hi = normalizeNumeric(v[1] ?? sliderMax, config);
+		setRange([lo, hi]);
+		setStartText(formatNumeric(lo, config));
+		setEndText(formatNumeric(hi, config));
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [configKey, valueKey]);
 
 	// Нормализуем (lo ≤ hi), синхронизируем окошки и сохраняем в ноду.
+	// allowOverride — путь ручного ввода: значение можно вывести за границы
+	// слайдера, если настройка allowManualOverride включена.
 	const commit = useCallback(
-		(next: [number, number]) => {
-			const lo = Math.min(next[0], next[1]);
-			const hi = Math.max(next[0], next[1]);
-			// Зажимаем к диапазону слайдера, но позволяем ручному вводу выходить за границы
-			const loFixed = clampValue(lo, sliderMin, sliderMax);
-			const hiFixed = clampValue(hi, sliderMin, sliderMax);
-			const fixed: [number, number] = [loFixed, hiFixed];
+		(next: [number, number], allowOverride = false) => {
+			const norm = (v: number) => (allowOverride && config.allowManualOverride ? v : clampForFormat(v, config));
+			const a = norm(next[0]);
+			const b = norm(next[1]);
+			const fixed: [number, number] = [Math.min(a, b), Math.max(a, b)];
 			setRange(fixed);
-			setStartText(formatValue(loFixed, config));
-			setEndText(formatValue(hiFixed, config));
+			setStartText(formatNumeric(fixed[0], config));
+			setEndText(formatNumeric(fixed[1], config));
 			onChange?.(fixed);
 		},
-		[onChange, config, sliderMin, sliderMax],
+		[onChange, configKey], // eslint-disable-line react-hooks/exhaustive-deps
 	);
 
 	const handleSaveLabel = useCallback(
@@ -189,8 +102,8 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 
 	const applyRange = (lo: number, hi: number) => {
 		setRange([lo, hi]);
-		setStartText(formatValue(lo, config));
-		setEndText(formatValue(hi, config));
+		setStartText(formatNumeric(lo, config));
+		setEndText(formatNumeric(hi, config));
 	};
 
 	const onSliderPointerDown = (e: React.PointerEvent) => {
@@ -240,7 +153,9 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 	};
 
 	const boxSx = {
-		width: 64,
+		// Таймкоду HH:MM:SS нужно больше места, чем числу: 8 монопробельных
+		// символов (было рассчитано на MM:SS) + паддинги.
+		width: config.format === 'timecode' ? 96 : 64,
 		'& .MuiInputBase-input': {
 			fontFamily: 'monospace',
 			fontSize: '0.9rem',
@@ -251,14 +166,26 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 	};
 
 	const handleStartBlur = () => {
-		const parsed = parseValue(startText, config, config.allowManualOverride);
-		commit([parsed, range[1]]);
+		const parsed = parseNumeric(startText, config, config.allowManualOverride);
+		if (parsed === null) {
+			setStartText(formatNumeric(range[0], config)); // мусор на входе — откат
+			return;
+		}
+		commit([parsed, range[1]], true);
 	};
 
 	const handleEndBlur = () => {
-		const parsed = parseValue(endText, config, config.allowManualOverride);
-		commit([range[0], parsed]);
+		const parsed = parseNumeric(endText, config, config.allowManualOverride);
+		if (parsed === null) {
+			setEndText(formatNumeric(range[1], config));
+			return;
+		}
+		commit([range[0], parsed], true);
 	};
+
+	// Сам слайдер границы не переступает, даже если ручной ввод вывел значение
+	// за них (иначе бегунок уезжает за рельсу).
+	const sliderValue: [number, number] = [clampForFormat(range[0], config), clampForFormat(range[1], config)];
 
 	return (
 		<Stack direction='column' px='12px' className='nodrag' gap={0.5}>
@@ -276,12 +203,12 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
 					}}
 					size='small'
-					placeholder={config.format === 'timecode' ? '00:00' : '0'}
+					placeholder={formatNumeric(sliderMin, config)}
 					sx={boxSx}
 				/>
 
 				<Slider
-					value={range}
+					value={sliderValue}
 					min={sliderMin}
 					max={sliderMax}
 					step={config.step}
@@ -347,7 +274,7 @@ export default function ValueRange({ property, onChange }: ValueRangeProps) {
 						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
 					}}
 					size='small'
-					placeholder={config.format === 'timecode' ? '24:00' : String(sliderMax)}
+					placeholder={formatNumeric(sliderMax, config)}
 					sx={boxSx}
 				/>
 			</Stack>

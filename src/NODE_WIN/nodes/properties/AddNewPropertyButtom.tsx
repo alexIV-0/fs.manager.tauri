@@ -118,6 +118,7 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: true,
 						isOutput: false,
 						acceptedTypes: ['all'],
+						isDynamic: true,
 						outputType: 'accepted',
 						required: true,
 					} satisfies Property;
@@ -136,6 +137,7 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: false,
 						isOutput: false,
 						acceptedTypes: [],
+						isDynamic: true,
 						outputType: 'string',
 						required: false,
 					} satisfies Property;
@@ -153,6 +155,7 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: true,
 						isOutput: false,
 						acceptedTypes: ['timecode'],
+						isDynamic: true,
 						outputType: 'timecode',
 						required: false,
 					} satisfies Property;
@@ -176,6 +179,7 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: false,
 						isOutput: false,
 						acceptedTypes: [],
+						isDynamic: true,
 						outputType: 'string',
 						required: false,
 					} satisfies Property;
@@ -193,11 +197,12 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: false,
 						isOutput: false,
 						acceptedTypes: [],
+						isDynamic: true,
 						outputType: 'boolean',
 						required: false,
 					} satisfies Property;
 
-				// Диапазон-таймкод: MM:SS, 0..10:00. Слайдер хранит секунды → на выходе [секунды, секунды].
+				// Диапазон-таймкод: HH:MM:SS, 0..00:10:00. Слайдер хранит секунды → на выходе [секунды, секунды].
 				case 'TimeRange':
 					return {
 						id: `dynValueRange_${nanoid(5)}`,
@@ -207,7 +212,6 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 							tooltip: '',
 							value: [0, 600],
 							format: 'timecode',
-							unit: 'seconds',
 							range: [0, 600],
 							step: 5,
 							allowManualOverride: true,
@@ -216,6 +220,7 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: false,
 						isOutput: false,
 						acceptedTypes: [],
+						isDynamic: true,
 						outputType: 'timecode',
 						required: false,
 					} satisfies Property;
@@ -238,6 +243,7 @@ export default function AddNewPropertyButton({ property }: AddNewPropertyProps) 
 						isInput: false,
 						isOutput: false,
 						acceptedTypes: [],
+						isDynamic: true,
 						outputType: 'string',
 						required: false,
 					} satisfies Property;

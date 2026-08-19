@@ -169,16 +169,12 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 	},
 	resourcePools: {},
 	storage: {
-		// Дефолтный локальный архив статистики (JSONL рядом с проектом).
+		// Пусто намеренно: архив статистики В ПАПКУ ПРОЕКТА
+		// (`options/_stats/$YYYY.$MM.jsonl`) больше не настройка — он пишется всегда,
+		// см. `PROJECT_STATS_SEGMENTS` в `src-tauri/src/commands/db_analytics.rs`.
+		// Здесь живут только ДОПОЛНИТЕЛЬНЫЕ архивы, заведённые человеком.
 		// Держать синхронно с default_app_settings() в src-tauri/.../settings_commands.rs.
-		// Применяется только к СВЕЖИМ settings.json (существующие не мёржатся).
-		localArchives: [
-			{
-				enabled: true,
-				templateId: 'local-archive',
-				path: ['$projectPathGD', 'options', '_stats', '$YYYY.$MM'],
-			},
-		],
+		localArchives: [],
 		onlineDb: { enabled: false, url: '', templateId: 'database-sync' },
 	},
 	cleanup: {

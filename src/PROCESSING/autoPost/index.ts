@@ -85,7 +85,7 @@ export async function addPostRouteFromProject(projectPath: string): Promise<void
 				order: String(f.order ?? 'by Time'),
 				interval: Number(f.interval) || 0,
 				daysOfWeek: Array.isArray(f.daysOfWeek) ? f.daysOfWeek : [],
-				window: (Array.isArray(f.window) && f.window.length >= 2 ? [Number(f.window[0]), Number(f.window[1])] : [0, 1440]) as [number, number],
+				window: (Array.isArray(f.window) && f.window.length >= 2 ? [Number(f.window[0]), Number(f.window[1])] : [0, 86400]) as [number, number],
 				deleteAfter: Boolean(f.deleteAfter),
 				account: f.account || '',
 				platform: platformFromPipeline(Array.isArray(f.pipeline) ? f.pipeline : []),
@@ -104,11 +104,12 @@ function dayAllowed(now: Date, days: string[]): boolean {
 	return days.includes(DAY_LABELS[now.getDay()]);
 }
 
+// Окно суток хранится в СЕКУНДАХ от полуночи (таймкод HH:MM:SS в ноде finder).
 function windowAllowed(now: Date, win: [number, number]): boolean {
 	const start = Number(win[0]);
 	const end = Number(win[1]);
 	if (!(end > start)) return true;
-	const cur = now.getHours() * 60 + now.getMinutes();
+	const cur = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
 	return cur >= start && cur < end;
 }
 

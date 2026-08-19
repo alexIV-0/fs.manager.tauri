@@ -449,9 +449,43 @@ pub fn write_local_archive(
         .map_err(|e| format!("write: {}", e))
 }
 
+// ── Встроенный архив проекта ─────────────────────────────────────────────────
+
+/// Куда пишется статистика проекта ВСЕГДА, независимо от настроек.
+///
+/// Раньше это была строка в `storage.localArchives`, то есть галочка. Настройкой она
+/// быть не может: этот файл — канал доставки статистики на сайт (`PIPELINE.md` §14,
+/// сайт склеивает `options/_stats/*.jsonl` по проекту). Галочка живёт в `settings.json`
+/// одной машины, дефолт подставлялся только СВЕЖЕМУ файлу настроек, и на любой второй
+/// машине конвейер молча оставался без статистики.
+///
+/// Формат имени (`$YYYY.$MM`) согласован с сайтом и с
+/// `ideasAndTest/+STATS_SCHEMA_PLAN.md` — менять его в одиночку нельзя.
+const PROJECT_STATS_SEGMENTS: [&str; 4] = ["$projectPathGD", "options", "_stats", "$YYYY.$MM"];
+
+/// Папка встроенного архива внутри проекта — по ней узнаём настроечные дубли.
+const PROJECT_STATS_DIR: [&str; 2] = ["options", "_stats"];
+
+/// Ведёт ли настроечный архив в ту же папку, что встроенный.
+///
+/// Нужно ровно для того, чтобы не писать item дважды. Сравниваем КАТАЛОГ, а не файл:
+/// у человека в настройках может стоять своя маска имени (`$MM.$YYYY` вместо
+/// `$YYYY.$MM`), и по имени файла дубль бы не опознался — в `_stats` лежали бы два
+/// файла с одними и теми же строками.
+fn is_project_stats_dir(path: &Path, record: &DbItemRecord) -> bool {
+    if record.project_path_gd.is_empty() {
+        return false;
+    }
+    let mut expected = PathBuf::from(&record.project_path_gd);
+    for seg in PROJECT_STATS_DIR {
+        expected = expected.join(seg);
+    }
+    path.parent().map(|p| p == expected).unwrap_or(false)
+}
+
 // ── Главная точка входа ───────────────────────────────────────────────────────
 
-/// Читает localArchives из settings.json и пишет все сконфигурированные шаблоны.
+/// Пишет встроенный архив проекта и все шаблоны из `localArchives` в settings.json.
 pub fn write_analytics(
     app: &tauri::AppHandle,
     item_id: &str,
@@ -471,7 +505,27 @@ pub fn write_analytics(
         }
     };
 
-    // Читаем settings.json
+    // ── 1. Встроенный архив проекта — до настроек и независимо от них ─────────
+    //
+    // Идёт первым намеренно: он обязательный, а всё дальше — добавки человека. Сбой
+    // чтения settings.json не должен уносить с собой статистику проекта.
+    let segments: Vec<String> = PROJECT_STATS_SEGMENTS.iter().map(|s| s.to_string()).collect();
+    match resolve_path(&segments, &record) {
+        Some(p) => {
+            match write_local_archive(&p, &record, status, total_cost, ended_at, started_at, duration, out_files) {
+                Ok(()) => println!("[db_analytics] ✓ проект: {}", p.display()),
+                Err(e) => println!("[db_analytics] ✗ проект: {}", e),
+            }
+        }
+        // Пустой `projectPathGD` — единственная причина: путь становится относительным
+        // и файл ушёл бы в рабочий каталог процесса.
+        None => println!(
+            "[db_analytics] встроенный архив пропущен: не разобран projectPathGD (item={})",
+            item_id
+        ),
+    }
+
+    // ── 2. Дополнительные архивы из настроек ─────────────────────────────────
     let settings_file = match app.path().app_data_dir() {
         Ok(dir) => dir.join::<&str>("settings.json"),
         Err(e) => {
@@ -491,10 +545,7 @@ pub fn write_analytics(
         .and_then(|a| a.as_array())
     {
         Some(arr) => arr.clone(),
-        None => {
-            println!("[db_analytics] settings.storage.localArchives not found or empty (file={})", settings_file.display());
-            return;
-        }
+        None => return, // дополнительных архивов нет — это норма, не ошибка
     };
 
     println!("[db_analytics] {} archives, item={} project={} status={}",
@@ -524,6 +575,19 @@ pub fn write_analytics(
             }
         };
 
+        // Старая настроечная запись «архив в папку проекта» — теперь она встроена и
+        // уже написана выше. Молча писать ещё раз нельзя: в `_stats` появился бы
+        // второй файл с теми же строками, и сайт, склеивающий папку целиком, посчитал
+        // бы каждую работу дважды.
+        if is_project_stats_dir(&resolved, &record) {
+            println!(
+                "[db_analytics] template={} ведёт в options/_stats проекта — пропущен, \
+                 этот архив теперь пишется всегда (запись в настройках можно удалить)",
+                template_id
+            );
+            continue;
+        }
+
         println!("[db_analytics] template={} → {}", template_id, resolved.display());
 
         let result = match template_id {
@@ -542,6 +606,81 @@ pub fn write_analytics(
             Ok(()) => println!("[db_analytics] ✓ {}", resolved.display()),
             Err(e) => println!("[db_analytics] ✗ template={} err={}", template_id, e),
         }
+    }
+}
+
+#[cfg(test)]
+mod project_stats_tests {
+    use super::*;
+
+    fn record(project_path_gd: &str) -> DbItemRecord {
+        DbItemRecord {
+            item_id: "i1".into(),
+            registered_at: "2026-08-19T10:00:00Z".into(),
+            project_name: "пр".into(),
+            main_folder_name: "гл".into(),
+            project_path_gd: project_path_gd.into(),
+            contact: vec![],
+            description: String::new(),
+            tags: vec![],
+            year: String::new(),
+            find_time: String::new(),
+            cur_item: "123.mp4".into(),
+            size: 0,
+            is_folder: false,
+        }
+    }
+
+    /// Встроенный путь обязан разворачиваться в файл внутри проекта — иначе
+    /// статистика уедет в рабочий каталог процесса.
+    #[test]
+    fn встроенный_путь_идёт_в_папку_проекта() {
+        let segs: Vec<String> = PROJECT_STATS_SEGMENTS.iter().map(|s| s.to_string()).collect();
+        let p = resolve_path(&segs, &record("/m/клиент/проект")).expect("путь");
+        let s = p.to_string_lossy().to_string();
+        assert!(s.starts_with("/m/клиент/проект/options/_stats/"), "получили {s}");
+        // Расширение ставит write_local_archive (.json → .jsonl), здесь важен каталог.
+        assert!(s.contains("/options/_stats/"), "получили {s}");
+    }
+
+    /// Дубль опознаётся по КАТАЛОГУ: у человека в настройках может стоять своя
+    /// маска имени, и сравнение по файлу пропустило бы вторую копию тех же строк.
+    #[test]
+    fn настроечный_архив_с_другой_маской_имени_считается_дублем() {
+        let r = record("/m/клиент/проект");
+        let свой = resolve_path(
+            &["$projectPathGD", "options", "_stats", "$MM.$YYYY"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            &r,
+        )
+        .expect("путь");
+        assert!(is_project_stats_dir(&свой, &r));
+    }
+
+    /// А архив в своей папке — не дубль, его писать надо.
+    #[test]
+    fn чужая_папка_дублем_не_считается() {
+        let r = record("/m/клиент/проект");
+        let чужой = resolve_path(
+            &["/Users/x/render", "total", "$YYYY.$MM"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            &r,
+        )
+        .expect("путь");
+        assert!(!is_project_stats_dir(&чужой, &r));
+    }
+
+    /// Пустой `projectPathGD` — единственный случай, когда встроенный архив писать
+    /// некуда. Проверка должна отвечать «не дубль», а не сравнивать с относительным
+    /// `options/_stats`, иначе чужой архив с таким же хвостом был бы съеден.
+    #[test]
+    fn без_пути_проекта_дублей_нет() {
+        let r = record("");
+        assert!(!is_project_stats_dir(Path::new("options/_stats/2026.08.json"), &r));
     }
 }
 
