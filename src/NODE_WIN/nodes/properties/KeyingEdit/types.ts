@@ -1,5 +1,7 @@
 // src/NODE_WIN/nodes/properties/KeyingEdit/types.ts
 
+import type { EncodeSettings } from '@/Utils/ffmpegCaps';
+
 export interface ChromakeySettings {
 	enabled: boolean;
 	color: string;      // HEX, e.g. '#00ff00'
@@ -43,6 +45,8 @@ export interface KeyingSettings {
 	despill: DespillSettings;
 	edge: EdgeSettings;
 	filePath?: string;
+	/** Render-настройки выхода (контейнер/кодек/preset/CRF/pix_fmt/alpha) — попап в шапке ноды. */
+	encode?: EncodeSettings;
 }
 
 export function defaultKeyingSettings(): KeyingSettings {

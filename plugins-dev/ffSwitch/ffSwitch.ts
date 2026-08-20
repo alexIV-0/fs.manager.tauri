@@ -21,6 +21,8 @@ interface BgAdjustSettings {
 interface FgShadowSettings {
 	enabled: boolean;
 	blur: number;
+	/** Раздувание прямоугольника тени, px в каждую сторону. Необязательное: старые настройки его не знают. */
+	spread?: number;
 	offsetX: number;
 	offsetY: number;
 	opacity: number;

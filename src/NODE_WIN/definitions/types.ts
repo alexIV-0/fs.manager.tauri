@@ -133,6 +133,43 @@ export const EXPOSABLE_CONTROL_TYPES: ReadonlySet<string> = new Set([
  */
 export const GEAR_CONTROL_TYPES: ReadonlySet<string> = new Set(['valueRange', 'slider']);
 
+/**
+ * controlType'ы, чьи настройки несут блок `encode` (контейнер/кодек/preset/CRF/pix_fmt).
+ * Для таких нод в ШАПКЕ появляется попап «настройки кодирования»: это параметр выхода
+ * ноды, а не картинки, поэтому он не в окне превью. Значение лежит внутри JSON самого
+ * свойства (ключ `encode`), плагин читает его через `settings.encode`.
+ *
+ * Здесь перечислены ffmpeg-плагины, которые ПЕРЕКОДИРУЮТ видео и до этого держали
+ * кодек зашитым в код (`libx264 -crf 22`, `hap -format hap_q`). Дефолт у каждого свой —
+ * тот, которым он кодировал раньше (`ENCODE_PROFILES` в Utils/ffmpegCaps), поэтому
+ * появление попапа само по себе ничего не меняет в результате.
+ *
+ * Кого здесь нет и почему:
+ *   • `convertSettings` (convertFile_v2) — у конвертера выходной формат и есть его работа,
+ *     он живёт в его собственном окне; второй источник истины сломал бы оба;
+ *   • `join`, `merge2files`, `retimeVA` — у них перекодирование не выбор, а fallback:
+ *     они копируют поток, когда могут, а `retimeVA` намеренно повторяет кодек источника
+ *     (включая альфу). Навязанный h264 сломал бы там ровно то, ради чего эта логика есть.
+ *
+ * `encodeSettings` — ОТДЕЛЬНЫЙ случай: у ноды нет своего окна настроек, и это свойство
+ * существует только ради попапа. В теле ноды оно не рисуется вовсе (GenericProperty →
+ * null), значение = сами настройки кодирования без обёртки, а какой профиль считать
+ * дефолтом, объявлено в `ui.json` плагина (`controlProps.profile`).
+ */
+export const ENCODE_CONTROL_TYPES: ReadonlySet<string> = new Set([
+	'videoAdjustment',
+	'keying',
+	'overlaySettings',
+	'titleSettings',
+	'encodeSettings',
+]);
+
+/**
+ * controlType, чьё значение — САМИ настройки кодирования, а не объект настроек ноды с
+ * ключом `encode` внутри. Развилка нужна и попапу (куда писать), и плагину (что читать).
+ */
+export const BARE_ENCODE_CONTROL_TYPE = 'encodeSettings';
+
 export interface CheckboxPropertyControlProps extends CheckboxProps {
 	label?: string;
 	tooltip?: string;
@@ -361,6 +398,23 @@ export interface CollectSchemePropertyControlProps {
 
 export type CollectSchemeProperty = PropertyBase<'collectScheme', CollectSchemePropertyControlProps>;
 
+/**
+ * Невидимое свойство «настройки кодирования» — для ffmpeg-нод БЕЗ своего окна настроек
+ * (`splitFile` и подобные). В теле ноды не рисуется, правится шестерёнкой в шапке.
+ *
+ * `value` — JSON самих `EncodeSettings` (без обёртки), пустая строка = «дефолт профиля».
+ * `profile` — какой набор дефолтов считать своим (`ENCODE_PROFILES` в Utils/ffmpegCaps):
+ * объявляется в `ui.json` плагина, чтобы приложение не держало список плагинов в коде.
+ */
+export interface EncodeSettingsPropertyControlProps {
+	label?: string;
+	tooltip?: string;
+	value: string;
+	profile?: string;
+}
+
+export type EncodeSettingsProperty = PropertyBase<'encodeSettings', EncodeSettingsPropertyControlProps>;
+
 export type Property =
 	| CheckboxProperty
 	| AutocompleteProperty
@@ -380,6 +434,7 @@ export type Property =
 	| VideoAdjustmentProperty
 	| KeyingProperty
 	| ConvertSettingsProperty
+	| EncodeSettingsProperty
 	| ValueRangeProperty
 	| CollectSchemeProperty;
 

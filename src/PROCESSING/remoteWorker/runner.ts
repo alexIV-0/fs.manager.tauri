@@ -10,10 +10,24 @@
 // взятой, она пятнадцать минут ждёт протухания аренды, и всё это время её никто не
 // подхватит.
 //
-// ПОЛОСА. Воркер идёт по полосе `processing`, а не по своей третьей: локальный запуск и
-// режим воркера взаимоисключающие (кнопка одного заблокирована, пока работает другой),
-// значит делить семафоры и флаг прерывания не с кем. Постинг — отдельная полоса, он
-// параллелен обоим.
+// ПОЛОСА. У воркера она своя (`worker`), и это ровно то, что позволяет ему работать
+// ОДНОВРЕМЕННО с локальным прогоном: полоса решает, чей стоп кого убивает. С общей
+// полосой `processing` кнопка Stop локальной обработки прибивала бы ffmpeg взятой
+// задачи, а аварийный стоп воркера — наоборот, чужой рендер.
+//
+// А вот СЕМАФОРЫ у воркера общие с локальным прогоном (`poolScopeOf` в `runLanes.ts`):
+// лимиты пулов — про железо машины, и `local: 1` («один After Effects за раз») обязан
+// остаться единицей на всю машину, а не стать двойкой оттого, что раннеров два. Шаг
+// воркера просто ждёт свободный слот наравне с локальными. Поэтому запрета «пока идёт
+// локальная обработка — не запускаться» здесь больше нет: очередь за слотами разводит
+// нагрузку сама, а запрет отнимал у машины половину работы.
+//
+// Play в окне нод в эту схему не входит и не должен: он гоняет одну локальную папку в
+// СВОЁМ realm'е, а семафоры — модульное состояние окна, поэтому `local: 1` между ним и
+// воркером не держится. Это ручной запуск «здесь и сейчас» для локальной работы, и
+// сводить его с очередью незачем — общий замок в Rust заводить не надо.
+//
+// Постинг — третья полоса со своим набором пулов, он параллелен обоим.
 //
 // ДВЕ ОСТАНОВКИ, и это не одна кнопка с оговоркой:
 //   • мягкая  — новых задач не берём, текущую доводим, заливаем, отчитываемся, гаснем;
@@ -23,13 +37,12 @@
 
 import { commands, unwrap } from '@/Utils/specta';
 import { useWorker_store } from '@/Store/Processing/useWorker_store';
-import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { plugin_Store } from '@/Store/MainWin/plugin_store';
 import { loadPlugin } from '@/PluginAPI/loader';
 import { hostServices, invokeHost } from '@/PluginAPI/host';
 import { joinPath } from '@/Utils/joinPath';
 import { createRunPools, disposeRunPools } from '../ResourcePool';
-import { RUN_PROCESSING } from '../runLanes';
+import { RUN_WORKER } from '../runLanes';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { abortNow, getSignal, startProcessContext } from '../utils/processingAbort';
 import { WORKER_PLUGIN_ID } from './useWorkerAvailable';
@@ -61,9 +74,11 @@ function logWin(level: 'info' | 'warn' | 'error', text: string): void {
 	} catch {}
 }
 
-// Ресурсные пулы этого прогона + гашение флага прерывания своей полосы. Без сброса
-// флага воркер, запущенный после остановленной обработки, унаследовал бы чужой стоп —
-// и каждый его `exec` умирал бы мгновенно.
+// Регистрация в области ресурсных пулов + гашение флага прерывания СВОЕЙ полосы. Без
+// сброса флага воркер, запущенный после собственной аварийной остановки, унаследовал бы
+// прошлый стоп — и каждый его `exec` умирал бы мгновенно. Набор семафоров при этом
+// общий с локальным прогоном: если тот уже работает, воркер входит в готовую область и
+// ничего не пересоздаёт (см. `ResourcePool.ts`).
 async function initPools(): Promise<void> {
 	let pluginPools: Array<{ id: string; pool: string }> = [];
 	try {
@@ -74,8 +89,8 @@ async function initPools(): Promise<void> {
 	} catch (e) {
 		console.warn('[remoteWorker] cannot read plugin resourcePools:', e);
 	}
-	createRunPools(RUN_PROCESSING, getAppSettings().resourcePools ?? {}, pluginPools);
-	await commands.resetProcessingSignal(RUN_PROCESSING).catch(() => {});
+	createRunPools(RUN_WORKER, getAppSettings().resourcePools ?? {}, pluginPools);
+	await commands.resetProcessingSignal(RUN_WORKER).catch(() => {});
 }
 
 export function isWorkerRunning(): boolean {
@@ -197,17 +212,6 @@ export async function startWorker(): Promise<void> {
 	const store = useWorker_store.getState();
 	if (store.isWorking) return;
 
-	// Кнопка уже заблокирована во время локального прогона, но проверяем и здесь:
-	// кнопка — не гарантия, а подсказка.
-	//
-	// ДЫРА, которую этим не закрыть: Play в окне нод запускает прогон одной папки, а
-	// окна — разные JS-realm'ы, и это состояние сюда не видно. Настоящий замок должен
-	// жить в Rust на уровне полосы — он же понадобится циклу для аренды.
-	if (isScanningStore.getState().isScanning) {
-		logWin('warn', '[worker] не запускаем: идёт локальная обработка');
-		return;
-	}
-
 	store.resetStatus();
 	store.setStopRequested(false);
 	store.setIsWorking(true);
@@ -227,12 +231,13 @@ export async function startWorker(): Promise<void> {
 	}
 
 	activeQueue = queue;
-	// Общий контекст прерывания пайплайна — тот же, которым пользуется локальный прогон.
-	// Свой AbortController здесь был бы вторым сигналом: `abortNow()` его не видит, и
-	// аварийный стоп рвал бы цикл, не трогая обработку.
-	startProcessContext();
+	// Контекст прерывания СВОЕЙ полосы: тот же механизм, что у локального прогона, но
+	// отдельный сигнал. Свой AbortController мимо этого модуля был бы вторым сигналом —
+	// `abortNow(RUN_WORKER)` его не видит, и аварийный стоп рвал бы цикл, не трогая
+	// обработку.
+	startProcessContext(RUN_WORKER);
 	try {
-		await pollLoop(queue, getSignal());
+		await pollLoop(queue, getSignal(RUN_WORKER));
 	} catch (e: any) {
 		logWin('error', `[worker] цикл упал: ${e?.message ?? e}`);
 		useWorker_store.getState().setStatus({ lastError: String(e?.message ?? e), lastAt: Math.floor(Date.now() / 1000) });
@@ -258,8 +263,8 @@ export function stopWorkerNow(): void {
 	const store = useWorker_store.getState();
 	if (!store.isWorking) return;
 
-	abortNow();
-	void commands.abortProcessing(RUN_PROCESSING).catch(() => {});
+	abortNow(RUN_WORKER);
+	void commands.abortProcessing(RUN_WORKER).catch(() => {});
 	logWin('warn', '[worker] аварийная остановка');
 
 	// Задачу возвращаем в очередь СРАЗУ, не дожидаясь протухания аренды: иначе её
@@ -289,5 +294,5 @@ function finishWorker(): void {
 		lastAt: Math.floor(Date.now() / 1000),
 	});
 	activeQueue = null;
-	disposeRunPools(RUN_PROCESSING);
+	disposeRunPools(RUN_WORKER);
 }

@@ -5,6 +5,7 @@
 import path from 'path';
 import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { buildEncodeArgs, encodeExt, encodeProfile, type EncodeSettings } from '../../src/Utils/ffmpegCaps';
 import { buildOverlayGraph } from '../../src/Utils/ffmpegGraphs/overlayGraph';
 
 
@@ -23,6 +24,8 @@ interface OverlaySettings {
 	landscape: OverlayFormatSettings;
 	portrait: OverlayFormatSettings;
 	square: OverlayFormatSettings;
+	/** Render-настройки выхода: попап «настройки кодирования» в шапке ноды. */
+	encode?: EncodeSettings;
 }
 
 // Нормализация FG + построение видео-filter_complex вынесены в общий модуль
@@ -110,12 +113,8 @@ async function processSinglePair(
 			...audioMap,
 			'-t',
 			String(finalDuration),
-			'-c:v',
-			'libx264',
-			'-preset',
-			'faster',
-			'-crf',
-			'22',
+			// Дефолт (`standard`) — тот же libx264 -preset faster -crf 22, что был зашит здесь.
+			...buildEncodeArgs(overlaySettings.encode ?? encodeProfile('standard')),
 			targetPath,
 		],
 	});
@@ -172,7 +171,7 @@ export async function overlayAndOffsetFunc(_item: any, _description: any, ctx: P
 		const basePath = createPathForFileByPattern(curPath, _description, bgFile);
 		const dirPath = path.dirname(basePath);
 		const fName = path.basename(basePath, path.extname(basePath));
-		const outFile = path.join(dirPath, `${fName}.mp4`);
+		const outFile = path.join(dirPath, `${fName}.${encodeExt(overlaySettings.encode ?? encodeProfile('standard'), bgFile)}`);
 
 		const result = await processSinglePair(bgFile, fgFile, overlaySettings, opts, outFile, _description, ctx, _item.id);
 		finalFiles.push(result);

@@ -5,6 +5,7 @@
 import path from 'path';
 import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { buildEncodeArgs, encodeExt, encodeProfile } from '../../src/Utils/ffmpegCaps';
 import { TitleSettings } from './types';
 import { parseSubtitles, detectFormat } from './parsers';
 import { adaptSettingsToVideo } from './settingsAdapter';
@@ -77,8 +78,17 @@ export async function addTitle(_item: any, _description: any, ctx: PluginContext
 
 	const tmpDir = await paths.tmpdir();
 
+	// Дефолт (`quality`) — тот же libx264 -preset fast -crf 18, что был зашит в команду:
+	// у титров текст первым сыпется на артефактах, поэтому crf ниже, чем у остальных нод.
+	const enc = titleSettings.encode ?? encodeProfile('quality');
+
 	for (const fileFrom of (_item.import.inputFile ?? []) as string[]) {
-		const fileTo = createPathForFileByPattern(curPath, _description, fileFrom);
+		const patternPath = createPathForFileByPattern(curPath, _description, fileFrom);
+		// Расширение диктует выбранный контейнер: имя из паттерна оставляем, хвост меняем.
+		const fileTo = path.join(
+			path.dirname(patternPath),
+			`${path.basename(patternPath, path.extname(patternPath))}.${encodeExt(enc, fileFrom)}`,
+		);
 
 		sendToMW('statusbar', { text: `${_description.infoText}: [add title]\n${path.basename(fileFrom)}` });
 
@@ -144,7 +154,7 @@ export async function addTitle(_item: any, _description: any, ctx: PluginContext
 				text: `${_description.infoText}: [add title] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 				duration: videoInfo.durationInSeconds || 10,
 				nodeId: _item.id,
-				command: ['-y', '-i', fileFrom, '-vf', assFilter, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', fileTo],
+				command: ['-y', '-i', fileFrom, '-vf', assFilter, '-c:a', 'copy', ...buildEncodeArgs(enc), fileTo],
 			});
 			finalFile.push(fileTo);
 		} catch (e) {

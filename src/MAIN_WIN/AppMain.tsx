@@ -328,10 +328,12 @@ export default function AppMain() {
 						}}
 					>
 						{!isScanning ? (
-							// Локальный запуск и режим воркера взаимоисключающие: два прогона по
-							// одной полосе делили бы семафоры и флаг прерывания, и стоп одного
-							// убивал бы процессы другого.
-							<MyButton onClick={startButtClick} innerText={'START LOCAL PROCESS'} disabled={isWorking} />
+							// Локальный прогон и режим воркера работают одновременно: полосы разные
+							// (стоп одного не трогает процессы другого), а семафоры пулов общие —
+							// тяжёлые шаги встают в общую очередь, и `local: 1` остаётся единицей на
+							// машину. Области тоже не пересекаются: локальный скан пропускает
+							// зеркальные папки, воркер берёт только задачи очереди.
+							<MyButton onClick={startButtClick} innerText={'START LOCAL PROCESS'} />
 						) : (
 							<Box sx={{ display: 'flex', flex: 20, flexDirection: 'row', gap: '5px' }}>
 								<MyButton
@@ -361,12 +363,7 @@ export default function AppMain() {
 							}}
 						>
 							{!isWorking ? (
-								<MyButton
-									onClick={startWorker}
-									innerText={'START ONLINE WORKER'}
-									// Пока идёт локальный прогон, за онлайн-задачами не ходим.
-									disabled={isScanning}
-								/>
+								<MyButton onClick={startWorker} innerText={'START ONLINE WORKER'} />
 							) : (
 								<Box sx={{ display: 'flex', flex: 20, flexDirection: 'row', gap: '5px' }}>
 									<MyButton

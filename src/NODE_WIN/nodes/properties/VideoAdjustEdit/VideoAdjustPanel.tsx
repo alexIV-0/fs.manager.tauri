@@ -4,6 +4,10 @@
 //   1. File & Format — FG/BG file selection, final format
 //   2. FG Layer — copies, fitPercent, drop shadow
 //   3. BG Layer — copies, blur/brightness/contrast/saturation/hFlip
+//
+// Настройки кодирования (контейнер/кодек/CRF) здесь НЕТ намеренно: это параметр выхода
+// ноды, а не картинки — он живёт в попапе в шапке ноды (NodeEncodeSettings) и пишется
+// в тот же JSON (ключ `encode`).
 
 import { memo } from 'react';
 import { commands, unwrap } from '@/Utils/specta';
@@ -13,8 +17,6 @@ import PanelSlider from '../PanelSlider';
 import { MyPopoverColor } from '@/MAIN_WIN/Universal/MyPopoverColor';
 import { SectionLabel, CheckboxRow, FilePickerButton } from '../PanelUI';
 import { VideoAdjustSettings, defaultFgShadow } from './types';
-import EncodeSettingsPanel from '../EncodeSettingsPanel';
-import { defaultEncodeSettings } from '@/Utils/ffmpegCaps';
 import { NumInput } from '@/components/NumInput';
 
 function fileBasename(p: string): string {
@@ -198,6 +200,18 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 							onChange={(v) => onChange({ ...settings, fg: { ...fg, shadow: { ...shadow, blur: Math.max(0, v) } } })}
 						/>
 						<PanelSlider
+							label='Spread (px)'
+							value={shadow.spread ?? 0}
+							min={0}
+							max={200}
+							step={1}
+							noClamp
+							onChange={(v) => onChange({ ...settings, fg: { ...fg, shadow: { ...shadow, spread: Math.max(0, Math.round(v)) } } })}
+						/>
+						<Typography sx={{ fontSize: 10, color: labelColor, mt: -0.5, mb: 0.5 }}>
+							раздувает тень во все стороны · с Blur 0 и нулевым смещением = цветная рамка
+						</Typography>
+						<PanelSlider
 							label='Offset X'
 							value={shadow.offsetX}
 							min={-100}
@@ -296,13 +310,6 @@ function VideoAdjustPanel({ settings, onChange, width, fgFilePath, bgFilePath, o
 				/>
 			</Box>
 
-			<Divider sx={{ borderColor: border }} />
-
-			{/* ── Output / Render ── */}
-			<Box sx={{ p: 1.5, pb: 1.5 }}>
-				<SectionLabel>Output / Render</SectionLabel>
-				<EncodeSettingsPanel value={settings.encode ?? defaultEncodeSettings()} onChange={(e) => onChange({ ...settings, encode: e })} />
-			</Box>
 		</Box>
 	);
 }

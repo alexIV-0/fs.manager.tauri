@@ -89,6 +89,11 @@ function GenericProperty({ property }: { property: Property }) {
 				return <ConvertPropertyComponent property={property as ConvertSettingsProperty} />;
 			case 'collectScheme':
 				return <CollectProperty property={property} />;
+			// Невидимое свойство: существует ради попапа «настройки кодирования» в шапке ноды
+			// (`NodeEncodeSettings`). Ветка явная, а не через `default`, чтобы при чтении
+			// свитча было видно, что тип учтён и рисовать его не забыли.
+			case 'encodeSettings':
+				return null;
 			default:
 				return null;
 		}

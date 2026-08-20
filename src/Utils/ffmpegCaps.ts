@@ -41,8 +41,12 @@ export const VIDEO_CODECS: Record<VideoCodecId, VideoCodecCaps> = {
 	av1:    { ffmpeg: 'libsvtav1',  alpha: false, pixFmts: ['yuv420p', 'yuv420p10le'],         alphaPixFmts: [],               quality: 'crf',    preset: false },
 	prores: { ffmpeg: 'prores_ks',  alpha: true,  pixFmts: ['yuv422p10le', 'yuva444p10le'],    alphaPixFmts: ['yuva444p10le'], quality: 'prores', preset: false },
 	dnxhd:  { ffmpeg: 'dnxhd',      alpha: false, pixFmts: ['yuv422p', 'yuv422p10le'],         alphaPixFmts: [],               quality: 'qscale', preset: false },
-	hap:    { ffmpeg: 'hap',        alpha: true,  pixFmts: ['rgb24', 'rgba'],                  alphaPixFmts: ['rgba'],         quality: 'none',   preset: false },
-	hap_q:  { ffmpeg: 'hap',        alpha: false, pixFmts: ['rgb24'],                          alphaPixFmts: [],               quality: 'none',   preset: false },
+	// Hap: у энкодера ОДИН поддерживаемый pix_fmt — `rgba` (проверено `ffmpeg -h encoder=hap`).
+	// Альфу решает не формат пикселей, а опция `-format`: hap (DXT1, без альфы) / hap_alpha /
+	// hap_q (DXT5-YCoCg, без альфы). Поэтому у `hap` alphaPixFmts == pixFmts: выбирать нечего,
+	// и панель этот ряд просто не показывает.
+	hap:    { ffmpeg: 'hap',        alpha: true,  pixFmts: ['rgba'],                           alphaPixFmts: ['rgba'],         quality: 'none',   preset: false },
+	hap_q:  { ffmpeg: 'hap',        alpha: false, pixFmts: ['rgba'],                           alphaPixFmts: [],               quality: 'none',   preset: false },
 	copy:   { ffmpeg: 'copy',       alpha: false, pixFmts: [],                                 alphaPixFmts: [],               quality: 'none',   preset: false },
 };
 
@@ -121,19 +125,116 @@ export interface EncodeSettings {
 	preset: string;
 	crf: number;
 	pixFmt: string;
+	/**
+	 * Нужна ли альфа на выходе. Осмысленно только там, где `alphaAvailable` = true
+	 * (ProRes 4444, Hap Alpha, VP9 yuva420p) — иначе игнорируется.
+	 *
+	 * Необязательное: настройки, сохранённые до появления флага, его не знают.
+	 */
+	alpha?: boolean;
+}
+
+/**
+ * Именованные наборы дефолтов. Плагин и шапка ноды обязаны брать дефолт ИЗ ОДНОГО МЕСТА:
+ * иначе попап показывает mp4/h264, а рендер молча уходит в другой кодек, и «настройка не
+ * работает» — при том что оба конца по-своему правы.
+ *
+ * Наборы повторяют то, чем плагины кодировали ДО появления попапа, — включение настройки
+ * не должно менять результат у тех, кто её не трогал:
+ *   • `standard` — ffSwitch, overlay (`libx264 -preset faster -crf 22`);
+ *   • `quality`  — титры (`-preset fast -crf 18`): текст первым сыпется на артефактах;
+ *   • `fastCut`  — нарезка (`-preset superfast`, crf 23 = дефолт x264: своего `-crf`
+ *                  у нарезки не было вовсе, и профиль обязан это повторить);
+ *   • `hapMov`   — кеинг (`mov` + Hap Q + snappy).
+ */
+export type EncodeProfileId = 'standard' | 'quality' | 'fastCut' | 'hapMov';
+
+const ENCODE_PROFILES: Record<EncodeProfileId, EncodeSettings> = {
+	standard: { container: 'mp4', codec: 'h264',  preset: 'faster',     crf: 22, pixFmt: 'yuv420p' },
+	quality:  { container: 'mp4', codec: 'h264',  preset: 'fast',       crf: 18, pixFmt: 'yuv420p' },
+	fastCut:  { container: 'mp4', codec: 'h264',  preset: 'superfast',  crf: 23, pixFmt: 'yuv420p' },
+	hapMov:   { container: 'mov', codec: 'hap_q', preset: 'faster',     crf: 22, pixFmt: 'rgba'    },
+};
+
+/** Копия набора дефолтов — копия, а не сама запись: настройки правятся по месту. */
+export function encodeProfile(id: EncodeProfileId): EncodeSettings {
+	return { ...ENCODE_PROFILES[id] };
 }
 
 export function defaultEncodeSettings(): EncodeSettings {
-	return { container: 'mp4', codec: 'h264', preset: 'faster', crf: 22, pixFmt: 'yuv420p' };
+	return encodeProfile('standard');
 }
 
-/** Аргументы видео-энкода (`-c:v … [-preset] [-crf|-profile] [-pix_fmt]`) по настройкам. */
+/**
+ * Расширение выходного файла по настройкам. ОДНО правило на все плагины: `original`
+ * означает «как у источника», иначе имя контейнера и есть расширение.
+ *
+ * Без `path` намеренно — модуль импортируется и в приложение, и в плагины (esbuild), и
+ * тащить в него node-зависимости нельзя.
+ */
+export function encodeExt(enc: EncodeSettings, sourcePath: string, fallback = 'mp4'): string {
+	if (enc.container && enc.container !== 'original') return enc.container;
+	const name = String(sourcePath ?? '').replace(/\\/g, '/').split('/').pop() ?? '';
+	const dot = name.lastIndexOf('.');
+	// В нижний регистр: `clip.MOV` не должен родить `result.MOV` — расширения в проекте
+	// строчные, и на регистро-чувствительной ФС разнобой ловится потом масками.
+	const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+	return ext || fallback;
+}
+
+/**
+ * JSON из свойства ноды → `EncodeSettings`, поле за полем, с падением на профиль.
+ *
+ * Побитово, а не `{...base, ...parsed}`: в свойстве лежит то, что записал попап на
+ * ЛЮБОЙ прошлой версии программы, и один пришедший `null` или строка вместо числа
+ * ушли бы прямиком в аргументы ffmpeg. Дешевле проверить пять полей здесь, чем
+ * разбирать «Invalid argument» из середины ночного прогона.
+ */
+export function parseEncodeSettings(raw: unknown, fallback: EncodeProfileId = 'standard'): EncodeSettings {
+	const base = encodeProfile(fallback);
+	let obj: unknown = raw;
+	if (typeof raw === 'string') {
+		try {
+			obj = raw ? JSON.parse(raw) : null;
+		} catch {
+			obj = null;
+		}
+	}
+	if (!obj || typeof obj !== 'object') return base;
+	const o = obj as Record<string, unknown>;
+	return {
+		container: typeof o.container === 'string' && o.container ? o.container : base.container,
+		codec: typeof o.codec === 'string' && o.codec ? (o.codec as VideoCodecId) : base.codec,
+		preset: typeof o.preset === 'string' && o.preset ? o.preset : base.preset,
+		crf: typeof o.crf === 'number' && Number.isFinite(o.crf) ? o.crf : base.crf,
+		pixFmt: typeof o.pixFmt === 'string' ? o.pixFmt : base.pixFmt,
+		alpha: typeof o.alpha === 'boolean' ? o.alpha : base.alpha,
+	};
+}
+
+/** Аргументы видео-энкода (`-c:v … [-preset] [-crf|-profile] [-format] [-pix_fmt]`). */
 export function buildEncodeArgs(enc: EncodeSettings): string[] {
 	const caps = VIDEO_CODECS[enc.codec];
+	// Альфу просят только там, где кодек её несёт: `alpha` у mp4/h264 — не ошибка
+	// пользователя, а остаток от прежнего выбора кодека, и молча игнорировать его правильнее,
+	// чем ронять рендер.
+	const wantAlpha = Boolean(enc.alpha) && caps?.alpha === true;
 	const out: string[] = ['-c:v', caps?.ffmpeg ?? enc.codec];
 	if (caps?.preset) out.push('-preset', enc.preset);
 	if (caps?.quality === 'crf') out.push('-crf', String(enc.crf));
-	if (caps?.quality === 'prores') out.push('-profile:v', '3');
-	if (enc.pixFmt) out.push('-pix_fmt', enc.pixFmt);
+	// ProRes: 4444 — единственный профиль с альфой, 3 (HQ) — обычный.
+	if (caps?.quality === 'prores') out.push('-profile:v', wantAlpha ? '4444' : '3');
+	// Hap: вариант — приватная опция энкодера, а не отдельный кодек. `-compressor snappy`
+	// оставлен явно: это дефолт энкодера, но именно эту сборку проверяет ffmpeg-гейт
+	// (`ffmpeg_requirements.json`), и явный аргумент делает требование видимым в команде.
+	if (enc.codec === 'hap' || enc.codec === 'hap_q') {
+		out.push('-format', enc.codec === 'hap_q' ? 'hap_q' : wantAlpha ? 'hap_alpha' : 'hap');
+		out.push('-compressor', 'snappy');
+	}
+	// pix_fmt сверяем с кодеком, а не берём как есть: настройки могли пережить смену кодека
+	// (был ProRes с yuva444p10le, стал h264) — и тогда ffmpeg отказался бы кодировать вовсе.
+	const allowed = pixFmtsFor(enc.codec, wantAlpha);
+	const pixFmt = allowed.includes(enc.pixFmt) ? enc.pixFmt : allowed[0];
+	if (pixFmt) out.push('-pix_fmt', pixFmt);
 	return out;
 }

@@ -2,20 +2,24 @@
 //
 // Canvas-based live preview:
 //   • One <video> per layer — all copies read from it → guaranteed sync
-//   • BG: cover + ctx.filter (blur/brightness/contrast/saturate) + hFlip
-//   • Blur fix: blurPad — draw with padding + ctx.clip → no vignette
-//   • FG: space-evenly + fitPercent + drop shadow (ctx.shadow*)
+//   • BG: плитка за плиткой (cover → boxblur → eq → hFlip), как в графе ffmpeg
+//   • FG: space-evenly + fitPercent + слой тени (color+pad+boxblur, как в графе)
 //   • Progress bar: direct DOM update from RAF (60fps, no React re-render)
 //   • Pan/zoom: scroll wheel + middle mouse drag, double-click to fit
 //   • Frame border + checkerboard background around canvas frame
+//
+// Живой канвас обязан показывать то же, что даст рендер: каждый шаг здесь — эмуляция
+// КОНКРЕТНОГО фильтра из `ffSwitchGraph` (см. Utils/canvasFilters), а не «похожий» CSS-эффект.
+// Не заменять обратно на ctx.filter / ctx.shadow*: первый в WKWebView не работает вовсе,
+// второй даёт свою математику размытия и расходится с ffmpeg.
 
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { VideoAdjustSettings, defaultFgShadow } from './types';
+import { VideoAdjustSettings, FgShadowSettings, defaultFgShadow } from './types';
 import { toFileUrl } from '@/Utils/mediaUtils';
 import type { PreviewRenderSpec } from '@/bindings';
-import { applyBlur, applyColorAdjust } from '@/Utils/canvasFilters';
+import { applyBoxBlur, applyFfmpegEq, makeShadowLayer } from '@/Utils/canvasFilters';
 import { checkerboardStyle } from '@/Utils/CheckerboardBg';
-import { buildFfSwitchGraph } from '@/Utils/ffmpegGraphs/ffSwitchGraph';
+import { buildFfSwitchGraph, bgBlurRadius, shadowGeometry } from '@/Utils/ffmpegGraphs/ffSwitchGraph';
 import PreviewToolbar, { type PreviewToolbarHandle } from '../PreviewToolbar';
 import PreviewTimeline, { type PreviewTimelineHandle } from '../PreviewTimeline';
 import PreviewStateDot from '../PreviewStateDot';
@@ -26,12 +30,45 @@ const CONTROLS_H = 52;
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 10;
 
-function hexToRgba(hex: string, opacity: number): string {
-	const h = (hex || '#000000').replace('#', '').padEnd(6, '0');
-	const r = parseInt(h.slice(0, 2), 16);
-	const g = parseInt(h.slice(2, 4), 16);
-	const b = parseInt(h.slice(4, 6), 16);
-	return `rgba(${r},${g},${b},${opacity})`;
+/**
+ * Буфер под BG-плитку. Плитки считаются по отдельности (как отдельные ветки графа), а
+ * канвасы переиспользуются между кадрами — в RAF-цикле аллокации на кадр слишком дороги.
+ */
+function cellBuffer(cache: React.MutableRefObject<HTMLCanvasElement[]>, i: number, w: number, h: number): HTMLCanvasElement {
+	let c = cache.current[i];
+	if (!c) {
+		c = document.createElement('canvas');
+		cache.current[i] = c;
+	}
+	if (c.width !== w || c.height !== h) {
+		c.width = w;
+		c.height = h;
+	}
+	return c;
+}
+
+/** Слой тени зависит только от настроек и размера слота → считаем один раз и кэшируем. */
+function shadowLayerFor(
+	cache: React.MutableRefObject<{ key: string; canvas: HTMLCanvasElement } | null>,
+	shadow: FgShadowSettings,
+	w: number,
+	h: number,
+): HTMLCanvasElement {
+	const g = shadowGeometry(shadow, w, h);
+	// Раздувание входит в ключ через размер слоя: `g.width/height` уже с ним.
+	const key = `${shadow.color}|${shadow.opacity}|${g.radius}|${g.power}|${g.width}x${g.height}`;
+	if (cache.current?.key === key) return cache.current.canvas;
+	const canvas = makeShadowLayer({
+		color: shadow.color || '#000000',
+		opacity: shadow.opacity ?? 0.6,
+		width: g.width,
+		height: g.height,
+		pad: g.pad,
+		radius: g.radius,
+		power: g.power,
+	});
+	cache.current = { key, canvas };
+	return canvas;
 }
 
 interface Props {
@@ -52,6 +89,8 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 	const settingsRef   = useRef(settings);
 	settingsRef.current = settings;
 	const durationRef   = useRef(0);
+	const bgCellsRef    = useRef<HTMLCanvasElement[]>([]);
+	const shadowRef     = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
 
 	const [duration, setDuration] = useState(0);
 	// On-demand accurate frame: off → live canvas; on → render the exact ffmpeg composite.
@@ -259,52 +298,49 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 		if (bgV && bgV.readyState >= 2 && bgV.videoWidth > 0) {
 			const bgCopies = Math.max(1, s.bg.copies);
 			const adj       = s.bg.adjust;
+			const blurR     = bgBlurRadius(adj.blur);
 
-			// ctx.filter is a no-op in WKWebView, so blur/colour are applied by pixel
-			// helpers (taint-safe — the source <video> has crossOrigin="anonymous").
-			// When no adjustment is active, draw straight to the main canvas (fast path).
-			const hasColor = (adj.brightness || 0) !== 0 || adj.contrast !== 1 || adj.saturation !== 1;
-			const hasFilter = adj.blur > 0 || hasColor;
+			// В графе каждая плитка — своя ветка: scale → crop → boxblur → eq → hflip.
+			// Поэтому и здесь плитка считается в своём буфере: блюр НЕ течёт через границы
+			// плиток (при bg.copies > 1 общий блюр по всему кадру давал шов не как в рендере).
+			const cellW = isPortrait ? fw                        : Math.round(fw / bgCopies);
+			const cellH = isPortrait ? Math.round(fh / bgCopies) : fh;
 
-			const bgOff = hasFilter ? document.createElement('canvas') : null;
-			if (bgOff) { bgOff.width = fw; bgOff.height = fh; }
-			const bctx = bgOff ? bgOff.getContext('2d') : ctx;
-			if (bctx) {
-				for (let i = 0; i < bgCopies; i++) {
-					const cellX = isPortrait ? 0                              : Math.round(i * fw / bgCopies);
-					const cellY = isPortrait ? Math.round(i * fh / bgCopies) : 0;
-					const cellW = isPortrait ? fw                             : Math.round(fw / bgCopies);
-					const cellH = isPortrait ? Math.round(fh / bgCopies)      : fh;
+			// Пиксельные операции стоят O(площади), а RAF даёт ~16 мс на кадр. Размытый фон
+			// всё равно теряет детали, поэтому при активном блюре плитка считается в
+			// уменьшенном буфере (k ≈ radius/4): радиус масштабируется вместе с ней, лишняя
+			// мягкость от обратного растягивания — единицы процентов от самого блюра.
+			// Без блюра уменьшать нельзя — фон резкий, и это было бы видно.
+			const k = blurR >= 1 ? Math.max(2, Math.min(8, Math.floor(blurR / 4))) : 1;
+			const bufW = Math.max(1, Math.round(cellW / k));
+			const bufH = Math.max(1, Math.round(cellH / k));
 
-					const coverScale = Math.max(cellW / bgV.videoWidth, cellH / bgV.videoHeight);
-					const renderW    = bgV.videoWidth  * coverScale;
-					const renderH    = bgV.videoHeight * coverScale;
-					const renderX    = cellX + (cellW - renderW) / 2;
-					const renderY    = cellY + (cellH - renderH) / 2;
+			for (let i = 0; i < bgCopies; i++) {
+				const cellX = isPortrait ? 0            : i * cellW;
+				const cellY = isPortrait ? i * cellH    : 0;
 
-					bctx.save();
-					bctx.beginPath();
-					bctx.rect(cellX, cellY, cellW, cellH);
-					bctx.clip();
-					if (adj.hFlip) {
-						bctx.translate(renderX + renderW / 2, renderY + renderH / 2);
-						bctx.scale(-1, 1);
-						bctx.drawImage(bgV, -renderW / 2, -renderH / 2, renderW, renderH);
-					} else {
-						bctx.drawImage(bgV, renderX, renderY, renderW, renderH);
-					}
-					bctx.restore();
-				}
+				const buf  = cellBuffer(bgCellsRef, i, bufW, bufH);
+				const bctx = buf.getContext('2d');
+				if (!bctx) continue;
 
-				if (bgOff) {
-					applyBlur(bgOff, adj.blur);
-					applyColorAdjust(bgOff, {
-						brightnessMul: 1 + (adj.brightness || 0),
-						contrast: adj.contrast,
-						saturation: adj.saturation,
-					});
-					ctx.drawImage(bgOff, 0, 0);
-				}
+				// cover — то же, что `scale=` по большей стороне + центральный crop
+				const coverScale = Math.max(bufW / bgV.videoWidth, bufH / bgV.videoHeight);
+				const renderW    = bgV.videoWidth  * coverScale;
+				const renderH    = bgV.videoHeight * coverScale;
+
+				bctx.save();
+				bctx.translate(bufW / 2, bufH / 2);
+				if (adj.hFlip) bctx.scale(-1, 1);
+				bctx.drawImage(bgV, -renderW / 2, -renderH / 2, renderW, renderH);
+				bctx.restore();
+
+				applyBoxBlur(buf, Math.max(1, Math.round(blurR / k)), 1);
+				applyFfmpegEq(buf, {
+					brightness: adj.brightness || 0,
+					contrast: adj.contrast,
+					saturation: adj.saturation,
+				});
+				ctx.drawImage(buf, 0, 0, bufW, bufH, cellX, cellY, cellW, cellH);
 			}
 		}
 
@@ -340,27 +376,14 @@ export default function VideoAdjustPreview({ fgFilePath, bgFilePath, settings }:
 				const renderLeft = clipLeft - (renderW - clipW) / 2;
 				const renderTop  = clipTop  - (renderH - clipH) / 2;
 
-				if (shadow.enabled) {
-					const sp = shadow.blur * 2 + Math.abs(shadow.offsetX) + Math.abs(shadow.offsetY) + 4;
-					ctx.save();
-					ctx.beginPath();
-					ctx.rect(
-						clipLeft  - sp + Math.min(0, shadow.offsetX),
-						clipTop   - sp + Math.min(0, shadow.offsetY),
-						Math.round(clipW) + sp * 2 + Math.abs(shadow.offsetX),
-						Math.round(clipH) + sp * 2 + Math.abs(shadow.offsetY),
-					);
-					ctx.clip();
-					ctx.shadowBlur    = shadow.blur;
-					ctx.shadowColor   = hexToRgba(shadow.color || '#000000', shadow.opacity ?? 0.6);
-					ctx.shadowOffsetX = shadow.offsetX;
-					ctx.shadowOffsetY = shadow.offsetY;
-					ctx.drawImage(fgV, renderLeft, renderTop, renderW, renderH);
-					ctx.shadowBlur    = 0;
-					ctx.shadowColor   = 'transparent';
-					ctx.shadowOffsetX = 0;
-					ctx.shadowOffsetY = 0;
-					ctx.restore();
+				// Тень — готовый размытый слой (как отдельный вход графа), а не ctx.shadow*:
+				// у канваса своя математика размытия, да и в WKWebView она вела себя иначе.
+				if (shadow.enabled && (shadow.opacity ?? 0) > 0) {
+					const layer = shadowLayerFor(shadowRef, shadow, Math.round(clipW), Math.round(clipH));
+					// Смещение целиком в `dx/dy`: там уже и offset, и раздувание, и pad под блюр —
+					// считать их здесь второй раз значит однажды разойтись с графом.
+					const { dx, dy } = shadowGeometry(shadow, Math.round(clipW), Math.round(clipH));
+					ctx.drawImage(layer, clipLeft + dx, clipTop + dy);
 				}
 
 				ctx.save();

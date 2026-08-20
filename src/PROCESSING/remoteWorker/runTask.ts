@@ -23,7 +23,8 @@ import { clearFileNameAndID } from '../utils/clearFileNameAndID';
 import { injectMachineLocals } from '../utils/machineLocals';
 import { sendFindItemToRegistrationProcessDatabase } from '../utils/sendFindItemToRegistrationProcessDatabase';
 import { processItem } from '../processItem';
-import { RUN_PROCESSING } from '../runLanes';
+import { RUN_WORKER } from '../runLanes';
+import { refreshMirrorLayout, showTaskInColumns } from './showTaskInColumns';
 
 /**
  * Как часто продлеваем аренду, пока ИДЁТ ШАГ.
@@ -150,14 +151,24 @@ async function waitUploads(
  *
  * ── Фильтр по элементу ────────────────────────────────────────────────────────
  * Шина глобальная, поэтому берём только события своего элемента: `itemId` у элемента
- * воркера равен `taskId` (`description.dbItemId`, см. `processItem`).
+ * воркера равен `taskId` (`description.dbItemId`, см. `processItem`). Это же и
+ * разделяет два одновременных раннера: события локальной обработки идут по той же
+ * шине, но с чужими `itemId`, и в очередь сайта не попадают.
+ *
+ * ── `node:wait` = шаг уже наш ─────────────────────────────────────────────────
+ * Семафоры пулов общие с локальным прогоном, поэтому шаг воркера может ждать слот
+ * (`local: 1` — один After Effects на машину) сколько угодно долго. Ожидание — это
+ * работа над задачей, и аренду в это время держать обязаны: без отметки «шаг идёт»
+ * она протухнет через пятнадцать минут, и ту же задачу возьмёт другая машина, пока
+ * эта стоит в очереди за слотом. Поэтому `current` ставится на `node:wait`, а не на
+ * `node:start`; наружу до реального старта уходит `running` с пояснением, чего ждём.
  */
 function reportSteps(
 	taskId: string,
 	queue: { progress: (t: string, s: string, st: any, m?: string) => Promise<void> },
 	log: (level: 'info' | 'warn' | 'error', text: string) => void,
 ) {
-	let current: { id: string; since: number } | null = null;
+	let current: { id: string; since: number; waiting: boolean } | null = null;
 
 	// Отчёт не должен ронять обработку: сайт может лежать, а работа уже сделана и её
 	// надо довести. Поэтому fire-and-forget с записью в лог.
@@ -175,8 +186,14 @@ function reportSteps(
 		const stepId: string | undefined = payload.graphNodeId ?? payload.nodeId;
 		if (!stepId) return;
 
-		if (type === 'node:start') {
-			current = { id: stepId, since: Date.now() };
+		if (type === 'node:wait') {
+			// Только отмечаем, за какой шаг держимся: отчёт отсюда НЕ шлём. Слот почти
+			// всегда свободен, и лишний `running` на каждый шаг удвоил бы разговор с
+			// сайтом ни за чем. Если ожидание затянется — его подхватит пульс аренды
+			// (`LEASE_RENEW_MS`), а он и есть единственное, ради чего эта отметка нужна.
+			current = { id: stepId, since: Date.now(), waiting: true };
+		} else if (type === 'node:start') {
+			current = { id: stepId, since: Date.now(), waiting: false };
 			report(stepId, 'running');
 		} else if (type === 'node:done') {
 			if (current?.id === stepId) current = null;
@@ -253,13 +270,30 @@ export async function runTask(
 	});
 
 	// 2. Идентичность → путь в зеркале → байты на диске.
-	const filePath = unwrap(await commands.storageMirrorPath(source.fileId));
+	//
+	// Раскладку `<владелец>/<проект>` строит карта из ответа `/projects`, а обновляет её
+	// демон раз в пару минут. Проект, созданный на сайте только что, в локальной карте
+	// ещё не значится — и первая задача по нему падала бы на «проект не найден в
+	// раскладке зеркала», хотя всё остальное на месте. Поэтому один раз пересобираем
+	// карту и пробуем снова.
+	let filePath: string;
+	try {
+		filePath = unwrap(await commands.storageMirrorPath(source.fileId));
+	} catch (e: any) {
+		log('info', `[worker] проекта нет в раскладке зеркала (${e?.message ?? e}) — обновляем список проектов`);
+		await refreshMirrorLayout();
+		filePath = unwrap(await commands.storageMirrorPath(source.fileId));
+	}
 	await ensureLocal(filePath);
 
 	const projectPath = projectRootFromFile(filePath, source.folderPath ?? '');
 	const projectName = basename(projectPath);
 	const mainFolderPath = dirname(projectPath);
 	const mainFolderName = basename(mainFolderPath);
+
+	// 2.1. Пользователь и его проекты — в колонки. Не ждём конца обработки: смотреть,
+	//      что машина делает прямо сейчас, надо во время работы, а не после.
+	await showTaskInColumns(mainFolderPath, projectName, log);
 
 	// 3. Описание: то, что прислал сайт, плюс машинно-локальное и координаты элемента.
 	const description = { ...(payload.description ?? {}) };
@@ -352,11 +386,11 @@ export async function runTask(
 		const cur = steps.current();
 		if (!cur) return; // между шагами и на ожидании заливки аренду не двигаем
 		const mins = Math.round((Date.now() - cur.since) / 60000);
-		steps.report(cur.id, 'running', `шаг идёт ${mins} мин`);
+		steps.report(cur.id, 'running', cur.waiting ? `ждёт свободный слот ${mins} мин` : `шаг идёт ${mins} мин`);
 	}, LEASE_RENEW_MS);
 
 	try {
-		const result = await processItem(payload, signal, RUN_PROCESSING);
+		const result = await processItem(payload, signal, RUN_WORKER);
 
 		if (result.status !== 'done') {
 			return {

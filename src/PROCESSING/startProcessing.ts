@@ -2,6 +2,7 @@ import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { commands } from '@/Utils/specta';
 import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
+import { useWorker_store } from '@/Store/Processing/useWorker_store';
 import { getSignal } from './utils/processingAbort';
 import { getAppSettings } from '@/Store/Settings/appSettings_client';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
@@ -19,14 +20,17 @@ export async function startProcessing() {
 	const { maxParallel } = settings.processing;
 	const MAX_PARALLEL = Math.max(1, maxParallel);
 
-	// Семафоры ресурсных пулов — набор ЭТОГО прогона (полоса `processing`). Слоты =
+	// Регистрируемся в области ресурсных пулов своей полосы (`processing`). Слоты =
 	// лимит из settings.resourcePools (с fallback на RESOURCE_POOL_DEFAULT_LIMITS).
 	// Карта pluginId→пул берётся из манифестов текущих плагинов → собранные флоу
 	// подхватывают актуальное назначение (резолв вживую по pluginId).
 	//
-	// Именно набором прогона, а не процессным синглтоном: постинг — независимый
-	// раннер со своей кнопкой, и его старт посреди обработки раньше выбрасывал
-	// семафоры вместе с очередью ожидающих, после чего обработка висла навсегда.
+	// Не процессный синглтон и не набор на вызов: постинг — независимый раннер со своей
+	// кнопкой, и его старт посреди обработки раньше выбрасывал семафоры вместе с
+	// очередью ожидающих, после чего обработка висла навсегда. У него теперь свой набор,
+	// а вот с режимом воркера набор ОБЩИЙ: он про железо машины, а не про раннера (см.
+	// `runLanes.ts`). Если воркер уже работает — входим в готовую область, его лимиты и
+	// его семафоры.
 	let pluginPools: Array<{ id: string; pool: string }> = [];
 	try {
 		const all = (await window.plugins.getAllPlugins()) ?? [];
@@ -106,21 +110,32 @@ export async function startProcessing() {
 			await Promise.allSettled(running);
 		}
 
-		// Queued-записи в окне логов, которые так и не стартовали (стоп/abort), переводим в aborted.
+		// Queued-записи в окне логов, которые так и не стартовали (стоп/abort), переводим в
+		// aborted. Элементы воркера этим не задеть: он регистрирует свой сразу в статусе
+		// `running` (`processItem`, item:start), а `queued` бывает только у найденного
+		// сканом и не начатого.
 		commands.logWindowEmitAbortQueued().catch(() => {});
 
-		// Сбрасываем statusBar в idle. Локальный set обновляет стор в этом окне (nodeWin),
-		// а IPC `setStatusBar` транслирует событие в main window — там стор отдельный.
-		useStatusBar_Store.getState().setStatusBarState('waiting starting');
-		void commands.setStatusBar('waiting starting').catch(() => {});
+		// «Всё, обработка кончилась» — заявление про ВСЮ машину, а не про эту волну:
+		// статус-бар один на программу, а `process:complete` гасит подсветку активной ноды
+		// в графе. Пока по своей полосе работает воркер, ни то ни другое не правда — он
+		// в этот момент может рендерить, и сброс выглядел бы как «обработка встала».
+		// Свой статус воркер допишет сам, шагами.
+		if (!useWorker_store.getState().isWorking) {
+			// Сбрасываем statusBar в idle. Локальный set обновляет стор в этом окне (nodeWin),
+			// а IPC `setStatusBar` транслирует событие в main window — там стор отдельный.
+			useStatusBar_Store.getState().setStatusBarState('waiting starting');
+			void commands.setStatusBar('waiting starting').catch(() => {});
 
-		// Финальный broadcast: node_win получит 'process:complete' и сбросит подсветку
-		// активной ноды через 2 секунды (см. ProcessingEventListener).
-		commands.sendProcessComplete().catch(() => {});
+			// Финальный broadcast: node_win получит 'process:complete' и сбросит подсветку
+			// активной ноды через 2 секунды (см. ProcessingEventListener).
+			commands.sendProcessComplete().catch(() => {});
+		}
 	} finally {
-		// Снятие подписки и закрытие пулов — обязательно, даже если из цикла вылетело
-		// исключение. Иначе слушатель остаётся навсегда, а ожидающие слот (жёсткий стоп
-		// посреди ожидания) висят вечно.
+		// Снятие подписки и выход из области пулов — обязательно, даже если из цикла
+		// вылетело исключение. Иначе слушатель остаётся навсегда, а ожидающие слот
+		// (жёсткий стоп посреди ожидания) висят вечно. Семафоры при этом гаснут только
+		// если в области больше никого нет: работающий воркер их удержит.
 		window.tauriAPI.removeProcessingEvent(handleProcessingEvent);
 		disposeRunPools(RUN_PROCESSING);
 	}

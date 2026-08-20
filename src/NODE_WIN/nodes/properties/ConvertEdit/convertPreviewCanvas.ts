@@ -16,7 +16,7 @@ import {
 	FrameSettings,
 	defaultFrameSettings,
 } from './types';
-import { applyBlur, applyColorAdjust } from '@/Utils/canvasFilters';
+import { applyFfmpegEq, applyGaussianBlur } from '@/Utils/canvasFilters';
 
 type AnyFilter = VideoFilterItem | ImageFilterItem;
 type Source = CanvasImageSource & { width?: number; height?: number };
@@ -81,14 +81,14 @@ function applyFilter(
 			return out;
 		}
 		case 'blur': {
-			if (f.sigma <= 0) return input;
-			applyBlur(input, f.sigma);
+			// в графе это `gblur=sigma=…`
+			applyGaussianBlur(input, f.sigma);
 			return input;
 		}
 		case 'eq': {
-			// ffmpeg eq.brightness is additive (-1..1 → 0..255); contrast/saturation/gamma multiplicative.
-			applyColorAdjust(input, {
-				brightnessAdd: f.brightness * 255,
+			// Ровно та же арифметика, что у фильтра eq (аддитивный brightness, Y'CbCr limited).
+			applyFfmpegEq(input, {
+				brightness: f.brightness,
 				contrast: f.contrast,
 				saturation: f.saturation,
 				gamma: f.gamma,

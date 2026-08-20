@@ -1,3 +1,5 @@
+import type { EncodeSettings } from '../../src/Utils/ffmpegCaps';
+
 // ─── Animation ───────────────────────────────────────────────────────────────
 
 export type TitleAnimationType = 'none' | 'word_highlight' | 'bg_reveal';
@@ -73,4 +75,6 @@ export interface TitleSettings {
 	landscape: TitleFormatSettings;
 	portrait: TitleFormatSettings;
 	square: TitleFormatSettings;
+	/** Render-настройки выхода: попап «настройки кодирования» в шапке ноды. */
+	encode?: EncodeSettings;
 }

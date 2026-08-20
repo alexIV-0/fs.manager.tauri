@@ -1,5 +1,7 @@
 // src/NODE_WIN/nodes/properties/OverlayEdit/types.ts
 
+import type { EncodeSettings } from '@/Utils/ffmpegCaps';
+
 export type VideoFormat = 'landscape' | 'portrait' | 'square';
 
 /** Настройки наложения для одного формата */
@@ -20,6 +22,8 @@ export interface OverlaySettings {
 	square: OverlayFormatSettings;
 	fgFilePath?: string;
 	bgFilePath?: string;
+	/** Render-настройки выхода (контейнер/кодек/preset/CRF/pix_fmt/alpha) — попап в шапке ноды. */
+	encode?: EncodeSettings;
 }
 
 // ── Дефолтные значения ──────────────────────────────────────────────────────

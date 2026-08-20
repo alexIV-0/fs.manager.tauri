@@ -10,6 +10,14 @@ export const isValueValid = (property: Property): boolean => {
 		return typeof property.controlProps.value === 'string' ? property.controlProps.value !== '' : false;
 	}
 
+	// encodeSettings — невидимое свойство под попап кодирования. Пустое значение
+	// законно: дефолт берётся из профиля, объявленного в ui.json, поэтому «нет значения»
+	// это не «не настроено». Ветка нужна на случай `required: true` в чьём-то ui.json —
+	// иначе незнакомый тип вернул бы false и сделал ноду невалидной навсегда.
+	if (property.controlType === 'encodeSettings') {
+		return true;
+	}
+
 	if (!property.controlProps.value) {
 		return false;
 	}

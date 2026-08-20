@@ -5,6 +5,7 @@ import path from 'path';
 import type { PluginContext } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { buildEncodeArgs, encodeExt, encodeProfile, type EncodeSettings } from '../../src/Utils/ffmpegCaps';
 
 
 interface ChromakeySettings {
@@ -44,6 +45,8 @@ interface KeyingSettings {
 	lumakey: LumakeySettings;
 	despill: DespillSettings;
 	edge: EdgeSettings;
+	/** Render-настройки выхода: попап «настройки кодирования» в шапке ноды. */
+	encode?: EncodeSettings;
 }
 
 function isImageFile(filePath: string, typeOfFile: Record<string, string[]>): boolean {
@@ -128,6 +131,11 @@ async function processFile(
 
 	const filterString = buildKeyingFilterString(settings);
 	const isImage = isImageFile(fileFrom, _description.typeOfFile);
+	// Дефолт — тот же `mov` + Hap Q + snappy, которым кеинг кодировал до появления попапа:
+	// включение настройки не должно менять результат у тех, кто её не открывал.
+	// ВНИМАНИЕ: Hap Q альфы НЕ несёт (её даёт `hap_alpha` или ProRes 4444) — если из кеинга
+	// нужна прозрачность, это выбирается в попапе галочкой alpha.
+	const enc = settings.encode ?? encodeProfile('hapMov');
 
 	await fs.mkdir(path.dirname(fileTo));
 
@@ -145,7 +153,7 @@ async function processFile(
 			text: label,
 			duration: info.durationInSeconds || 10,
 			nodeId,
-			command: ['-y', '-i', fileFrom, '-vf', filterString, '-c:v', 'hap', '-format', 'hap_q', '-compressor', 'snappy', ...audioArgs, fileTo],
+			command: ['-y', '-i', fileFrom, '-vf', filterString, ...buildEncodeArgs(enc), ...audioArgs, fileTo],
 		});
 	}
 	return fileTo;
@@ -185,7 +193,11 @@ export async function keyingFFmpegFunc(_item: any, _description: any, ctx: Plugi
 		}
 
 		const basePath = createPathForFileByPattern(curPath, _description, fileFrom);
-		const ext = isImageFile(fileFrom, _description.typeOfFile) ? '.png' : '.mov';
+		// Картинка остаётся картинкой (кодек тут не при чём), у видео расширение диктует
+		// выбранный контейнер — правило одно на все плагины (`encodeExt`).
+		const ext = isImageFile(fileFrom, _description.typeOfFile)
+			? '.png'
+			: `.${encodeExt(settings.encode ?? encodeProfile('hapMov'), fileFrom, 'mov')}`;
 		const fileTo = path.join(path.dirname(basePath), path.basename(basePath, path.extname(basePath)) + ext);
 
 		const result = await processFile(fileFrom, fileTo, settings, i + 1, inputFiles.length, _description, ctx, _item.id);
