@@ -5,13 +5,14 @@ import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { runProcessingForSingleFolder } from '@/PROCESSING/runProcessingForSingleFolder';
 import { abortNow } from '@/PROCESSING/utils/processingAbort';
 import { RUN_PROCESSING } from '@/PROCESSING/runLanes';
-import { Box, Button, Divider, IconButton, Stack, Typography } from '@mui/material';
+import { Box, Button, Divider, IconButton, Stack, Tooltip, Typography } from '@mui/material';
 import { useReactFlow } from '@xyflow/react';
-import { Play, Square } from 'lucide-react';
+import { FileText, Play, Square } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import PresetsModal from './PresetsModal';
 import DocModal from './DocModal';
 import { saveFlow } from '@/NODE_WIN/utils/saveFlow';
+import { ProjectDescriptionModal } from '@/components/ProjectDescriptionModal';
 
 interface TopPanelProps {
 	title: string | null;
@@ -24,6 +25,7 @@ function TopPanel({ title }: TopPanelProps) {
 
 	const [presetsOpen, setPresetsOpen] = useState(false);
 	const [docOpen, setDocOpen] = useState(false);
+	const [descOpen, setDescOpen] = useState(false);
 
 	const reactFlow = useReactFlow();
 	const { path } = usePathStore();
@@ -66,6 +68,20 @@ function TopPanel({ title }: TopPanelProps) {
 					{folderName}
 				</Typography>
 				<Divider orientation='vertical' flexItem />
+
+				{/* Описание проекта — размер и толщина как у иконок главного окна */}
+				<Tooltip title='Описание проекта' arrow>
+					<span>
+						<IconButton
+							size='small'
+							disabled={!path}
+							onClick={() => setDescOpen(true)}
+							sx={{ p: 0, mx: '12px', color: greyColor(65), '&:hover': { color: greyColor(90) } }}
+						>
+							<FileText strokeWidth={1} />
+						</IconButton>
+					</span>
+				</Tooltip>
 
 				{/* Центр — кнопки запуска/остановки */}
 				<Box
@@ -128,6 +144,16 @@ function TopPanel({ title }: TopPanelProps) {
 
 			{/* Modal: Documentation */}
 			<DocModal open={docOpen} onClose={() => setDocOpen(false)} />
+
+			{/* Modal: описание проекта — здесь проект уже открыт, путь под рукой */}
+			{path && (
+				<ProjectDescriptionModal
+					open={descOpen}
+					onClose={() => setDescOpen(false)}
+					projectName={folderName ?? ''}
+					projectPath={path}
+				/>
+			)}
 		</>
 	);
 }

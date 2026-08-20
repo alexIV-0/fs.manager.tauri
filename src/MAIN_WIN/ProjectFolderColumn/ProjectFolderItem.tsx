@@ -29,6 +29,7 @@ import {
 	pasteFromClipboardFs,
 } from '@/PROCESSING/utils/fileSystemActions';
 import { ProjectStatsModal } from './ProjectStatsModal';
+import { ProjectDescriptionModal } from '@/components/ProjectDescriptionModal';
 
 export const ProjectFolderItem = memo(function ProjectFolderItem({
 	name,
@@ -41,6 +42,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 }) {
 	const [onOffVal, setOnOffVal] = useState(true);
 	const [statsOpen, setStatsOpen] = useState(false);
+	const [descOpen, setDescOpen] = useState(false);
 	const listItemRef = useRef<HTMLLIElement>(null);
 
 	const activeMainFolder = setActiveFolders_store((s) => s.activeMainFolder);
@@ -318,6 +320,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 		// специфичные для 2-й колонки
 		onOpenNodes: openOptions,
 		onOpenStats: () => setStatsOpen(true),
+		onOpenDescription: () => setDescOpen(true),
 		// зеркало пунктов 3-й колонки
 		onRename: () => {
 			handleMenuClose();
@@ -458,6 +461,7 @@ export const ProjectFolderItem = memo(function ProjectFolderItem({
 			/>
 
 			<ProjectStatsModal open={statsOpen} onClose={() => setStatsOpen(false)} projectName={name} projectPath={getProjectPath() ?? ''} />
+			<ProjectDescriptionModal open={descOpen} onClose={() => setDescOpen(false)} projectName={name} projectPath={getProjectPath() ?? ''} />
 		</>
 	);
 });

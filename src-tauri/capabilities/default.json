@@ -1,6 +1,6 @@
 {
 	"identifier": "default",
-	"description": "Права, нужные ВСЕМ четырём окнам: события, пути, управление собственным окном, текстовый буфер обмена. Всё, что нужно только главному окну, вынесено в main.json — окна логов и превью этого не получают.",
+	"description": "Права, нужные ВСЕМ четырём окнам: события, пути, управление собственным окном, текстовый буфер обмена, картинка из буфера (вставка скриншота в редактор описания проекта — он открывается и из главного окна, и из окна нод). Всё, что нужно только главному окну, вынесено в main.json — окна логов и превью этого не получают.",
 	"windows": ["*"],
 	"permissions": [
 		"core:default",
@@ -22,6 +22,8 @@
 		"fs:scope-appdata",
 		"fs:scope-home",
 		"clipboard-manager:allow-read-text",
-		"clipboard-manager:allow-write-text"
+		"clipboard-manager:allow-write-text",
+		"clipboard:allow-has-image",
+		"clipboard:allow-read-image-binary"
 	]
 }

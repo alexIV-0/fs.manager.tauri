@@ -9,6 +9,7 @@ import {
 	FilePlus,
 	Workflow,
 	BarChart3,
+	FileText,
 	LucideIcon,
 } from 'lucide-react';
 import { ContextMenuItem } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
@@ -59,6 +60,7 @@ interface UseProjectMenuItemsProps {
 	// Специфичные для 2-й колонки
 	onOpenNodes: () => void;
 	onOpenStats: () => void;
+	onOpenDescription: () => void;
 	// Зеркало пунктов папки из 3-й колонки
 	onRename: () => void;
 	onCopyPath: () => void;
@@ -208,6 +210,7 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 		const {
 			onOpenNodes,
 			onOpenStats,
+			onOpenDescription,
 			onRename,
 			onCopyPath,
 			onShowInFinder,
@@ -236,6 +239,12 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 				label: 'Статистика',
 				icon: BarChart3,
 				onClick: onOpenStats,
+			},
+			{
+				id: 'description',
+				label: 'Описание',
+				icon: FileText,
+				onClick: onOpenDescription,
 			},
 			// ── Зеркало пунктов папки из 3-й колонки ────────────────────
 			{

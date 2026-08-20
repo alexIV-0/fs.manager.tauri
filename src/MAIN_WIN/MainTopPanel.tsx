@@ -1,7 +1,7 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
 import { SyncStatusButton } from './Storage/SyncStatusButton';
 import { commands } from '@/Utils/specta';
-import { AlertTriangle, Blocks, BookOpen, Hammer, Settings, Wrench, Search } from 'lucide-react';
+import { AlertTriangle, Blocks, BookOpen, FileText, Hammer, Settings, Wrench, Search } from 'lucide-react';
 import OptionsPopover from './options/Options.Popover';
 import { useState, useEffect } from 'react';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
@@ -14,16 +14,29 @@ import { loadAllUINodes } from '@/Utils/loadAllUINodes';
 import { useProcessingStats_store } from '@/Store/Processing/useProcessingStats_store';
 import { ProjectSearchModal } from './ProjectSearch/ProjectSearchModal';
 import { useProjectSearch_store } from '@/Store/MainWin/projectSearch_store';
+import { ProjectDescriptionModal } from '@/components/ProjectDescriptionModal';
+import { setActiveFolders_store } from '@/Store/MainWin/activeFolder_store';
+import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
+import { joinPath } from '@/Utils/joinPath';
 
 export function MainTopPanel() {
 	const { isScanning } = isScanningStore();
 	const [open, setOpen] = useState(false);
 	const [builderOpen, setBuilderOpen] = useState(false);
 	const [docOpen, setDocOpen] = useState(false);
+	const [descOpen, setDescOpen] = useState(false);
 	const [isDev, setIsDev] = useState(false);
 	const { getFilteredGroups } = plugin_Store();
 	const { iterationCount, successCount, errorItemsCount } = useProcessingStats_store();
 	const { isOpen: projectSearchOpen, setIsOpen: setProjectSearchOpen } = useProjectSearch_store();
+
+	// Описание принадлежит проекту, а панель общая — поэтому кнопка живёт только
+	// пока проект выбран. Путь собираем из активной главной папки и имени проекта.
+	const activeMainFolder = setActiveFolders_store((s) => s.activeMainFolder);
+	const activeProjectFolder = setActiveFolders_store((s) => s.activeProjectFolder);
+	const mainFolderArr = mainFolders_stor((s) => s.mainFolderArr);
+	const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
+	const projectPath = activeMain && activeProjectFolder ? joinPath(activeMain.path, activeProjectFolder) : null;
 
 	const defGrayColor = defGray;
 
@@ -77,6 +90,14 @@ export function MainTopPanel() {
 					<IconButton sx={{ p: 0, margin: '0 10px' }} size='small' onClick={() => setProjectSearchOpen(true)}>
 						<Search strokeWidth={1} />
 					</IconButton>
+				</Tooltip>
+
+				<Tooltip title={projectPath ? `Описание проекта «${activeProjectFolder}»` : 'Описание проекта — сначала выберите проект'}>
+					<span>
+						<IconButton sx={{ p: 0, margin: '0 10px' }} size='small' disabled={!projectPath} onClick={() => setDescOpen(true)}>
+							<FileText strokeWidth={1} />
+						</IconButton>
+					</span>
 				</Tooltip>
 
 				{hasMissingPlugins && (
@@ -149,6 +170,14 @@ export function MainTopPanel() {
 			{isDev && <PluginBuilderModal open={builderOpen} onClose={() => setBuilderOpen(false)} />}
 			<DocModal open={docOpen} onClose={() => setDocOpen(false)} />
 			<ProjectSearchModal open={projectSearchOpen} onClose={() => setProjectSearchOpen(false)} />
+			{projectPath && (
+				<ProjectDescriptionModal
+					open={descOpen}
+					onClose={() => setDescOpen(false)}
+					projectName={activeProjectFolder ?? ''}
+					projectPath={projectPath}
+				/>
+			)}
 		</Box>
 	);
 }
