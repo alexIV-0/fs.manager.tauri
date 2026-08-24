@@ -23,7 +23,7 @@ export async function loadIndex(): Promise<PresetIndexItem[]> {
 
 export async function saveIndex(items: PresetIndexItem[]): Promise<void> {
 	const indexPath = await getIndexPath();
-	unwrap(await commands.writeFile(indexPath, JSON.stringify(items, null, 2)));
+	unwrap(await commands.writeFileAtomic(indexPath, JSON.stringify(items, null, 2)));
 }
 
 export async function loadPresetText(id: string): Promise<string> {
@@ -37,7 +37,7 @@ export async function loadPresetText(id: string): Promise<string> {
 export async function savePresetText(id: string, text: string): Promise<void> {
 	const dir = await getPresetsDir('textPresets');
 	const filePath = joinPath(dir, `${id}.txt`);
-	unwrap(await commands.writeFile(filePath, text));
+	unwrap(await commands.writeFileAtomic(filePath, text));
 }
 
 export async function deletePresetFiles(id: string): Promise<void> {

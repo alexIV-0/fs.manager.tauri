@@ -486,27 +486,86 @@ export const useCascadeValidation = () => {
 		[getIncomingEdges, clearInheritedValue, setInheritedValue, reactFlow],
 	);
 
-	// Каскадно обновить ноду и все зависимые ноды
+	/**
+	 * Каскадно пересчитать ноду и всё, что от неё зависит — В ТОПОЛОГИЧЕСКОМ ПОРЯДКЕ.
+	 *
+	 * Раньше здесь был обход в глубину с одним `visited`, и нода считалась ОДИН раз —
+	 * по первому пути, который до неё дошёл. На «ромбе» это давало неверный результат:
+	 *
+	 *     mainSearch → B → D(вход 1)
+	 *     mainSearch → C → D(вход 2)
+	 *
+	 * обход шёл mainSearch → B → D, и вход 2 брался из СТОРА, потому что `C` в этом
+	 * каскаде ещё не считался. Когда очередь доходила до `C`, ребро `C → D` упиралось
+	 * в `visited` и `D` уже не пересчитывалась — оставалась со значением от старого `C`.
+	 * А накопленное значение уходит в маски и пути, то есть в options.json и в плагины.
+	 *
+	 * Теперь нода считается ровно один раз, но ТОЛЬКО когда посчитаны все её апстримы
+	 * внутри затронутого подграфа. Тот же принцип, что в сборке очереди исполнения
+	 * (`createProcessQueue`), — здесь его просто не было.
+	 *
+	 * @param seed        готовые состояния нод, которые пересчитывать не надо
+	 *                    (`handleEdgeRemoval` кладёт сюда только что обновлённый target)
+	 * @param includeStart считать ли саму `startNodeId` (false — если её уже посчитали)
+	 */
 	const cascadeValidation = useCallback(
-		(startNodeId: string, visited = new Set<string>(), sourceUpdates = new Map<string, SourceUpdate>()) => {
-			// Защита от циклов
-			if (visited.has(startNodeId)) return;
-			visited.add(startNodeId);
+		(
+			startNodeId: string,
+			opts?: { seed?: Map<string, SourceUpdate>; includeStart?: boolean },
+		) => {
+			const includeStart = opts?.includeStart !== false;
+			const sourceUpdates = opts?.seed ?? new Map<string, SourceUpdate>();
 
-			// ✅ Обновляем текущую ноду и получаем обновлённое состояние целиком
-			const { updatedProperties, isValid, computedOutput } = validateAndUpdateNode(startNodeId, undefined, sourceUpdates);
+			// 1. Затронутый подграф — сама нода и все её потомки по АКТИВНЫМ рёбрам.
+			const affected = new Set<string>();
+			const stack = [startNodeId];
+			while (stack.length) {
+				const id = stack.pop()!;
+				if (affected.has(id)) continue;
+				affected.add(id);
+				for (const e of getOutgoingEdges(id)) stack.push(e.target);
+			}
 
-			// ✅ Сохраняем для downstream: properties + isValid + computedOutput.
-			// Downstream предпочитает это store'у — устраняет stale-read в синхронной рекурсии.
-			sourceUpdates.set(startNodeId, { properties: updatedProperties, isValid, computedOutput });
+			// 2. Входящая степень считается ТОЛЬКО по рёбрам внутри подграфа. Рёбра
+			//    извне не считаем: их источники не менялись (они не ниже startNodeId),
+			//    и их значения корректно читаются из стора.
+			const inDegree = new Map<string, number>();
+			for (const id of affected) inDegree.set(id, 0);
+			for (const id of affected) {
+				for (const e of getOutgoingEdges(id)) {
+					if (affected.has(e.target)) inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+				}
+			}
 
-			// Получаем все зависимые ноды (куда идут edges от этой ноды)
-			const outgoingEdges = getOutgoingEdges(startNodeId);
+			const done = new Set<string>();
+			const compute = (id: string) => {
+				done.add(id);
+				if (!includeStart && id === startNodeId) return;
+				const { updatedProperties, isValid, computedOutput } = validateAndUpdateNode(id, undefined, sourceUpdates);
+				sourceUpdates.set(id, { properties: updatedProperties, isValid, computedOutput });
+			};
 
-			// Рекурсивно обновляем каждую зависимую ноду
-			outgoingEdges.forEach((edge) => {
-				cascadeValidation(edge.target, visited, sourceUpdates);
-			});
+			// 3. Kahn: снимаем нулевые степени, затем понижаем степени потомкам.
+			const queue = [...affected].filter((id) => (inDegree.get(id) ?? 0) === 0);
+			while (queue.length) {
+				const id = queue.shift()!;
+				if (done.has(id)) continue;
+				compute(id);
+				for (const e of getOutgoingEdges(id)) {
+					if (!affected.has(e.target)) continue;
+					const left = (inDegree.get(e.target) ?? 1) - 1;
+					inDegree.set(e.target, left);
+					if (left === 0) queue.push(e.target);
+				}
+			}
+
+			// 4. Страховка от цикла: узел в цикле до нулевой степени не доходит и в
+			//    очередь не попадает. Редактор замкнуть цикл больше не даёт, но в уже
+			//    сохранённом флоу он может лежать — такие ноды считаем как есть, лишь
+			//    бы не остались вовсе непосчитанными.
+			for (const id of affected) {
+				if (!done.has(id)) compute(id);
+			}
 		},
 		[validateAndUpdateNode, getOutgoingEdges],
 	);
@@ -516,21 +575,21 @@ export const useCascadeValidation = () => {
 		(edge: Edge) => {
 			if (!edge) return;
 
-			const targetNodeId = edge.target;
-			const clearedPropertyId = edge.targetHandle as string;
+			// Явно очищаем конкретное property target-ноды: не полагаемся на то, что
+			// ребро уже исчезло из стора.
+			const { updatedProperties, isValid, computedOutput } = validateAndUpdateNode(edge.target, [
+				edge.targetHandle as string,
+			]);
 
-			// Обновляем target ноду, очищая inheritedValue конкретного property
-			validateAndUpdateNode(targetNodeId, [clearedPropertyId]);
-
-			// Обновляем зависимые ноды (без повторной валидации текущей)
-			const outgoingEdges = getOutgoingEdges(targetNodeId);
-			const visited = new Set<string>([targetNodeId]);
-
-			outgoingEdges.forEach((edge) => {
-				cascadeValidation(edge.target, visited);
+			// Свежее состояние target отдаём каскаду ЗАТРАВКОЙ. Без этого downstream
+			// читал target из стора — тот самый stale-read, ради которого `sourceUpdates`
+			// и существует; связь удалили, а нода ниже оставалась «валидной».
+			cascadeValidation(edge.target, {
+				seed: new Map([[edge.target, { properties: updatedProperties, isValid, computedOutput }]]),
+				includeStart: false,
 			});
 		},
-		[validateAndUpdateNode, cascadeValidation, getOutgoingEdges],
+		[validateAndUpdateNode, cascadeValidation],
 	);
 
 	// Обработка добавления edge

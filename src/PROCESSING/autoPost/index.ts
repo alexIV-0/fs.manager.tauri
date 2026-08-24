@@ -17,6 +17,7 @@ import { formatNameByPattern } from '@/Utils/formatNameByPattern';
 import { usePosting_store } from '@/Store/Processing/usePosting_store';
 import { clearFileNameAndID } from '../utils/clearFileNameAndID';
 import { processItem } from '../processItem';
+import { RUN_POSTING } from '../runLanes';
 import { readAllRecords, lastPublishedAt, postedFileSet, readCooldownUntil } from './postLog';
 import { platformFromPipeline } from './posters';
 import type { PostRoute } from './types';
@@ -33,7 +34,7 @@ export function clearPostRoutes(): void {
 function logWin(level: 'info' | 'warn' | 'error', text: string): void {
 	console.log(`[autoPost:${level}] ${text}`);
 	try {
-		(window as any).tauriAPI?.invoke('send_log', { level, text }).catch(() => {});
+		void commands.sendLog(level, text).catch(() => {});
 	} catch {}
 }
 
@@ -84,7 +85,7 @@ export async function addPostRouteFromProject(projectPath: string): Promise<void
 				order: String(f.order ?? 'by Time'),
 				interval: Number(f.interval) || 0,
 				daysOfWeek: Array.isArray(f.daysOfWeek) ? f.daysOfWeek : [],
-				window: (Array.isArray(f.window) && f.window.length >= 2 ? [Number(f.window[0]), Number(f.window[1])] : [0, 1440]) as [number, number],
+				window: (Array.isArray(f.window) && f.window.length >= 2 ? [Number(f.window[0]), Number(f.window[1])] : [0, 86400]) as [number, number],
 				deleteAfter: Boolean(f.deleteAfter),
 				account: f.account || '',
 				platform: platformFromPipeline(Array.isArray(f.pipeline) ? f.pipeline : []),
@@ -103,11 +104,12 @@ function dayAllowed(now: Date, days: string[]): boolean {
 	return days.includes(DAY_LABELS[now.getDay()]);
 }
 
+// Окно суток хранится в СЕКУНДАХ от полуночи (таймкод HH:MM:SS в ноде finder).
 function windowAllowed(now: Date, win: [number, number]): boolean {
 	const start = Number(win[0]);
 	const end = Number(win[1]);
 	if (!(end > start)) return true;
-	const cur = now.getHours() * 60 + now.getMinutes();
+	const cur = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
 	return cur >= start && cur < end;
 }
 
@@ -260,7 +262,7 @@ async function runPipeline(route: PostRoute, file: string, signal: AbortSignal):
 	item[route.finderId].deleteAfter = route.deleteAfter;
 	item.description = await buildPostDescription(route, file);
 
-	const status = await processItem(item, signal);
+	const { status } = await processItem(item, signal, RUN_POSTING);
 
 	if (status === 'done') {
 		try {

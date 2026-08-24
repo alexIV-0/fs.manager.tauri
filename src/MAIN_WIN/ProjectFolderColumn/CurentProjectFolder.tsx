@@ -15,7 +15,9 @@ import { CurentFolderItem } from '../FileExplorerColumn/CurentFolderItem';
 import { UniversalFolderView } from '../FileExplorerColumn/UniversalFolderView';
 import { joinPath } from '@/Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
+import { ensureLocal, moveInCloud } from '@/Utils/storageSeam';
 import { invalidateDirCache } from '@/Store/helpers/readDirContent';
+import { ensureMirrorDir } from '@/Utils/storageSeam';
 
 export function CurentProjectFolder() {
 	const [activeItem, setActiveItem] = useState<{
@@ -183,10 +185,19 @@ export function CurentProjectFolder() {
 
 			const pathTo = joinPath(dropData.targetPath, dragData.name);
 
+			// Папка-приёмник может быть облачной и существовать только в каталоге.
+			await ensureMirrorDir(dropData.targetPath);
+
 			if (isCopy) {
-				unwrap(await commands.copyItem(dragData.path, pathTo, { overwrite: true }));
+				// Облачный источник мог быть не скачан — гидратируем (вне зеркала no-op).
+				unwrap(await commands.copyItem(await ensureLocal(dragData.path), pathTo, { overwrite: true }));
 			} else {
-				unwrap(await commands.moveItem(dragData.path, pathTo, { overwrite: true }));
+				// Внутри облака перенос идёт через каталог — 0 байт и связь не рвётся.
+				// `pathTo` это итоговый путь, переносу нужна папка-приёмник.
+				// Папка-приёмник здесь известна напрямую: это цель дропа.
+				if (!(await moveInCloud(dragData.path, dropData.targetPath))) {
+					unwrap(await commands.moveItem(await ensureLocal(dragData.path), pathTo, { overwrite: true }));
+				}
 			}
 
 			// Сбрасываем кэш для папок, которых коснулась операция —

@@ -26,6 +26,21 @@ export interface FfSwitchFgShadow {
 	offsetY: number;
 	opacity: number;
 	color: string;
+	/**
+	 * Раздувание прямоугольника тени — по этому числу пикселей В КАЖДУЮ сторону.
+	 *
+	 * Тень здесь не силуэт, а прямоугольник размером слота FG (у видеокадра нет альфы),
+	 * поэтому «объём» — это буквально прямоугольник побольше, сдвинутый на столько же
+	 * влево-вверх. Никакой морфологии не нужно: тот же `color` + `overlay`.
+	 *
+	 * При `blur = 0` даёт цветную рамку вокруг кадра, при `blur > 0` — более широкое
+	 * свечение (сначала раздули жёсткий силуэт, потом размыли его край — как `spread`
+	 * в фотошопной тени).
+	 *
+	 * Необязательное: у настроек, сохранённых до появления параметра, его нет — читать
+	 * только через `?? 0`.
+	 */
+	spread?: number;
 }
 
 export interface FfSwitchSettings {
@@ -72,14 +87,91 @@ export function calcFinalFormat(
 	return [1080, 1920];
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-	const h = (hex || '#000000').replace('#', '').padEnd(6, '0');
-	return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+/** hex без решётки, ровно 6 знаков — в таком виде цвет уходит в ffmpeg. */
+function hexRgb(hex: string): string {
+	return (hex || '#000000').replace('#', '').padEnd(6, '0').slice(0, 6);
+}
+
+/**
+ * Радиус блюра бэкграунда. ffmpeg отбрасывает дробную часть радиуса (`boxblur=17.5`
+ * работает как `boxblur=17`) — округляем сами, чтобы канвас-превью считало ТОТ ЖЕ радиус.
+ */
+export function bgBlurRadius(blur: number): number {
+	return Math.floor(blur);
+}
+
+export interface ShadowBlurParams {
+	/** Радиус box-блюра. `0` — размытия нет вовсе, край жёсткий. */
+	radius: number;
+	/** Число проходов (`power` у boxblur) — два дают гладкое затухание вместо линейного. */
+	power: number;
+	/** Прозрачное поле вокруг прямоугольника тени: блюру нужно куда растекаться. */
+	pad: number;
+}
+
+/**
+ * Параметры размытия тени — ОДИН источник для графа ffmpeg и для канвас-превью
+ * (`makeShadowLayer` в Utils/canvasFilters), иначе превью и рендер разойдутся.
+ *
+ * `pad` обязателен: без прозрачного поля boxblur размывает прямоугольник «сам в себя»
+ * (края нечем размывать, окно у границы просто сужается) и тень выходит с ЖЁСТКИМ краем —
+ * ровно этот баг и был виден в рендере, пока тень строилась через `geq` без pad.
+ *
+ * `blur = 0` — это ОТСУТСТВИЕ блюра, а не «блюр в один пиксель». Раньше здесь стоял
+ * `max(1, …)`, и жёсткая тень всё равно приезжала с однопиксельной мыльной кромкой —
+ * незаметно, пока тень просто выглядывала из-под кадра, и очень заметно на рамке от
+ * `spread`, где эта кромка идёт по всему периметру. Ноль означает «ни `pad`, ни
+ * `boxblur` в граф не ставим вовсе» — заодно дешевле.
+ */
+export function shadowBlurParams(blur: number): ShadowBlurParams {
+	const radius = Math.max(0, Math.floor(blur));
+	if (radius === 0) return { radius: 0, power: 0, pad: 0 };
+	const power = 2;
+	return { radius, power, pad: radius * power + 2 };
+}
+
+export interface ShadowGeometry extends ShadowBlurParams {
+	/** Размер прямоугольника тени (уже с раздуванием, без прозрачного поля). */
+	width: number;
+	height: number;
+	/** Смещение слоя тени от левого-верхнего угла FG: сюда входят offset, spread и pad. */
+	dx: number;
+	dy: number;
+}
+
+/**
+ * Геометрия слоя тени — ОДИН источник для графа и для канвас-превью.
+ *
+ * Отдельная функция, а не три вычисления по месту: раздувание меняет и размер слоя, и
+ * его позицию (раздули на 20 — сдвинули на 20 обратно, иначе прямоугольник вырастет
+ * только вправо-вниз). Разъехаться этим двум местам нельзя — превью обещает совпадение
+ * с рендером.
+ *
+ * Отрицательный `spread` допустим (тень уже объекта), но меньше пикселя прямоугольник
+ * не бывает: `color=size=0x0` ffmpeg не примет.
+ */
+export function shadowGeometry(
+	shadow: { blur: number; offsetX: number; offsetY: number; spread?: number },
+	slotW: number,
+	slotH: number,
+): ShadowGeometry {
+	const blur = shadowBlurParams(shadow.blur);
+	const spread = Math.round(shadow.spread ?? 0);
+	const width = Math.max(1, Math.round(slotW) + spread * 2);
+	const height = Math.max(1, Math.round(slotH) + spread * 2);
+	return {
+		...blur,
+		width,
+		height,
+		dx: Math.round(shadow.offsetX) - spread - blur.pad,
+		dy: Math.round(shadow.offsetY) - spread - blur.pad,
+	};
 }
 
 function buildBgAdjustFilter(adj: FfSwitchBgAdjust): string {
 	const parts: string[] = [];
-	if (adj.blur > 0) parts.push(`boxblur=${adj.blur}:1`);
+	const br = bgBlurRadius(adj.blur);
+	if (br >= 1) parts.push(`boxblur=${br}:1`);
 	const eqParts: string[] = [];
 	if (adj.brightness !== 0) eqParts.push(`brightness=${adj.brightness.toFixed(3)}`);
 	if (adj.contrast !== 1) eqParts.push(`contrast=${adj.contrast.toFixed(3)}`);
@@ -181,7 +273,8 @@ export function buildFfSwitchGraph(p: FfSwitchGraphParams): FfSwitchGraph {
 	}
 
 	const shadow = fg.shadow;
-	const hasShadow = !!(shadow?.enabled && (shadow.blur > 0 || shadow.opacity > 0));
+	// Тень с нулевой прозрачностью не видна — граф не засоряем.
+	const hasShadow = !!(shadow?.enabled && shadow.opacity > 0);
 
 	let curBase = 'bg_final';
 	for (let i = 0; i < fgCopies; i++) {
@@ -191,22 +284,37 @@ export function buildFfSwitchGraph(p: FfSwitchGraphParams): FfSwitchGraph {
 		const isLast = i === fgCopies - 1;
 		const outLabel = isLast ? '[vout]' : `[vtmp${i}]`;
 
+		filterParts.push(`[${i}:v]${ptsReset},${scaleFilter},${cropFilter}[fg${i}]`);
+
+		let base = curBase;
 		if (hasShadow && shadow) {
-			const [sr, sg, sb] = hexToRgb(shadow.color);
-			const sa = Math.round(Math.min(1, Math.max(0, shadow.opacity)) * 255);
-			const blurVal = Math.max(1, Math.round(shadow.blur));
-			const shadX = Math.round(fgX + shadow.offsetX);
-			const shadY = Math.round(fgY + shadow.offsetY);
+			// Тень — отдельный слой-заливка размером слота, а не копия кадра: содержимое FG
+			// на неё не влияет, зато не нужен ни split, ни geq (последний вдвое дороже по CPU).
+			// Раздувание (`spread`) — это просто прямоугольник побольше, сдвинутый на столько
+			// же обратно; ни новых фильтров, ни морфологии.
+			const { radius, power, pad, width: shadW, height: shadH, dx, dy } = shadowGeometry(shadow, cropW, cropH);
+			const hex = hexRgb(shadow.color);
+			const alphaHex = Math.round(Math.min(1, Math.max(0, shadow.opacity)) * 255)
+				.toString(16)
+				.padStart(2, '0');
+			const shadX = Math.round(fgX) + dx;
+			const shadY = Math.round(fgY) + dy;
 			const afterShad = `vshadbase${i}`;
-			filterParts.push(`[${i}:v]${ptsReset},${scaleFilter},${cropFilter},format=rgba[fgraw${i}]`);
-			filterParts.push(`[fgraw${i}]split=2[fgmain${i}][fgsrc${i}]`);
-			filterParts.push(`[fgsrc${i}]geq=r=${sr}:g=${sg}:b=${sb}:a=${sa},boxblur=${blurVal}:1[fgshad${i}]`);
+			// Жёсткая тень (`blur = 0`): ни прозрачного поля, ни boxblur — размывать нечего,
+			// а лишний `pad` в графе стоит проход по кадру на каждый слот.
+			const softPart =
+				radius > 0
+					? `pad=${shadW + pad * 2}:${shadH + pad * 2}:${pad}:${pad}:color=0x${hex}00,boxblur=${radius}:${power}`
+					: '';
+			filterParts.push(
+				`color=color=0x${hex}${alphaHex}:size=${shadW}x${shadH}:d=${duration},format=rgba` +
+					`${softPart ? `,${softPart}` : ''}[fgshad${i}]`,
+			);
 			filterParts.push(`[${curBase}][fgshad${i}]overlay=${shadX}:${shadY}[${afterShad}]`);
-			filterParts.push(`[${afterShad}][fgmain${i}]overlay=${fgX}:${fgY}${outLabel}`);
-		} else {
-			filterParts.push(`[${i}:v]${ptsReset},${scaleFilter},${cropFilter}[fg${i}]`);
-			filterParts.push(`[${curBase}][fg${i}]overlay=${fgX}:${fgY}${outLabel}`);
+			base = afterShad;
 		}
+
+		filterParts.push(`[${base}][fg${i}]overlay=${fgX}:${fgY}${outLabel}`);
 		curBase = isLast ? 'vout' : `vtmp${i}`;
 	}
 

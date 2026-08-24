@@ -180,7 +180,7 @@ pub async fn youtube_auth_start(
         ("redirect_uri", redirect_uri.as_str()),
         ("code_verifier", verifier.as_str()),
     ];
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .post(TOKEN_ENDPOINT)
         .form(&params)
         .send()
@@ -223,7 +223,7 @@ pub async fn youtube_refresh_token(
         ("client_id", client_id.as_str()),
         ("client_secret", client_secret.as_str()),
     ];
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .post(TOKEN_ENDPOINT)
         .form(&params)
         .send()
@@ -282,7 +282,7 @@ pub async fn youtube_get_access_token(
         ("client_id", client_id.as_str()),
         ("client_secret", client_secret.as_str()),
     ];
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .post(TOKEN_ENDPOINT)
         .form(&params)
         .send()

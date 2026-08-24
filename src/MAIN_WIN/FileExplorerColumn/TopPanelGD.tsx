@@ -1,23 +1,30 @@
 import { Box, IconButton, Typography } from '@mui/material';
 import { commands } from '@/Utils/specta';
 import { FolderSymlink } from 'lucide-react';
-import { bottomBoxStyle, topShadowStyle } from '../mainStyles';
+import { bottomBoxStyle, topShadowFor } from '../mainStyles';
+import { useActiveFolderIsOnline } from '../hooks/useActiveFolderIsOnline';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { ensureMirrorDir } from '@/Utils/storageSeam';
 
 export function TopPanelGD() {
 	const { instances } = useColumnView_Store();
+	const isOnlineFolder = useActiveFolderIsOnline();
 
-	const handleOpenInFinder = () => {
+	const handleOpenInFinder = async () => {
 		const cols = instances.gd.columns;
 		const pathToOpen = cols[cols.length - 1]?.path;
-		if (pathToOpen) commands.shellOpenPath(pathToOpen);
+		if (!pathToOpen) return;
+		// Папка облачного проекта может существовать только в каталоге. Открыть
+		// несуществующую папку нельзя — создаём ровно ту, которую попросили.
+		await ensureMirrorDir(pathToOpen);
+		commands.shellOpenPath(pathToOpen);
 	};
 
 	return (
 		<Box
 			sx={{
 				...bottomBoxStyle,
-				...topShadowStyle,
+				...topShadowFor(isOnlineFolder),
 				position: 'relative',
 				display: 'flex',
 				alignItems: 'center',
@@ -26,7 +33,7 @@ export function TopPanelGD() {
 				height: 26,
 			}}
 		>
-			<IconButton sx={{ p: 0 }} size='small' onClick={handleOpenInFinder}>
+			<IconButton sx={{ p: 0 }} size='small' onClick={() => void handleOpenInFinder()}>
 				<FolderSymlink strokeWidth={1} size={20} />
 			</IconButton>
 			<Typography

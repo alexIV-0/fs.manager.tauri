@@ -212,10 +212,54 @@ pub async fn preview_render_frame(
         return Err("ffmpeg отработал, но кадр не создан".into());
     }
 
+    // Вытесняем старое только после РЕАЛЬНОЙ записи: на попадании в кэш каталог
+    // не читаем, чтобы не платить листингом за каждый кадр.
+    evict_cache_dir(&cache_dir, CACHE_MAX_ENTRIES);
+
     Ok(PreviewFrameResult {
         path: out_path.to_string_lossy().to_string(),
         cached: false,
     })
+}
+
+
+/// Сколько файлов держим в одном разделе кэша превью.
+///
+/// Кэш лежит на диске и раньше не вытеснялся вообще: ключ включает позицию кадра, то
+/// есть каждое движение по таймлайну добавляло новый PNG навсегда. Команда
+/// `preview_clear_cache` существует, но её никто не вызывает — значит расти было нечем
+/// ограничено, и при настройке фильтров по многим видео в app_data накапливались
+/// гигабайты. Двести кадров на раздел — с запасом для работы и предсказуемо по объёму.
+const CACHE_MAX_ENTRIES: usize = 200;
+
+/// Удаляет самые старые файлы раздела, пока их не станет `max`.
+///
+/// Порядок — по времени изменения: у кэша, где ключ = хэш входа, «старый по mtime»
+/// это и есть «давно не пригождался», потому что попадание в кэш файл не трогает.
+/// Ошибки глушим намеренно: не смогли подчистить — это не повод рушить рендер кадра.
+fn evict_cache_dir(dir: &Path, max: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let meta = e.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            Some((meta.modified().ok()?, path))
+        })
+        .collect();
+
+    if files.len() <= max {
+        return;
+    }
+
+    files.sort_by_key(|(mtime, _)| *mtime);
+    let to_drop = files.len() - max;
+    for (_, path) in files.into_iter().take(to_drop) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Чистка кэша превью. namespace=None → весь preview-cache; Some(ns) → только раздел.
@@ -332,8 +376,68 @@ pub async fn preview_render_audio(
         return Err("ffmpeg отработал, но аудио не создано".into());
     }
 
+    // Аудио-раздел кэша тоже вытесняем: wav-и заметно крупнее кадров.
+    evict_cache_dir(&cache_dir, CACHE_MAX_ENTRIES);
+
     Ok(PreviewAudioResult {
         path: out_path.to_string_lossy().to_string(),
         cached: false,
     })
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::{evict_cache_dir, CACHE_MAX_ENTRIES};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fsm-prevcache-{}-{}", std::process::id(), tag));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Ключ кэша включает позицию кадра, поэтому каждое движение по таймлайну добавляло
+    /// новый PNG — навсегда, потому что `preview_clear_cache` никто не вызывает.
+    /// Проверяем, что вытеснение оставляет ровно лимит и убирает САМЫЕ СТАРЫЕ.
+    #[test]
+    fn вытесняет_самые_старые_до_лимита() {
+        let dir = tmp("evict");
+        // Пишем 5 файлов с заведомо разным mtime (задаём вручную, чтобы не спать).
+        for i in 0..5u32 {
+            let p = dir.join(format!("{i}.png"));
+            fs::write(&p, b"x").unwrap();
+            let t = filetime::FileTime::from_unix_time(1_000_000 + i as i64 * 10, 0);
+            filetime::set_file_mtime(&p, t).unwrap();
+        }
+
+        evict_cache_dir(&dir, 2);
+
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec!["3.png".to_string(), "4.png".to_string()], "остаться должны свежие");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ниже_лимита_ничего_не_трогает() {
+        let dir = tmp("keep");
+        fs::write(dir.join("a.png"), b"x").unwrap();
+        fs::write(dir.join("b.png"), b"x").unwrap();
+        evict_cache_dir(&dir, CACHE_MAX_ENTRIES);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn отсутствующий_каталог_не_ломает() {
+        let missing = std::env::temp_dir().join("fsm-prevcache-nope-xyz");
+        let _ = std::fs::remove_dir_all(&missing);
+        evict_cache_dir(&missing, 10); // не должно паниковать
+    }
 }

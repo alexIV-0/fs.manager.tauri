@@ -72,12 +72,14 @@ pub(crate) fn resolve_program_path(name: &str, state: &tauri::State<Mutex<AppSet
 
 /// Tauri-команда: возвращает путь к ffmpeg (из настроек или системный поиск)
 #[tauri::command]
+#[specta::specta]
 pub fn ffmpeg_get_path(state: tauri::State<Mutex<AppSettingsState>>) -> Result<String, String> {
     Ok(resolve_program_path("ffmpeg", &state))
 }
 
 /// Tauri-команда: возвращает путь к ffprobe (из настроек или системный поиск)
 #[tauri::command]
+#[specta::specta]
 pub fn ffprobe_get_path(state: tauri::State<Mutex<AppSettingsState>>) -> Result<String, String> {
     Ok(resolve_program_path("ffprobe", &state))
 }
@@ -89,6 +91,7 @@ pub fn ffprobe_get_path(state: tauri::State<Mutex<AppSettingsState>>) -> Result<
 /// плагины дёргают ffprobe на каждом шаге, sync-команды быстро забивают
 /// Tauri worker-pool и блокируют параллельные IPC.
 #[tauri::command]
+#[specta::specta]
 pub async fn ffprobe_get_info(
     file_path: String,
     state: tauri::State<'_, Mutex<AppSettingsState>>,
@@ -189,6 +192,7 @@ pub(crate) fn ffmpeg_get_video_thumbnail_with_path(file_path: String, timestamp_
 
 /// Снимает кадр из видеофайла и возвращает его как base64 data URL (image/png).
 #[tauri::command]
+#[specta::specta]
 pub fn ffmpeg_get_video_thumbnail(file_path: String, timestamp_sec: Option<f64>, state: tauri::State<Mutex<AppSettingsState>>) -> Result<String, String> {
     let ffmpeg = resolve_program_path("ffmpeg", &state);
     ffmpeg_get_video_thumbnail_with_path(file_path, timestamp_sec, &ffmpeg)
@@ -204,15 +208,30 @@ pub fn ffmpeg_get_video_thumbnail(file_path: String, timestamp_sec: Option<f64>,
 /// Tauri worker-pool, и параллельные IPC (path_exists, get_stat и т.п.) встают в очередь
 /// → UI замирает. С async-командой Tauri-runtime спокойно делит ресурсы.
 #[tauri::command]
+#[specta::specta]
 pub async fn ffmpeg_exec_with_progress(
     args: Vec<String>,
     duration_sec: Option<f64>,
     node_id: Option<String>,
     status_text: Option<String>,
+    run_lane: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Mutex<AppSettingsState>>,
+    processing_state: tauri::State<'_, Mutex<super::processing_commands::ProcessingState>>,
 ) -> Result<serde_json::Value, String> {
     let ffmpeg = resolve_program_path("ffmpeg", &state);
+
+    // ПРЕРЫВАНИЕ. До 2026-08-11 этой команды в цикле прерывания не было вовсе:
+    // стоял блокирующий `child.wait()`, флаг никто не опрашивал, а в ответе
+    // возвращался захардкоженный `killed: false`. То есть жёсткий стоп ffmpeg не
+    // останавливал — сорокаминутный транскод доигрывал до конца, и снять его можно
+    // было только убив приложение. Флаг берём СВОЕЙ полосы (обработка/постинг),
+    // чтобы стоп одного раннера не убивал процессы другого.
+    let abort_flag = processing_state
+        .lock()
+        .map_err(|e| format!("ProcessingState lock poisoned: {}", e))?
+        .lane_flag(&super::processing_commands::lane_name(run_lane));
+
     let duration = duration_sec.unwrap_or(0.0);
     let text = status_text.unwrap_or_else(|| "Processing".to_string());
 
@@ -220,7 +239,7 @@ pub async fn ffmpeg_exec_with_progress(
     // мешает Tauri runtime'у.
     let app_for_blocking = app.clone();
     let node_id_for_blocking = node_id.clone();
-    let result: Result<(i32, String, String), String> = tokio::task::spawn_blocking(move || {
+    let result: Result<(i32, String, String, bool), String> = tokio::task::spawn_blocking(move || {
         use std::io::{BufRead, BufReader};
         use std::process::Stdio;
         use std::sync::Arc;
@@ -290,9 +309,27 @@ pub async fn ffmpeg_exec_with_progress(
             out
         });
 
-        let status = child.wait().map_err(|e| e.to_string())?;
-        let exit_code = status.code().unwrap_or(-1);
+        // Ждём с опросом флага прерывания — шаг 50 мс, как в exec_command.
+        // `try_wait` не блокирует, поэтому стоп доходит до нас за такт, а не после
+        // завершения процесса.
+        let mut killed = false;
+        let exit_code = loop {
+            if abort_flag.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                // Забираем статус, чтобы не оставить зомби-процесс.
+                let _ = child.wait();
+                killed = true;
+                break -1;
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code().unwrap_or(-1),
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) => return Err(e.to_string()),
+            }
+        };
 
+        // Читающие потоки завершатся сами: после kill/выхода процесса их пайпы
+        // закрываются, и BufReader доходит до EOF.
         let stderr_output = stderr_handle.join().unwrap_or_default();
         let stdout_output = stdout_handle.join().unwrap_or_default();
 
@@ -301,21 +338,32 @@ pub async fn ffmpeg_exec_with_progress(
 
         // Финальное событие — без троттлинга, чтобы пользователь видел 100%.
         let _ = Duration::from_millis(0);
-        Ok((exit_code, stdout_output, stderr_output))
+        Ok((exit_code, stdout_output, stderr_output, killed))
     })
     .await
     .map_err(|e| format!("ffmpeg task join failed: {}", e))?;
 
-    let (exit_code, stdout_output, stderr_output) = result?;
+    let (exit_code, stdout_output, stderr_output, killed) = result?;
 
     // Финальный лог в окно — после завершения процесса.
     if let Some(ref nid) = node_id {
         use tauri::Emitter;
-        let level = if exit_code == 0 { "info" } else { "error" };
+        let level = if killed {
+            "warn"
+        } else if exit_code == 0 {
+            "info"
+        } else {
+            "error"
+        };
+        let message = if killed {
+            "ffmpeg aborted by user".to_string()
+        } else {
+            format!("ffmpeg finished with exit code: {}", exit_code)
+        };
         let _ = app.emit("processing-event", serde_json::json!({
             "type": "log",
             "level": level,
-            "message": format!("ffmpeg finished with exit code: {}", exit_code),
+            "message": message,
             "nodeId": nid,
         }));
     }
@@ -324,7 +372,7 @@ pub async fn ffmpeg_exec_with_progress(
         "exit_code": exit_code,
         "stdout": stdout_output,
         "stderr": stderr_output,
-        "killed": false,
+        "killed": killed,
     }))
 }
 
@@ -359,6 +407,7 @@ fn parse_ffmpeg_progress(line: &str, duration: f64) -> Option<f64> {
 /// Расширенная версия read_media_preview: для видео запускает ffmpeg и возвращает кадр.
 /// Если ffmpeg не найден — возвращает пустую строку.
 #[tauri::command]
+#[specta::specta]
 pub fn read_media_preview_with_ffmpeg(file_path: String, state: tauri::State<Mutex<AppSettingsState>>) -> Result<String, String> {
     use std::fs;
     use std::path::Path;
@@ -399,21 +448,9 @@ pub fn read_media_preview_with_ffmpeg(file_path: String, state: tauri::State<Mut
 
 // ==================== BASE64 ====================
 
+/// base64 через крейт (см. пояснение в fs_commands.rs). Реализация здесь была
+/// быстрее той — на `push` с предвыделением, — но дублировала стандартный кодек.
 fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
-
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        result.push(if chunk.len() > 1 { CHARS[((triple >> 6) & 0x3F) as usize] as char } else { '=' });
-        result.push(if chunk.len() > 2 { CHARS[(triple & 0x3F) as usize] as char } else { '=' });
-    }
-
-    result
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }

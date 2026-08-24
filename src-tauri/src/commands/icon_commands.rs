@@ -6,6 +6,7 @@
 /// Возвращает иконку файла как строку "data:image/png;base64,...".
 /// При ошибке возвращает Err — фронт тогда откатывается на нарисованную canvas-иконку.
 #[tauri::command]
+#[specta::specta]
 pub fn get_file_icon(path: String, size: Option<i32>) -> Result<String, String> {
     use base64::Engine;
 

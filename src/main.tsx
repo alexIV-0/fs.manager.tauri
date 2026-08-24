@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { ErrorBoundary } from './Utils/ErrorBoundary';
 import AppMain from './MAIN_WIN/AppMain';
 import { initTauriAPI } from './Utils/tauri-api';
 import { setupWindowAutoSave } from './Utils/windowAutoSave';
@@ -15,7 +16,9 @@ async function bootstrap() {
 
 	ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 		<React.StrictMode>
-			<AppMain />
+			<ErrorBoundary window='main'>
+				<AppMain />
+			</ErrorBoundary>
 		</React.StrictMode>,
 	);
 }

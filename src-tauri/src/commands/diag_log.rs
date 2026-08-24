@@ -100,17 +100,20 @@ pub fn spawn_heartbeat(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn diag_log_write(app: tauri::AppHandle, msg: String) -> Result<(), String> {
     write(&app, &msg);
     Ok(())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn diag_log_path(app: tauri::AppHandle) -> Result<String, String> {
     diag_path(&app).map(|p| p.display().to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn diag_log_clear(app: tauri::AppHandle) -> Result<(), String> {
     let path = diag_path(&app)?;
     let _ = fs::remove_file(&path);

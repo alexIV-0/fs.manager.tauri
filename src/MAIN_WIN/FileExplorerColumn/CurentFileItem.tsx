@@ -1,7 +1,7 @@
 import { greyColor } from '@/Store/Color/grayColor';
 import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
-import { ListItem, ListItemButton, ListItemText, TextField } from '@mui/material';
+import { Box, ListItem, ListItemButton, ListItemText, TextField } from '@mui/material';
 import { File, FileAudio, FileBadge2, FileImage, FileKey2, FileSpreadsheet, FileText, FileType2, FileVideo, FolderOpenDot } from 'lucide-react';
 import { useMemo, useRef } from 'react';
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
@@ -22,7 +22,11 @@ import {
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
+import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
+import { ConflictChoice } from '@/MAIN_WIN/Storage/ConflictChoice';
+import { storageMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 
 interface CurrentFileItemProps {
 	name: string;
@@ -34,11 +38,15 @@ interface CurrentFileItemProps {
 	onMultiSelectToggle?: () => void;
 	onMultiSelectRange?: () => void;
 	onRenamed?: (oldName: string, newName: string) => void;
+	/** Состояние в облачном зеркале. Есть только у записей из зеркала — у обычных
+	    локальных файлов поля нет, и строка выглядит ровно как раньше. */
+	storage?: import('@/Store/helpers/readDirContent').FileItem['storage'];
 }
 
 export function CurrentFileItem({
 	name,
 	path,
+	storage,
 	isSelected,
 	isActiveSelection = true,
 	isMultiSelected,
@@ -104,6 +112,13 @@ export function CurrentFileItem({
 		onPaste: handlePaste,
 		hasClipboard,
 	});
+
+	// Облачные действия добавляются к обычному меню, а не заменяют его: облачный
+	// файл — тот же файл, отличаются только три действия.
+	const allMenuItems = useMemo(
+		() => [...menuItems, ...storageMenuItems(path, storage)],
+		[menuItems, path, storage],
+	);
 
 	const { type: detectedType, color: iconColor } = useMemo(() => {
 		const fileTypes = typeOfFile_store.getState().patternStore;
@@ -224,6 +239,34 @@ export function CurrentFileItem({
 							}}
 						/>
 					)}
+
+					{/* Значок состояния — то, чем облачный файл отличается от обычного:
+					    видно, лежит он только в облаке или уже синхронизирован.
+					    `ml: auto` прижимает значок вправо: у ListItemText здесь нет flex,
+					    и без этого он липнет к имени. */}
+					{storage?.state && (
+						<Box sx={{ ml: 'auto', pl: 1, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+							{/* Конфликт требует выбора, а не повтора — поэтому выбор стоит прямо
+							    в строке, рядом со значком, а не спрятан в контекстном меню. */}
+							{storage.state === 'conflict' && (
+								<ConflictChoice
+									path={path}
+									onResolved={() => {
+										invalidateDirCache(dirname(path));
+										const store = useColumnView_Store.getState();
+										store.refreshAffectedColumns('gd', [dirname(path)]);
+										store.refreshAffectedColumns('local', [dirname(path)]);
+									}}
+								/>
+							)}
+							<StorageBadge
+								state={storage.state}
+								pinned={storage.pinned}
+								progress={storage.progress}
+								error={storage.error}
+							/>
+						</Box>
+					)}
 				</ListItemButton>
 			</ListItem>
 
@@ -231,7 +274,7 @@ export function CurrentFileItem({
 				open={isMenuOpen}
 				position={menuPosition}
 				onClose={handleMenuClose}
-				items={menuItems}
+				items={allMenuItems}
 				type='file'
 				menuId={menuId}
 			/>

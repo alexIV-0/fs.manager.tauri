@@ -32,11 +32,18 @@ export async function finalyWating(timeAEprocess: number) {
 		let mainTimer: ReturnType<typeof setTimeout> | null = null;
 		let settled = false;
 
+		const onAbort = () => finish('abort');
+
 		const cleanup = () => {
 			if (uiTick) clearInterval(uiTick);
 			if (mainTimer) clearTimeout(mainTimer);
 			uiTick = null;
 			mainTimer = null;
+			// Слушателя снимаем и при НОРМАЛЬНОМ завершении ожидания. `{ once: true }`
+			// сам его не убирает, если abort не случился: сигнал живёт весь прогон, а
+			// ожидание в нём — каждый цикл, поэтому за длинный прогон на одном сигнале
+			// накапливался слушатель на цикл.
+			signal.removeEventListener('abort', onAbort);
 		};
 
 		const finish = (mode: 'resolve' | 'abort') => {
@@ -52,7 +59,7 @@ export async function finalyWating(timeAEprocess: number) {
 			finish('abort');
 			return;
 		}
-		signal.addEventListener('abort', () => finish('abort'), { once: true });
+		signal.addEventListener('abort', onAbort, { once: true });
 
 		// UI-тик: обновляем статус-бар примерно раз в секунду. Если в фоне Chromium
 		// его дросселирует — не критично, главный таймер ниже отработает корректно.

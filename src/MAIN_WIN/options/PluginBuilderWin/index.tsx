@@ -166,16 +166,16 @@ export function PluginBuilderModal({ open, onClose }: PluginBuilderModalProps) {
 
 			// Сохраняем только изменённые файлы
 			if (pluginJsonChanged || !initialPluginJsonRef.current) {
-				unwrap(await commands.writeFile(joinPath(folder, 'plugin.json'), JSON.stringify(pluginJson, null, '\t')));
+				unwrap(await commands.writeFileAtomic(joinPath(folder, 'plugin.json'), JSON.stringify(pluginJson, null, '\t')));
 			}
 			if (uiJsonChanged || !initialUiJsonRef.current) {
-				unwrap(await commands.writeFile(joinPath(folder, 'ui.json'), JSON.stringify(uiJson, null, '\t')));
+				unwrap(await commands.writeFileAtomic(joinPath(folder, 'ui.json'), JSON.stringify(uiJson, null, '\t')));
 			}
 			if (scriptChanged || !initialScriptRef.current) {
 				const scriptName = pluginJson.main.replace('.js', '.ts');
 				const scriptPath = joinPath(folder, scriptName);
 				unwrap(
-					await commands.writeFile(
+					await commands.writeFileAtomic(
 						scriptPath,
 						scriptContent ?? generateScriptTemplate(pluginJson.main.replace(/\.js$/, 'Func')),
 					),

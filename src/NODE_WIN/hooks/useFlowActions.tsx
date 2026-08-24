@@ -14,8 +14,10 @@ import { useCallback } from 'react';
 import { getNodeDefinitions } from '../definitions';
 import { isValueValid } from '../utils/validation';
 import { syncCostsFromManifest } from '../utils/syncCostsFromManifest';
+import { migrateTimecodeSeconds } from '../utils/migrateTimecodeSeconds';
 import { findLoopAtPoint, getAbsolutePosition, getNodeSize, sortLoopsFirst } from '../utils/loopGrouping';
 import { useCascadeValidation } from './useCascadeValidation';
+import { useUndoRedo } from './useUndoRedo';
 
 export const useFlowActions = () => {
 	const { savedState } = useSavedState();
@@ -26,18 +28,26 @@ export const useFlowActions = () => {
 
 	const { handleEdgeRemoval, cascadeValidation } = useCascadeValidation();
 
+	// Undo/Redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z / Ctrl+Y). Восстановление идёт через
+	// прямые setNodes/setEdges (минуя onNodesChange), поэтому истории не плодит.
+	const { record: recordHistory, resetHistory } = useUndoRedo({ setNodes, setEdges, maxHistory: 50 });
+
 	// 👉 оборачиваем стандартный onNodesChange
 	const onNodesChange = useCallback(
 		(changes: NodeChange[]) => {
+			// История: снимок до-действенного состояния (ДО применения изменений).
+			recordHistory(changes);
 			// Просто передаём в reactFlow, вся валидация теперь в node.data
 			rfOnNodesChange(changes);
 		},
-		[rfOnNodesChange],
+		[rfOnNodesChange, recordHistory],
 	);
 
 	// 👉 оборачиваем стандартный onEdgesChange
 	const onEdgesChange = useCallback(
 		(changes: EdgeChange[]) => {
+			// История: снимок до-действенного состояния (ДО применения изменений).
+			recordHistory(changes);
 			// Собираем ВСЕ удаляемые edges ДО применения изменений,
 			// пока они ещё существуют в reactFlow
 			const removedEdges = changes
@@ -56,7 +66,7 @@ export const useFlowActions = () => {
 				}, 0);
 			}
 		},
-		[rfOnEdgesChange, handleEdgeRemoval, reactFlow],
+		[rfOnEdgesChange, handleEdgeRemoval, reactFlow, recordHistory],
 	);
 
 	// 👉 Привязка/отвязка нод к Loop по завершении перетаскивания.
@@ -179,7 +189,8 @@ export const useFlowActions = () => {
 			// ✅ Восстанавливаем сохранённые ноды (у них уже должен быть isValid и computedOutput)
 			// Перезаписываем cost/costUnit актуальными значениями из plugin.json — старые флоу
 			// подхватывают централизованную цену, новые продолжают работать как раньше.
-			setNodes(syncCostsFromManifest(savedState.nodes));
+			// migrateTimecodeSeconds переводит таймкод-valueRange из минут в секунды.
+			setNodes(syncCostsFromManifest(migrateTimecodeSeconds(savedState.nodes)));
 		}
 
 		setEdges(savedState.edges || []);
@@ -188,8 +199,12 @@ export const useFlowActions = () => {
 			reactFlow.setViewport(savedState.viewport);
 		}
 
+		// Свежий проект — чистая история undo/redo (ноды выше выставлены прямым
+		// setNodes/setEdges, минуя onNodesChange, так что мусора там и так нет).
+		resetHistory();
+
 		console.log('[useFlowActions] ✅ onInit completed');
-	}, [savedState, setNodes, setEdges, reactFlow]);
+	}, [savedState, setNodes, setEdges, reactFlow, resetHistory]);
 
 	return {
 		nodes,

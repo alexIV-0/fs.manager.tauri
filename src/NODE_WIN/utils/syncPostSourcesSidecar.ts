@@ -14,6 +14,7 @@
 
 import { commands, unwrap } from '@/Utils/specta';
 import { joinPath } from '@/Utils/joinPath';
+import { ensureDir } from '@/Utils/storageSeam';
 import { createProcessQueue } from '@/PROCESSING/utils/createProcessQueue';
 import { getDescription } from '@/PROCESSING/utils/getDesription';
 import { findPoster } from '@/PROCESSING/autoPost/posters';
@@ -88,7 +89,8 @@ export async function syncPostSourcesSidecar(path: string, flow: any): Promise<v
 			const dv = propValue(node, 'daysOfWeek');
 			const daysOfWeek = Array.isArray(dv) ? dv : [];
 			const wv = propValue(node, 'window');
-			const windowVal = Array.isArray(wv) && wv.length >= 2 ? [Number(wv[0]), Number(wv[1])] : [0, 1440];
+			// Окно суток — в СЕКУНДАХ от полуночи (0…86400), как хранит таймкод-valueRange.
+			const windowVal = Array.isArray(wv) && wv.length >= 2 ? [Number(wv[0]), Number(wv[1])] : [0, 86400];
 			const deleteAfter = Boolean(propValue(node, 'deleteAfter'));
 
 			// Компиляция подграфа от этого Finder'а (Finder → Poster → downstream).
@@ -112,12 +114,13 @@ export async function syncPostSourcesSidecar(path: string, flow: any): Promise<v
 		});
 
 		const sidecar = { baseDescription, finders };
-		await commands.writeFile(sidecarPath, JSON.stringify(sidecar, null, 2));
+		await commands.writeFileAtomic(sidecarPath, JSON.stringify(sidecar, null, 2));
 
-		// Создаём папки-источники, чтобы юзеру было куда складывать файлы.
+		// Создаём папки-источники, чтобы юзеру было куда складывать файлы. Через шов:
+		// в зеркале папка обязана появиться в каталоге, иначе для сайта её нет.
 		for (const f of finders) {
 			const abs = isAbsPath(f.folder) ? f.folder : joinPath(path, f.folder);
-			await commands.testAndCreateFolder(abs).catch(() => {});
+			await ensureDir(abs).catch(() => {});
 		}
 	} catch (e) {
 		console.error('[syncPostSourcesSidecar] ошибка синка postSources.json:', e);

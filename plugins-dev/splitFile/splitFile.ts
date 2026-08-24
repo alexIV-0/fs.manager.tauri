@@ -3,21 +3,28 @@
 // ffmpeg.detectScenes / ffmpeg.detectBlackFrames из helper'а.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
+import { buildEncodeArgs, encodeExt, parseEncodeSettings } from '../../src/Utils/ffmpegCaps';
 
-export { onLoad } from '../_template/tauri';
 
 function getRandomInRange(min: number, max: number): number {
 	if (min === max) return min;
 	return min + Math.random() * (max - min);
 }
 
-export async function splitFileFunc(_item: any, _description: any): Promise<string[]> {
+export async function splitFileFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const sceneDetect: boolean = _item.sceneDetection || false;
 	const blackFrames: boolean = _item.blackFrames || false;
+
+	// Кодирование сегментов. Свойство `encode` — невидимое, его правит шестерёнка в шапке
+	// ноды; профиль `fastCut` (`libx264 -preset superfast`) повторяет то, чем нарезка
+	// кодировала до появления настройки. У ноды из СТАРОГО флоу этого свойства нет вовсе
+	// (сохранённый граф не досыпает свойства из ui.json) — тогда работает тот же профиль.
+	const enc = parseEncodeSettings(_item.encode, 'fastCut');
 
 	// splitBy может быть числом (old format) или массивом [min, max] (new format)
 	let splitByMin = 0;
@@ -40,7 +47,9 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 		const fileTo = createPathForFileByPattern(curPath, _description, fileFrom);
 		const dirPath = path.dirname(fileTo);
 		const fileName = path.basename(fileTo, path.extname(fileTo));
-		const ext = path.extname(fileTo);
+		// Расширение — из настроек кодирования: `original` = как у источника (прежнее
+		// поведение), иначе выбранный контейнер.
+		const ext = `.${encodeExt(enc, fileTo)}`;
 
 		await fs.mkdir(dirPath);
 
@@ -130,10 +139,7 @@ export async function splitFileFunc(_item: any, _description: any): Promise<stri
 					String(finalArrTimeStamp[scNumm].stTime),
 					'-i',
 					fileFrom,
-					'-c:v',
-					'libx264',
-					'-preset',
-					'superfast',
+					...buildEncodeArgs(enc),
 					'-c:a',
 					'aac',
 					'-t',

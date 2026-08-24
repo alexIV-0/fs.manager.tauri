@@ -14,8 +14,11 @@ import { useStatusBar_Store } from '@/Store/Processing/useStatusBar_Store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { loadFromLocalStorage, saveToLocalStorage } from '@/Utils/loadSaveToLS';
 import { getProjectActivity, setProjectActivity, pruneActivity } from '@/Utils/projectActivityLS';
+import { recordActivity, persistEnabled } from '@/Utils/folderState';
 import { basename } from '@/Utils/path';
 import { joinPath } from '@/Utils/joinPath';
+import { catchUpProject, isInMirror, projectArchived, setProjectPaused } from '@/Utils/storageSeam';
+import { archivedProjects_store } from '@/Store/MainWin/archivedProjects_store';
 import { reloadFolders } from './reloadFolders';
 import { timeToWait } from './runProcessing';
 import { waitingSome } from './waitingSome';
@@ -55,6 +58,21 @@ export async function findAllFilesForProcess(clearQueue = true) {
 
 		const mainFolderName = basename(curMainFolder.path);
 
+		// Области видимости двух запусков НЕ пересекаются:
+		//   • локальный прогон (эта функция) — только локально подключённые папки;
+		//   • режим воркера — только задачи с сайта, локальные папки его не касаются.
+		//
+		// Иначе облачный проект обрабатывали бы обе стороны сразу: эта машина по своему
+		// расписанию и любая другая, взявшая ту же задачу из очереди. Результат — двойной
+		// рендер и гонка за один и тот же OUT, причём заметная только по факту.
+		//
+		// Первая колонка при этом остаётся общей: локальные и облачные папки видны рядом,
+		// синхронизатор работает как работал. Разделены запуски, а не интерфейс.
+		if (await isInMirror(curMainFolder.path)) {
+			console.log(`[scan] ${mainFolderName} — облачная папка, локальный прогон её не трогает (задачи берёт воркер)`);
+			continue;
+		}
+
 		// обновляем все папки, вдруг новые добавили — ПЕРЕД сканированием файлов
 		const finalArr = await reloadFolders(curMainFolder);
 		mainFolders_stor.getState().updateParameters({
@@ -91,6 +109,14 @@ export async function findAllFilesForProcess(clearQueue = true) {
 			const offSet = new Set<string>(getOffArr);
 			for (const projectName of finalArr) {
 				if (offSet.has(projectName)) continue;
+				// Архивный проект авто-отключению не подлежит. Архив — блок ПЕРВОГО
+				// уровня: он и так снимает проект с обработки, а вкл/выкл при нём не
+				// значит ничего. Без этой проверки таймер «холодных» гасил бы архивные
+				// (они по определению холодные) и писал бы в облако бессмысленную
+				// смену флага — которую человек потом увидел бы при разархивации.
+				if (archivedProjects_store.getState().paths[
+					`${curMainFolder.path}/${projectName}`.replace(/[\\/]+$/, '').toLowerCase()
+				]) continue;
 				// Первая встреча проекта — засеваем «сейчас», чтобы при апгрейде
 				// (или у новой папки) ничего не отключилось задним числом.
 				let lastActivityMs = getProjectActivity(curMainFolder.id, projectName);
@@ -100,7 +126,16 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				}
 				if (lastActivityMs < cutoffMs) {
 					offSet.add(projectName);
-					console.log(`[autoDisable] ${mainFolderName}/${projectName} — idle > ${autoDisableDays}d`);
+					// Фиксируем авто-отключение и в файле, и в каталоге: иначе сайт (и
+					// другая машина) продолжают считать проект включённым, а следующий
+					// `/projects` вернёт наш локальный флаг обратно.
+					persistEnabled(curMainFolder.id, projectName, false, 'auto');
+					if (curMainFolder.online) {
+						void setProjectPaused(joinPath(curMainFolder.path, projectName), true).catch((e) =>
+							console.error('[autoDisable] каталог отказал:', projectName, e),
+						);
+					}
+						console.log(`[autoDisable] ${mainFolderName}/${projectName} — idle > ${autoDisableDays}d`);
 				}
 			}
 			if (offSet.size !== getOffArr.length) {
@@ -132,6 +167,23 @@ export async function findAllFilesForProcess(clearQueue = true) {
 
 			const projectPathOnGD = joinPath(curMainFolder.path, projectName);
 
+			// Облачный проект: один запрос дельт на проект ЗДЕСЬ — и дальше весь
+			// проход доверяем локальному индексу. Иначе пришлось бы спрашивать
+			// бэкенд про каждый найденный файл: при десяти тысячах элементов это
+			// разница между одним запросом и десятью тысячами.
+			// Вне зеркала — no-op без единого IPC-вызова.
+			await catchUpProject(projectPathOnGD as string);
+
+			// Архивный проект обработке не подлежит — так требует контракт
+			// storage-API. Проверяем ПОСЛЕ дельт: флаг мог измениться на сайте, и
+			// решение должно приниматься по свежему каталогу, а не по прошлому проходу.
+			if (await projectArchived(projectPathOnGD as string)) {
+				console.log(`%c→ архивный проект, пропуск`, 'color: #888');
+				console.groupEnd();
+				await waitingSome(timeToWait.folders);
+				continue;
+			}
+
 			// ТГ-сбор: безусловно (независимо от содержимого IN) собираем маршрут из
 			// options/tgSearch.json — дешёвый stat, до IN-гейта в findFilesForSingleFolder.
 			await addTgRouteFromProject(projectPathOnGD as string);
@@ -144,7 +196,8 @@ export async function findAllFilesForProcess(clearQueue = true) {
 				// Проект реально используется — двигаем дату активности на «сейчас».
 				// Пока в него что-то падает, auto-disable его не тронет. Бесплатно:
 				// перебора файлов нет, это побочка уже сделанного поиска.
-				setProjectActivity(curMainFolder.id, projectName, Date.now());
+				// recordActivity = LS всегда + файл options/folderState.json троттлингом ~1/сутки.
+				recordActivity(curMainFolder.id, projectName, Date.now());
 			}
 
 			console.groupEnd();

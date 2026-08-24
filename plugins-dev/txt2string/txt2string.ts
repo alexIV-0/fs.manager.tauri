@@ -1,11 +1,11 @@
+import type { PluginContext } from '../../src/PluginAPI/host';
 // txt2string — возвращает содержимое текстового файла или строку как есть.
 // Tauri-port: fs.existsSync/readFileSync через @plugin-api/tauri helper.
 
-import { fs, sendToMW } from '../_template/tauri';
 
-export { onLoad } from '../_template/tauri';
 
-export async function txt2stringFunc(_item: any, _description: any): Promise<string[]> {
+export async function txt2stringFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const importedItems: string[] = _item.import?.textedit ?? [];

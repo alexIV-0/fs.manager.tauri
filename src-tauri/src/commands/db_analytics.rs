@@ -81,6 +81,33 @@ fn render_secs(registered_at: &str, ended_at: &str) -> u64 {
     (end - start).max(0) as u64
 }
 
+/// Нормализует ISO-8601 строку к UTC "…Z" с миллисекундами.
+/// registeredAt из Rust приходит как "+00:00" (микросекунды), а endedAt/startedAt из JS —
+/// уже "Z" (мс). Приводим всё к единому виду, чтобы парсеры графиков не спотыкались.
+fn iso_utc_z(s: &str) -> String {
+    use chrono::{DateTime, SecondsFormat};
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Millis, true))
+        .unwrap_or_else(|_| s.to_string())
+}
+
+/// Расширение файла в нижнем регистре ("clip.MP4" → "mp4"). Без точки → "".
+fn file_ext(name: &str) -> String {
+    match name.rfind('.') {
+        Some(i) if i + 1 < name.len() => name[i + 1..].to_lowercase(),
+        _ => String::new(),
+    }
+}
+
+/// Путь относительно корня проекта: strip project_path_gd, разделители → "/".
+/// Файл не под корнем (нетипично) → оставляем абсолютный путь как есть.
+fn rel_to_project(abs: &str, project_root: &str) -> String {
+    Path::new(abs)
+        .strip_prefix(Path::new(project_root))
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| abs.to_string())
+}
+
 // ── Вспомогательные функции ───────────────────────────────────────────────────
 
 fn month_name(month: u32) -> &'static str {
@@ -161,15 +188,17 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or(json!({}))
 }
 
+/// Пишет агрегат периода АТОМАРНО.
+///
+/// Раньше был `std::fs::write`, который обрезает файл перед наполнением. Обрыв в этом
+/// окне давал усечённый файл, а `read_json` при ошибке разбора возвращает `{}` — то есть
+/// **вся накопленная статистика периода молча обнулялась** и начинала считаться заново.
+/// Окно возникает постоянно: на каждый обработанный item пишется четыре таких файла.
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
-    }
     let content = serde_json::to_string_pretty(value)
         .map_err(|e| format!("serialize: {}", e))?;
-    std::fs::write(path, content)
-        .map_err(|e| format!("write {}: {}", path.display(), e))
+    // write_atomic сам создаёт родительские каталоги.
+    super::fs_commands::write_atomic(path, content.as_bytes())
 }
 
 // ── Period stats — ключи ─────────────────────────────────────────────────────
@@ -193,6 +222,16 @@ pub fn year_key() -> String {
 
 // ── Запись статистики ─────────────────────────────────────────────────────────
 
+/// ВАЖНО про параллелизм: `read_json` → `upsert_period` → `write_json` — это
+/// read-modify-write, и он НЕ защищён сам по себе. Сериализуется он тем, что
+/// вызывающий (`log_window_emit_item_end`) держит замок `DbState` через весь
+/// `write_analytics`. Замок этот существует ради `DbState.items`, а файловый цикл
+/// закрывает заодно — то есть защита случайная.
+///
+/// Если когда-нибудь захочется «оптимизировать» и отпускать замок раньше (склонировать
+/// запись и работать с файлами без него — обычно так и правильно), инкременты начнут
+/// теряться: два одновременно завершившихся item'а прочитают одно значение и запишут
+/// каждый своё. Тогда сюда нужен собственный замок.
 fn upsert_period(existing: &mut Value, key: &str, record: &DbItemRecord, status: &str, cost: f64, ended_at: &str, duration: &str) {
     let success: u64 = if status == "done" { 1 } else { 0 };
     let error:   u64 = if status == "error" { 1 } else { 0 };
@@ -312,24 +351,88 @@ pub fn write_total_by_project(path: &Path, record: &DbItemRecord, status: &str, 
     write_json(path, &data)
 }
 
-pub fn write_local_archive(path: &Path, record: &DbItemRecord, status: &str, cost: f64, ended_at: &str) -> Result<(), String> {
-    // local-archive пишет в .jsonl (одна JSON-строка на item)
-    let jsonl_path = path.with_extension("jsonl");
+// Версия схемы JSONL-строки. Растёт при добавлении/переименовании ключей.
+// Читатели статистики должны ветвиться по этому полю (v1: см. ideasAndTest/STATS_SCHEMA_PLAN.md).
+const LOCAL_ARCHIVE_SCHEMA_VERSION: u32 = 1;
+
+/// Пофайловая запись статистики (пресет "Локальный архив (JSONL)").
+/// Атомарные факты по одному item'у; агрегаты (за период / по проекту / платные-бесплатные)
+/// считаются на чтении. Схема заморожена в v1.
+///
+/// - `started_at` — реальный старт обработки (из лог-группы), НЕ registeredAt (= время находки).
+/// - `duration`   — хронометраж ВЫХОДНЫХ медиафайлов ("HH:MM:SS"), считается ffprobe на фронте.
+/// - `out_files`  — абсолютные пути финальных файлов; здесь режутся до пути от корня проекта.
+/// Дописать метку машины перед расширением: `2026.08.jsonl` → `2026.08.alexeys-imac-a1b2.jsonl`.
+///
+/// Метка — hostname плюс хвост ключа машины (`crate::machine`). Только hostname не
+/// годится: дефолтные имена маков совпадают, и две такие машины писали бы в один
+/// объект, затирая строки друг друга, — ровно то, от чего метка и защищает. Только
+/// uuid тоже не годится: через полгода по имени файла никто не поймёт, чья это
+/// статистика.
+///
+/// `in_mirror = false` — путь возвращается как есть. Флаг аргументом, а не чтением
+/// глобального состояния внутри: так функция чистая и её тест не зависит от того,
+/// что параллельно делают другие тесты.
+fn machine_scoped_if(path: &Path, in_mirror: bool) -> std::path::PathBuf {
+    if !in_mirror {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("stat");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
+    path.with_file_name(format!("{stem}.{}.{ext}", crate::machine::slug()))
+}
+
+pub fn write_local_archive(
+    path: &Path,
+    record: &DbItemRecord,
+    status: &str,
+    cost: f64,
+    ended_at: &str,
+    started_at: &str,
+    duration: &str,
+    out_files: &[String],
+) -> Result<(), String> {
+    // local-archive пишет в .jsonl (одна JSON-строка на item), И В ФАЙЛ СВОЕЙ МАШИНЫ.
+    //
+    // Имя машины в названии обязательно: в объектном хранилище нет дописывания в
+    // конец, заливка перезаписывает объект целиком. Две машины, пишущие один
+    // `2026.08.jsonl`, затрут строки друг друга — и потеря будет тихой, задним
+    // числом. Со своим файлом у каждой машины конфликта нет по построению, а чтение
+    // статистики за месяц становится склейкой файлов (это впереди).
+    // Метка машины — ТОЛЬКО если файл уедет в облако. В локальной папке, которая ни
+    // с чем не синхронизируется, затирать друг друга некому, а имя хоста в названии
+    // будет только мешать глазам.
+    let plain = path.with_extension("jsonl");
+    let jsonl_path = machine_scoped_if(&plain, crate::storage::paths::under_global_mirror(&plain));
     if let Some(parent) = jsonl_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("mkdir: {}", e))?;
     }
 
+    // Пути финальных файлов — относительно корня проекта (projectPathGD не пишем: на разных
+    // машинах он разный, корень восстанавливается из расположения самого .jsonl).
+    let out_rel: Vec<String> = out_files
+        .iter()
+        .map(|f| rel_to_project(f, &record.project_path_gd))
+        .collect();
+    let out_type = out_rel.first().map(|f| file_ext(f)).unwrap_or_default();
+
     let entry = json!({
-        "itemId":          &record.item_id,
-        "registeredAt":    &record.registered_at,
-        "endedAt":         ended_at,
-        "status":          status,
-        "projectName":     &record.project_name,
-        "mainFolderName":  &record.main_folder_name,
-        "projectPathGD":   &record.project_path_gd,
-        "curItem":         &record.cur_item,
-        "totalCost":       cost,
+        "schemaVersion":  LOCAL_ARCHIVE_SCHEMA_VERSION,
+        "itemId":         &record.item_id,
+        "status":         status,
+        "project":        &record.project_name,
+        "mainFolder":     &record.main_folder_name,
+        "curItem":        &record.cur_item,
+        "inType":         file_ext(&record.cur_item),
+        "outType":        out_type,
+        "registeredAt":   iso_utc_z(&record.registered_at),  // нашли файл
+        "startedAt":      iso_utc_z(started_at),              // старт обработки
+        "endedAt":        iso_utc_z(ended_at),                // конец
+        "outSec":         parse_duration_secs(duration),      // хронометраж результата, сек
+        "renderSec":      render_secs(started_at, ended_at),  // честный рендер без очереди
+        "out":            out_rel,
+        "totalCost":      cost,
     });
 
     use std::io::Write as IoWrite;
@@ -346,16 +449,52 @@ pub fn write_local_archive(path: &Path, record: &DbItemRecord, status: &str, cos
         .map_err(|e| format!("write: {}", e))
 }
 
+// ── Встроенный архив проекта ─────────────────────────────────────────────────
+
+/// Куда пишется статистика проекта ВСЕГДА, независимо от настроек.
+///
+/// Раньше это была строка в `storage.localArchives`, то есть галочка. Настройкой она
+/// быть не может: этот файл — канал доставки статистики на сайт (`PIPELINE.md` §14,
+/// сайт склеивает `options/_stats/*.jsonl` по проекту). Галочка живёт в `settings.json`
+/// одной машины, дефолт подставлялся только СВЕЖЕМУ файлу настроек, и на любой второй
+/// машине конвейер молча оставался без статистики.
+///
+/// Формат имени (`$YYYY.$MM`) согласован с сайтом и с
+/// `ideasAndTest/+STATS_SCHEMA_PLAN.md` — менять его в одиночку нельзя.
+const PROJECT_STATS_SEGMENTS: [&str; 4] = ["$projectPathGD", "options", "_stats", "$YYYY.$MM"];
+
+/// Папка встроенного архива внутри проекта — по ней узнаём настроечные дубли.
+const PROJECT_STATS_DIR: [&str; 2] = ["options", "_stats"];
+
+/// Ведёт ли настроечный архив в ту же папку, что встроенный.
+///
+/// Нужно ровно для того, чтобы не писать item дважды. Сравниваем КАТАЛОГ, а не файл:
+/// у человека в настройках может стоять своя маска имени (`$MM.$YYYY` вместо
+/// `$YYYY.$MM`), и по имени файла дубль бы не опознался — в `_stats` лежали бы два
+/// файла с одними и теми же строками.
+fn is_project_stats_dir(path: &Path, record: &DbItemRecord) -> bool {
+    if record.project_path_gd.is_empty() {
+        return false;
+    }
+    let mut expected = PathBuf::from(&record.project_path_gd);
+    for seg in PROJECT_STATS_DIR {
+        expected = expected.join(seg);
+    }
+    path.parent().map(|p| p == expected).unwrap_or(false)
+}
+
 // ── Главная точка входа ───────────────────────────────────────────────────────
 
-/// Читает localArchives из settings.json и пишет все сконфигурированные шаблоны.
+/// Пишет встроенный архив проекта и все шаблоны из `localArchives` в settings.json.
 pub fn write_analytics(
     app: &tauri::AppHandle,
     item_id: &str,
     status: &str,
     total_cost: f64,
     ended_at: &str,
+    started_at: &str,
     duration: &str,
+    out_files: &[String],
     db_state: &DbState,
 ) {
     let record = match db_state.items.get(item_id) {
@@ -366,7 +505,27 @@ pub fn write_analytics(
         }
     };
 
-    // Читаем settings.json
+    // ── 1. Встроенный архив проекта — до настроек и независимо от них ─────────
+    //
+    // Идёт первым намеренно: он обязательный, а всё дальше — добавки человека. Сбой
+    // чтения settings.json не должен уносить с собой статистику проекта.
+    let segments: Vec<String> = PROJECT_STATS_SEGMENTS.iter().map(|s| s.to_string()).collect();
+    match resolve_path(&segments, &record) {
+        Some(p) => {
+            match write_local_archive(&p, &record, status, total_cost, ended_at, started_at, duration, out_files) {
+                Ok(()) => println!("[db_analytics] ✓ проект: {}", p.display()),
+                Err(e) => println!("[db_analytics] ✗ проект: {}", e),
+            }
+        }
+        // Пустой `projectPathGD` — единственная причина: путь становится относительным
+        // и файл ушёл бы в рабочий каталог процесса.
+        None => println!(
+            "[db_analytics] встроенный архив пропущен: не разобран projectPathGD (item={})",
+            item_id
+        ),
+    }
+
+    // ── 2. Дополнительные архивы из настроек ─────────────────────────────────
     let settings_file = match app.path().app_data_dir() {
         Ok(dir) => dir.join::<&str>("settings.json"),
         Err(e) => {
@@ -386,10 +545,7 @@ pub fn write_analytics(
         .and_then(|a| a.as_array())
     {
         Some(arr) => arr.clone(),
-        None => {
-            println!("[db_analytics] settings.storage.localArchives not found or empty (file={})", settings_file.display());
-            return;
-        }
+        None => return, // дополнительных архивов нет — это норма, не ошибка
     };
 
     println!("[db_analytics] {} archives, item={} project={} status={}",
@@ -419,6 +575,19 @@ pub fn write_analytics(
             }
         };
 
+        // Старая настроечная запись «архив в папку проекта» — теперь она встроена и
+        // уже написана выше. Молча писать ещё раз нельзя: в `_stats` появился бы
+        // второй файл с теми же строками, и сайт, склеивающий папку целиком, посчитал
+        // бы каждую работу дважды.
+        if is_project_stats_dir(&resolved, &record) {
+            println!(
+                "[db_analytics] template={} ведёт в options/_stats проекта — пропущен, \
+                 этот архив теперь пишется всегда (запись в настройках можно удалить)",
+                template_id
+            );
+            continue;
+        }
+
         println!("[db_analytics] template={} → {}", template_id, resolved.display());
 
         let result = match template_id {
@@ -426,7 +595,7 @@ pub fn write_analytics(
             "by-month"          => write_by_month(&resolved, &record, status, total_cost, ended_at, duration),
             "by-year"           => write_by_year(&resolved, &record, status, total_cost, ended_at, duration),
             "total-by-project"  => write_total_by_project(&resolved, &record, status, total_cost, ended_at, duration),
-            "local-archive"     => write_local_archive(&resolved, &record, status, total_cost, ended_at),
+            "local-archive"     => write_local_archive(&resolved, &record, status, total_cost, ended_at, started_at, duration, out_files),
             other => {
                 println!("[db_analytics] unknown template: {}", other);
                 continue;
@@ -437,5 +606,167 @@ pub fn write_analytics(
             Ok(()) => println!("[db_analytics] ✓ {}", resolved.display()),
             Err(e) => println!("[db_analytics] ✗ template={} err={}", template_id, e),
         }
+    }
+}
+
+#[cfg(test)]
+mod project_stats_tests {
+    use super::*;
+
+    fn record(project_path_gd: &str) -> DbItemRecord {
+        DbItemRecord {
+            item_id: "i1".into(),
+            registered_at: "2026-08-19T10:00:00Z".into(),
+            project_name: "пр".into(),
+            main_folder_name: "гл".into(),
+            project_path_gd: project_path_gd.into(),
+            contact: vec![],
+            description: String::new(),
+            tags: vec![],
+            year: String::new(),
+            find_time: String::new(),
+            cur_item: "123.mp4".into(),
+            size: 0,
+            is_folder: false,
+        }
+    }
+
+    /// Встроенный путь обязан разворачиваться в файл внутри проекта — иначе
+    /// статистика уедет в рабочий каталог процесса.
+    #[test]
+    fn встроенный_путь_идёт_в_папку_проекта() {
+        let segs: Vec<String> = PROJECT_STATS_SEGMENTS.iter().map(|s| s.to_string()).collect();
+        let p = resolve_path(&segs, &record("/m/клиент/проект")).expect("путь");
+        let s = p.to_string_lossy().to_string();
+        assert!(s.starts_with("/m/клиент/проект/options/_stats/"), "получили {s}");
+        // Расширение ставит write_local_archive (.json → .jsonl), здесь важен каталог.
+        assert!(s.contains("/options/_stats/"), "получили {s}");
+    }
+
+    /// Дубль опознаётся по КАТАЛОГУ: у человека в настройках может стоять своя
+    /// маска имени, и сравнение по файлу пропустило бы вторую копию тех же строк.
+    #[test]
+    fn настроечный_архив_с_другой_маской_имени_считается_дублем() {
+        let r = record("/m/клиент/проект");
+        let свой = resolve_path(
+            &["$projectPathGD", "options", "_stats", "$MM.$YYYY"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            &r,
+        )
+        .expect("путь");
+        assert!(is_project_stats_dir(&свой, &r));
+    }
+
+    /// А архив в своей папке — не дубль, его писать надо.
+    #[test]
+    fn чужая_папка_дублем_не_считается() {
+        let r = record("/m/клиент/проект");
+        let чужой = resolve_path(
+            &["/Users/x/render", "total", "$YYYY.$MM"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            &r,
+        )
+        .expect("путь");
+        assert!(!is_project_stats_dir(&чужой, &r));
+    }
+
+    /// Пустой `projectPathGD` — единственный случай, когда встроенный архив писать
+    /// некуда. Проверка должна отвечать «не дубль», а не сравнивать с относительным
+    /// `options/_stats`, иначе чужой архив с таким же хвостом был бы съеден.
+    #[test]
+    fn без_пути_проекта_дублей_нет() {
+        let r = record("");
+        assert!(!is_project_stats_dir(Path::new("options/_stats/2026.08.json"), &r));
+    }
+}
+
+#[cfg(test)]
+mod machine_tests {
+    use super::*;
+
+    /// Имя машины в имени файла статистики — защита от тихой потери строк: в R2 нет
+    /// дописывания, и две машины, пишущие один `2026.08.jsonl`, затрут друг друга.
+    /// Метка машины нужна ТОЛЬКО там, где файл уедет в облако: в R2 нет дописывания,
+    /// и две машины, заливающие один `2026.08.jsonl`, затрут строки друг друга.
+    #[test]
+    fn в_зеркале_имя_машины_дописывается() {
+        let p = Path::new("/mirror/Кл/Пр/options/__stat/2026.08.jsonl");
+        let name = machine_scoped_if(p, true)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(name.starts_with("2026.08."), "получили {name}");
+        assert!(name.ends_with(".jsonl"), "получили {name}");
+        assert_ne!(name, "2026.08.jsonl", "имя машины обязано появиться");
+    }
+
+    /// А в локальной папке, которая ни с чем не синхронизируется, затирать друг
+    /// друга некому — метка была бы мусором в имени.
+    #[test]
+    fn вне_зеркала_имя_остаётся_чистым() {
+        let p = Path::new("/Users/x/Work/проект/options/__stat/2026.08.jsonl");
+        assert_eq!(machine_scoped_if(p, false), p.to_path_buf());
+    }
+
+    // Санитизация имени хоста переехала в `crate::machine` вместе с ключом машины —
+    // её тесты там же.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iso_utc_z_normalizes_rust_and_js_timestamps() {
+        // registeredAt из Rust: "+00:00" с микросекундами → "…Z" с мс
+        assert_eq!(
+            iso_utc_z("2026-07-08T13:44:54.816390+00:00"),
+            "2026-07-08T13:44:54.816Z"
+        );
+        // endedAt из JS: уже "…Z" (мс) → идемпотентно
+        assert_eq!(
+            iso_utc_z("2026-07-08T13:55:54.011Z"),
+            "2026-07-08T13:55:54.011Z"
+        );
+        // смещение приводится к UTC
+        assert_eq!(iso_utc_z("2026-07-08T16:44:54.000+03:00"), "2026-07-08T13:44:54.000Z");
+        // мусор — оставляем как есть, без паники
+        assert_eq!(iso_utc_z(""), "");
+        assert_eq!(iso_utc_z("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn file_ext_extracts_lowercase_extension() {
+        assert_eq!(file_ext("clip.MP4"), "mp4");
+        // реальный curItem с двойной точкой перед расширением
+        assert_eq!(file_ext("1 - Открытие. Слово..mp4"), "mp4");
+        assert_eq!(file_ext("noext"), "");
+        assert_eq!(file_ext("trailingdot."), "");
+        assert_eq!(file_ext("a.b.mov"), "mov");
+    }
+
+    #[test]
+    fn rel_to_project_strips_root() {
+        let root = "/Users/x/newMainFolder/reels from vid";
+        assert_eq!(
+            rel_to_project("/Users/x/newMainFolder/reels from vid/OUT/shorts/clip_01.mp4", root),
+            "OUT/shorts/clip_01.mp4"
+        );
+        // файл не под корнем — оставляем абсолютный путь
+        assert_eq!(rel_to_project("/tmp/other.mp4", root), "/tmp/other.mp4");
+    }
+
+    #[test]
+    fn render_secs_uses_started_not_registered() {
+        // старт 13:50:12 → конец 13:55:54 = 342 c (очередь до старта НЕ входит)
+        assert_eq!(
+            render_secs("2026-07-08T13:50:12.000Z", "2026-07-08T13:55:54.000Z"),
+            342
+        );
     }
 }

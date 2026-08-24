@@ -1,0 +1,17 @@
+{
+	"id": "JSONnormalizeTranscribe",
+	"name": "JSON normalize (Transcribe)",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Облегчает пословный jsonFull whisper в сигнальный вид: слова + предложения/титр-блоки (с \\r-переносами под текстовый слой After Effects). Для дальнейшего анализа (снап границ реза, отбор моментов, титры).",
+	"main": "JSONnormalizeTranscribe.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run",
+	"resourcePool": "local"
+}

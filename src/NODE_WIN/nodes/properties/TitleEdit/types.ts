@@ -1,3 +1,5 @@
+import type { EncodeSettings } from '@/Utils/ffmpegCaps';
+
 // Типы анимации
 export type TitleAnimationType = 'none' | 'word_highlight' | 'word_fade' | 'bg_reveal';
 
@@ -81,6 +83,8 @@ export interface TitleSettings {
 	landscape: TitleFormatSettings;
 	portrait: TitleFormatSettings;
 	square: TitleFormatSettings;
+	/** Render-настройки выхода (контейнер/кодек/preset/CRF/pix_fmt) — попап в шапке ноды. */
+	encode?: EncodeSettings;
 }
 
 // Пресет

@@ -3,7 +3,7 @@
 // spawnFFmpegCommand из Electron.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import {
@@ -14,7 +14,6 @@ import {
 	defaultConvertSettings,
 } from '../../src/NODE_WIN/nodes/properties/ConvertEdit/types';
 
-export { onLoad } from '../_template/tauri';
 
 // ── Codec name mappings ──────────────────────────────────────────────────────
 
@@ -114,7 +113,8 @@ function buildConvertFFmpegArgs(settings: ConvertSettings, outputMode: 'image' |
 
 // ── Plugin entry point ───────────────────────────────────────────────────────
 
-export async function convertFileV2Func(_item: any, _description: any): Promise<string[]> {
+export async function convertFileV2Func(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	// Parse ConvertSettings — fall back to defaults for empty / invalid JSON

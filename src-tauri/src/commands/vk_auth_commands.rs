@@ -170,6 +170,7 @@ pub fn vk_auth_open(
 /// Вызывается init-скриптом при перехвате токена (если IPC доступен). Рассылает
 /// событие в UI и закрывает окно. Внутренняя команда (не в TS-биндингах).
 #[tauri::command]
+#[specta::specta]
 pub fn vk_auth_capture(
     app: tauri::AppHandle,
     token: String,
@@ -199,12 +200,18 @@ pub async fn vk_groups_get(token: String) -> Result<Value, String> {
         "https://api.vk.com/method/groups.get?access_token={}&filter=admin&extended=1&v=5.131",
         token
     );
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("request: {}", e))?;
-    let body = res.text().await.map_err(|e| format!("read body: {}", e))?;
+        // `without_url()`: у VK access_token лежит в query, а Display у reqwest::Error
+        // дописывает ` for url (...)`. Текст ошибки уходит в окно логов и в архив на
+        // диске — то есть токен ложился бы в файл открытым текстом.
+        .map_err(|e| format!("request: {}", e.without_url()))?;
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("read body: {}", e.without_url()))?;
     let json: Value = serde_json::from_str(&body).map_err(|e| format!("parse: {}", e))?;
 
     if let Some(err) = json.get("error") {
@@ -242,12 +249,18 @@ pub async fn vk_validate_token(token: String) -> Result<Value, String> {
         "https://api.vk.com/method/users.get?access_token={}&v=5.199",
         token
     );
-    let res = reqwest::Client::new()
+    let res = super::http_client::api()
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("request: {}", e))?;
-    let body = res.text().await.map_err(|e| format!("read body: {}", e))?;
+        // `without_url()`: у VK access_token лежит в query, а Display у reqwest::Error
+        // дописывает ` for url (...)`. Текст ошибки уходит в окно логов и в архив на
+        // диске — то есть токен ложился бы в файл открытым текстом.
+        .map_err(|e| format!("request: {}", e.without_url()))?;
+    let body = res
+        .text()
+        .await
+        .map_err(|e| format!("read body: {}", e.without_url()))?;
     let json: Value = serde_json::from_str(&body).map_err(|e| format!("parse: {}", e))?;
 
     if let Some(err) = json.get("error") {

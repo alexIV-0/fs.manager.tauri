@@ -60,31 +60,47 @@ mod ns_window_aspect {
 // предлагаемый RECT под нужное соотношение прямо во время drag'а.
 #[cfg(target_os = "windows")]
 mod win_aspect {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
         GetClientRect, GetWindowRect, WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT,
-        WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WM_SIZING,
+        WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WM_NCDESTROY, WM_SIZING,
     };
 
-    // Соотношение сторон (width/height) хранится глобально — в процессе одно
-    // preview-окно. f64 → биты в AtomicU64, 0 = ограничение снято.
-    static ASPECT_BITS: AtomicU64 = AtomicU64::new(0);
+    /// Соотношение сторон НА КАЖДОЕ окно, ключ — HWND.
+    ///
+    /// Раньше здесь лежал единственный `AtomicU64` с комментарием «в процессе одно
+    /// preview-окно». Окна стали мульти-инстансными (`PreviewWindowState` хранит
+    /// карту инстансов, метки `preview-{type}-{n}`), и глобальная пропорция начала
+    /// протекать между ними: subclass-обработчик КАЖДОГО окна читал одно и то же
+    /// значение, поэтому ресайз видео 16:9 ограничивался пропорцией картинки 1:1,
+    /// если её открыли позже. На macOS такого не было — там
+    /// `setContentAspectRatio:` хранится в самом NSWindow.
+    static ASPECTS: LazyLock<Mutex<HashMap<isize, f64>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
     const SUBCLASS_ID: usize = 0xFAFA_F501;
 
     /// Устанавливает aspect-constraint для окна и (пере)ставит subclass на текущий HWND.
     /// SetWindowSubclass идемпотентен по паре (pfnSubclass, uIdSubclass), поэтому
     /// безопасен при повторных вызовах. Пересоздание окна → новый HWND → новый subclass.
     pub fn set_aspect_ratio(hwnd_raw: *mut core::ffi::c_void, ratio: f64) {
-        if !(ratio.is_finite() && ratio > 0.0) {
-            ASPECT_BITS.store(0, Ordering::Relaxed);
-            return;
-        }
-        ASPECT_BITS.store(ratio.to_bits(), Ordering::Relaxed);
-
         if hwnd_raw.is_null() {
             return;
+        }
+        let key = hwnd_raw as isize;
+
+        if !(ratio.is_finite() && ratio > 0.0) {
+            // Снятие ограничения — только для ЭТОГО окна.
+            if let Ok(mut map) = ASPECTS.lock() {
+                map.remove(&key);
+            }
+            return;
+        }
+
+        if let Ok(mut map) = ASPECTS.lock() {
+            map.insert(key, ratio);
         }
         unsafe {
             let hwnd = HWND(hwnd_raw);
@@ -101,13 +117,23 @@ mod win_aspect {
         _dwrefdata: usize,
     ) -> LRESULT {
         if msg == WM_SIZING {
-            let bits = ASPECT_BITS.load(Ordering::Relaxed);
-            if bits != 0 {
-                let ratio = f64::from_bits(bits);
+            // Значение копируем и СРАЗУ отпускаем мьютекс: apply_aspect зовёт Win32,
+            // держать замок через вызовы API в оконной процедуре не стоит.
+            let ratio = ASPECTS
+                .lock()
+                .ok()
+                .and_then(|map| map.get(&(hwnd.0 as isize)).copied());
+            if let Some(ratio) = ratio {
                 if ratio.is_finite() && ratio > 0.0 && lparam.0 != 0 {
                     let rect = &mut *(lparam.0 as *mut RECT);
                     apply_aspect(hwnd, rect, wparam.0 as u32, ratio);
                 }
+            }
+        } else if msg == WM_NCDESTROY {
+            // Окно уходит — убираем свою запись, иначе карта растёт на каждое
+            // когда-либо открытое превью.
+            if let Ok(mut map) = ASPECTS.lock() {
+                map.remove(&(hwnd.0 as isize));
             }
         }
         unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
@@ -240,23 +266,6 @@ pub struct PreviewOpenData {
     pub file_type: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct LogWindowStatus {
-    pub is_open: bool,
-    pub is_visible: bool,
-    pub log_count: usize,
-    pub stats: LogStats,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct LogStats {
-    pub total: usize,
-    pub errors: usize,
-    pub warnings: usize,
-    pub infos: usize,
-    pub debugs: usize,
-}
-
 #[derive(Debug, Serialize, specta::Type)]
 pub struct LogHistory {
     pub items: Vec<serde_json::Value>,
@@ -265,31 +274,29 @@ pub struct LogHistory {
 // Хранилище для логов. items — массив ProcessingItemGroup в формате LogApp.tsx.
 // logs/stats оставлены для обратной совместимости со старыми вызовами.
 
+/// Состояние окна логов. Единственное поле — «горячий буфер» item'ов, который
+/// обрезает `trim_hot_buffer`; всё старое лежит в архиве на диске (log_archive.rs).
+///
+/// Раньше рядом жили `logs: Vec<Value>` и `stats: LogStats` — вторая, более простая
+/// система логирования: плоский список строк со счётчиками по уровням. Писала в неё
+/// только команда `log_message`, а её не вызывал никто; читали `get_recent`/`get_errors`/
+/// `has_errors`/`get_status` — их тоже никто. Фильтры по уровням, поиск и кнопка
+/// «только с ошибками» в окне реализованы на клиенте поверх `items`, так что вторая
+/// система оказалась не заделом под фичу, а остатком более раннего подхода.
 pub struct LogState {
     pub items: Vec<serde_json::Value>,
-    pub logs: Vec<serde_json::Value>,
-    pub stats: LogStats,
 }
 
 impl LogState {
     pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            logs: Vec::new(),
-            stats: LogStats {
-                total: 0,
-                errors: 0,
-                warnings: 0,
-                infos: 0,
-                debugs: 0,
-            },
-        }
+        Self { items: Vec::new() }
     }
 }
 
 // ==================== NODE WINDOW ====================
 
 #[tauri::command]
+#[specta::specta]
 pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri::State<'_, Mutex<NodeWindowState>>) -> Result<bool, String> {
     println!("[NodeWindow] 🚀 open_node_window called with data: {}", data);
     
@@ -368,26 +375,6 @@ pub async fn open_node_window(app: tauri::AppHandle, data: String, state: tauri:
     });
 
     Ok(true)
-}
-
-#[tauri::command]
-pub async fn request_data_from_main_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(main_win) = app.get_webview_window("main") {
-        main_win
-            .emit("give-data", "")
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn send_data_to_node_window(app: tauri::AppHandle, data: serde_json::Value) -> Result<(), String> {
-    if let Some(node_win) = app.get_webview_window("nodeWin") {
-        node_win
-            .emit("update-data", &data)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 // ==================== PREVIEW WINDOW ====================
@@ -614,6 +601,27 @@ fn update_instance_geometry(app: &tauri::AppHandle, label: &str) {
     }
 }
 
+/// Назначает первичным одно из оставшихся окон данного типа.
+///
+/// Кандидаты равноправны (все они «каскадные»), поэтому берём первое найденное —
+/// важно лишь то, что первичное окно типа ровно одно: именно оно пишет базовую
+/// геометрию, и это защищает базу от каскадного дрейфа.
+///
+/// Возвращает метку назначенного окна — для тестов и диагностики.
+fn promote_primary(
+    instances: &mut std::collections::HashMap<String, PreviewInstance>,
+    file_type: &str,
+) -> Option<String> {
+    let label = instances
+        .iter()
+        .find(|(_, inst)| inst.file_type == file_type && !inst.is_primary)
+        .map(|(label, _)| label.clone())?;
+    if let Some(inst) = instances.get_mut(&label) {
+        inst.is_primary = true;
+    }
+    Some(label)
+}
+
 /// Закрытие preview-окна: убираем инстанс из реестра. Если это было ПОСЛЕДНЕЕ окно
 /// своего типа — пишем его геометрию в персистентный слот "{type}_{orientation}"
 /// (вариант «база» — без каскадного дрейфа) и сбрасываем якорь каскада типа.
@@ -630,6 +638,19 @@ fn on_preview_destroyed(app: &tauri::AppHandle, label: &str, file_type: &str) {
         let is_primary = removed.as_ref().map(|i| i.is_primary).unwrap_or(false);
         let geometry = removed.and_then(|i| i.last_geometry);
         let remaining = guard.instances.values().filter(|i| i.file_type == file_type).count();
+
+        // Роль первичного передаём дальше, если окна типа ещё остались.
+        //
+        // `is_primary` ставится один раз при создании (`open_count == 0`), а базу пишет
+        // только первичное окно. Без передачи роли получалось так: открыл A и B, закрыл A
+        // — и с этого момента ни ресайз B, ни его закрытие геометрию не сохраняют, потому
+        // что первичного окна типа больше нет. Пользователь менял размер, закрывал,
+        // открывал заново и видел старый размер: «окно забыло». Восстанавливается это
+        // только когда закроются ВСЕ окна типа.
+        if is_primary && remaining > 0 {
+            promote_primary(&mut guard.instances, file_type);
+        }
+
         (geometry, is_primary, remaining)
     };
 
@@ -843,6 +864,7 @@ pub async fn preview_resize(
 /// window opens that window's devtools. The inspector methods are compiled in
 /// because `tauri` is built with the `devtools` feature (see Cargo.toml).
 #[tauri::command]
+#[specta::specta]
 pub fn open_devtools(window: tauri::WebviewWindow) -> Result<bool, String> {
     if window.is_devtools_open() {
         window.close_devtools();
@@ -854,42 +876,6 @@ pub fn open_devtools(window: tauri::WebviewWindow) -> Result<bool, String> {
 }
 
 // ==================== LOG WINDOW ====================
-
-#[tauri::command]
-pub fn log_message(level: String, message: String, meta: Option<serde_json::Value>, app: tauri::AppHandle, state: tauri::State<Mutex<LogState>>) {
-    // Логируем в консоль
-    match level.as_str() {
-        "info" => println!("[INFO] {}", message),
-        "warn" => println!("[WARN] {}", message),
-        "error" => eprintln!("[ERROR] {}", message),
-        "debug" => println!("[DEBUG] {}", message),
-        _ => println!("[{}] {}", level, message),
-    }
-
-    // Добавляем в состояние
-    if let Ok(mut log_state) = state.lock() {
-        let log_entry = serde_json::json!({
-            "level": level,
-            "message": message,
-            "meta": meta,
-            "timestamp": chrono::Utc::now().timestamp_millis(),
-        });
-
-        log_state.logs.push(log_entry.clone());
-        log_state.stats.total += 1;
-
-        match level.as_str() {
-            "error" => log_state.stats.errors += 1,
-            "warn" => log_state.stats.warnings += 1,
-            "info" => log_state.stats.infos += 1,
-            "debug" => log_state.stats.debugs += 1,
-            _ => {}
-        }
-
-        // Отправляем событие во все окна
-        let _ = app.emit("log-event", log_entry);
-    }
-}
 
 // async — обязательно. На macOS WebviewWindowBuilder::build() должен идти через main-thread;
 // синхронная Tauri-команда выполняется на worker-треде из пула и build() блокируется намертво
@@ -932,27 +918,6 @@ pub async fn log_window_open(app: tauri::AppHandle) -> Result<bool, String> {
     crate::commands::window_state::register_autosave(&app, "logWindow");
 
     Ok(true)
-}
-
-#[tauri::command]
-pub fn log_window_toggle() -> Result<bool, String> {
-    Ok(true)
-}
-
-#[tauri::command]
-pub fn log_window_close() -> Result<bool, String> {
-    Ok(true)
-}
-
-#[tauri::command]
-pub fn log_window_get_status(state: tauri::State<Mutex<LogState>>) -> Result<LogWindowStatus, String> {
-    let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(LogWindowStatus {
-        is_open: true,
-        is_visible: true,
-        log_count: state.logs.len(),
-        stats: state.stats.clone(),
-    })
 }
 
 #[tauri::command]
@@ -1039,14 +1004,6 @@ pub fn log_window_clear(app: tauri::AppHandle, state: tauri::State<Mutex<LogStat
     {
         let mut state = state.lock().map_err(|e| e.to_string())?;
         state.items.clear();
-        state.logs.clear();
-        state.stats = LogStats {
-            total: 0,
-            errors: 0,
-            warnings: 0,
-            infos: 0,
-            debugs: 0,
-        };
     }
     let _ = app.emit("log-window:cleared", ());
     Ok(true)
@@ -1103,42 +1060,6 @@ pub fn log_window_export(
 }
 
 // ==================== LOG WINDOW: запись событий обработки ====================
-
-/// Регистрирует новый item в LogState и эмитит событие log-window:item-start.
-/// payload — ProcessingItemGroup (с полями itemId, itemName, mainFolderName, projectName, status, startTime, steps, errorCount, warnCount, itemLogs).
-#[tauri::command]
-pub fn log_window_emit_item_start(
-    app: tauri::AppHandle,
-    state: tauri::State<Mutex<LogState>>,
-    mut payload: serde_json::Value,
-) -> Result<(), String> {
-    normalize_item_group(&mut payload);
-    {
-        let mut st = state.lock().map_err(|e| e.to_string())?;
-        let id = payload
-            .get("itemId")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        // Заменить существующий или добавить
-        if let Some(pos) = st.items.iter().position(|it| {
-            it.get("itemId").and_then(|v| v.as_str()) == Some(&id)
-        }) {
-            st.items[pos] = payload.clone();
-        } else {
-            st.items.push(payload.clone());
-        }
-    }
-    let item_id = payload.get("itemId").and_then(|v| v.as_str()).unwrap_or("");
-    let item_name = payload.get("itemName").and_then(|v| v.as_str()).unwrap_or("");
-    let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("");
-    let steps_count = payload.get("steps").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    crate::commands::diag_log::write(
-        &app,
-        &format!("item-start: id={} name={} status={} steps={}", item_id, item_name, status, steps_count),
-    );
-    app.emit("log-window:item-start", &payload).map_err(|e| e.to_string())
-}
 
 /// Рекурсивный поиск шага по stepId среди steps + subSteps (для loop'ов).
 /// Возвращает mut-ссылку на найденный шаг. Сначала ищется индекс (без &mut), затем
@@ -1500,8 +1421,21 @@ pub fn log_window_emit_item_end(
         let cost      = payload.get("totalCost").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let ended_at  = payload.get("endTime").and_then(|v| v.as_str()).unwrap_or("");
         let duration  = payload.get("duration").and_then(|v| v.as_str()).unwrap_or("00:00:00");
+        // startedAt берём из лог-группы (ставится на item:start), а НЕ из registeredAt (= время находки).
+        let started_at = finished_group
+            .as_ref()
+            .and_then(|g| g.get("startTime"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        // Абсолютные пути финальных файлов; в db_analytics режутся до пути от корня проекта.
+        let out_files: Vec<String> = payload
+            .get("outFiles")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
         if let Ok(db) = db_state.lock() {
-            super::db_analytics::write_analytics(&app, item_id, status, cost, ended_at, duration, &db);
+            super::db_analytics::write_analytics(&app, item_id, status, cost, ended_at, &started_at, duration, &out_files, &db);
         }
     }
 
@@ -1544,52 +1478,7 @@ pub fn log_window_emit_item_end(
     app.emit("log-window:item-end", &payload).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn log_window_open_quick() -> Result<bool, String> {
-    Ok(true)
-}
-
-#[tauri::command]
-pub fn log_window_open_errors_only() -> Result<bool, String> {
-    Ok(true)
-}
-
-#[tauri::command]
-pub fn log_window_has_errors(state: tauri::State<Mutex<LogState>>) -> Result<bool, String> {
-    let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(state.stats.errors > 0)
-}
-
-#[tauri::command]
-pub fn log_window_get_recent(count: Option<usize>, state: tauri::State<Mutex<LogState>>) -> Result<Vec<serde_json::Value>, String> {
-    let state = state.lock().map_err(|e| e.to_string())?;
-    let count = count.unwrap_or(50);
-    let len = state.logs.len();
-    let start = len.saturating_sub(count);
-    Ok(state.logs[start..].to_vec())
-}
-
-#[tauri::command]
-pub fn log_window_get_errors(state: tauri::State<Mutex<LogState>>) -> Result<Vec<serde_json::Value>, String> {
-    let state = state.lock().map_err(|e| e.to_string())?;
-    let errors: Vec<serde_json::Value> = state.logs.iter()
-        .filter(|log| log.get("level").and_then(|l| l.as_str()) == Some("error"))
-        .cloned()
-        .collect();
-    Ok(errors)
-}
-
 // ==================== CONSOLE ====================
-
-#[tauri::command]
-pub fn intercept_console() {
-    println!("[Console] Intercept is not needed in Tauri");
-}
-
-#[tauri::command]
-pub fn restore_console() {
-    println!("[Console] Restore is not needed in Tauri");
-}
 
 // ==================== REQUEST DATA ====================
 
@@ -1597,6 +1486,7 @@ pub fn restore_console() {
 /// Решает race-condition: tauri://loaded → emit("update-data") может произойти раньше, чем
 /// React успел подписаться. Команда смотрит метку вызывающего webview и шлёт last_data.
 #[tauri::command]
+#[specta::specta]
 pub fn request_data(
     webview: tauri::Webview,
     node_state: tauri::State<'_, Mutex<NodeWindowState>>,
@@ -1623,5 +1513,58 @@ pub fn request_data(
         }
     } else {
         println!("[request_data] no last_data for '{}'", label);
+    }
+}
+
+#[cfg(test)]
+mod preview_primary_tests {
+    use super::{promote_primary, PreviewInstance};
+    use std::collections::HashMap;
+
+    fn inst(file_type: &str, is_primary: bool) -> PreviewInstance {
+        PreviewInstance {
+            file_path: format!("/tmp/{file_type}.bin"),
+            file_type: file_type.to_string(),
+            last_data: String::new(),
+            is_primary,
+            should_center: false,
+            last_geometry: None,
+        }
+    }
+
+    /// Регрессия. `is_primary` ставится один раз при создании, а базовую геометрию пишет
+    /// только первичное окно. Без передачи роли после закрытия первичного оставшиеся окна
+    /// типа перестают сохранять размер: пользователь ресайзит, закрывает, открывает заново
+    /// и видит старый размер.
+    #[test]
+    fn роль_переходит_к_оставшемуся_окну_того_же_типа() {
+        let mut m = HashMap::new();
+        m.insert("preview-video-1".to_string(), inst("video", true));
+        m.insert("preview-video-2".to_string(), inst("video", false));
+
+        // Закрылось первичное — эмулируем удаление и передачу роли.
+        m.remove("preview-video-1");
+        let promoted = promote_primary(&mut m, "video");
+
+        assert_eq!(promoted.as_deref(), Some("preview-video-2"));
+        assert!(m["preview-video-2"].is_primary, "оставшееся окно должно стать первичным");
+    }
+
+    #[test]
+    fn чужой_тип_не_повышается() {
+        let mut m = HashMap::new();
+        m.insert("preview-image-1".to_string(), inst("image", false));
+        assert_eq!(promote_primary(&mut m, "video"), None);
+        assert!(!m["preview-image-1"].is_primary, "окно другого типа трогать нельзя");
+    }
+
+    #[test]
+    fn первичное_ровно_одно() {
+        let mut m = HashMap::new();
+        m.insert("preview-video-2".to_string(), inst("video", false));
+        m.insert("preview-video-3".to_string(), inst("video", false));
+        promote_primary(&mut m, "video");
+        let primaries = m.values().filter(|i| i.is_primary).count();
+        assert_eq!(primaries, 1, "нельзя плодить первичные — иначе база задрейфует");
     }
 }

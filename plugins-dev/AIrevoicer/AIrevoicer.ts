@@ -2,10 +2,9 @@
 // HTTP-запросы выполняются через Rust (http_fetch / http_download) — нет CORS.
 
 import path from 'path';
-import { fs, http, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 const BASE_URL = 'https://ai-video-parse-xiprk.ondigitalocean.app/api';
 const REVOICE_URL = `${BASE_URL}/revoice`;
@@ -15,7 +14,8 @@ const VOICES_URL = `${BASE_URL}/voices`;
 const MAX_ATTEMPTS = 3;
 const POLL_INTERVAL_MS = 5000;
 
-export async function AIrevoicerFunc(_item: any, _description: any): Promise<string[]> {
+export async function AIrevoicerFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const inputValues: string[] = _item.import?.inputFile ?? [];
@@ -25,7 +25,7 @@ export async function AIrevoicerFunc(_item: any, _description: any): Promise<str
 	if (!voiceName.trim()) throw new Error('voiseId is empty — укажи имя голоса');
 
 	sendToMW('log', { text: `🎙 Получаем voice_id для "${voiceName}"...` });
-	const voiceId = await getVoiceIdByName(voiceName);
+	const voiceId = await getVoiceIdByName(voiceName, ctx);
 
 	const voiceOpt = {
 		voice_id: voiceId,
@@ -91,7 +91,7 @@ export async function AIrevoicerFunc(_item: any, _description: any): Promise<str
 					targetDir,
 					targetBaseName: lineTargetBase,
 					voiceOpt,
-				});
+				}, ctx);
 				if (!resultPath) {
 					throw new Error(`${_description.curItem} — не удалось обработать строку ${i + 1}`);
 				}
@@ -105,7 +105,7 @@ export async function AIrevoicerFunc(_item: any, _description: any): Promise<str
 				targetDir,
 				targetBaseName,
 				voiceOpt,
-			});
+			}, ctx);
 			if (!resultPath) throw new Error(`${_description.curItem} — не удалось обработать`);
 			finalFile.push(resultPath);
 		}
@@ -120,7 +120,8 @@ async function revoiceWithRetry(opts: {
 	targetDir: string;
 	targetBaseName: string;
 	voiceOpt: Record<string, any>;
-}): Promise<string | null> {
+}, ctx: PluginContext): Promise<string | null> {
+	const { http, sendToMW } = ctx;
 	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 		try {
 			sendToMW('log', { text: `🚀 Revoice attempt ${attempt}/${MAX_ATTEMPTS}` });
@@ -148,7 +149,7 @@ async function revoiceWithRetry(opts: {
 			const jobId: string = jobData.job_id;
 			sendToMW('log', { text: `📦 Job accepted: ${jobId}` });
 
-			const outputFilename = await pollRevoiceStatus(jobId);
+			const outputFilename = await pollRevoiceStatus(jobId, ctx);
 			const resultPath = path.join(opts.targetDir, opts.targetBaseName + path.extname(outputFilename));
 
 			sendToMW('log', { text: `⬇️ Скачиваем: ${outputFilename}` });
@@ -166,7 +167,8 @@ async function revoiceWithRetry(opts: {
 	return null;
 }
 
-async function pollRevoiceStatus(jobId: string): Promise<string> {
+async function pollRevoiceStatus(jobId: string, ctx: PluginContext): Promise<string> {
+	const { http, sendToMW } = ctx;
 	const statusUrl = `${STATUS_URL_BASE}${jobId}`;
 	while (true) {
 		await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -194,7 +196,8 @@ async function pollRevoiceStatus(jobId: string): Promise<string> {
 	}
 }
 
-async function getVoiceIdByName(name: string): Promise<string> {
+async function getVoiceIdByName(name: string, ctx: PluginContext): Promise<string> {
+	const { http, sendToMW } = ctx;
 	const res = await http.fetch(VOICES_URL, {
 		method: 'GET',
 		headers: [['Accept', 'application/json']],

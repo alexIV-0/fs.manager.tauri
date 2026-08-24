@@ -2,12 +2,11 @@
 // Tauri-port: ffmpeg/fs через @plugin-api/tauri helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { buildFfSwitchGraph } from '../../src/Utils/ffmpegGraphs/ffSwitchGraph';
 import { buildEncodeArgs, defaultEncodeSettings, type EncodeSettings } from '../../src/Utils/ffmpegCaps';
 
-export { onLoad } from '../_template/tauri';
 
 // ── Типы (зеркалят VideoAdjustEdit/types.ts в renderer) ──────────────────────
 
@@ -22,6 +21,8 @@ interface BgAdjustSettings {
 interface FgShadowSettings {
 	enabled: boolean;
 	blur: number;
+	/** Раздувание прямоугольника тени, px в каждую сторону. Необязательное: старые настройки его не знают. */
+	spread?: number;
 	offsetX: number;
 	offsetY: number;
 	opacity: number;
@@ -42,7 +43,8 @@ interface VideoAdjustSettings {
 // moved to the shared module src/Utils/ffmpegGraphs/ffSwitchGraph.ts (single source of
 // truth — the VideoAdjust preview renders the accurate frame with the same builder).
 
-export async function ffSwitchFunc(_item: any, _description: any): Promise<string[]> {
+export async function ffSwitchFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const label = `${_description.infoText}: [ffSwitch]`;
 
 	const fgFiles: string[] = (_item.import?.inputFG ?? []).filter(Boolean);

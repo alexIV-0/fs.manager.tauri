@@ -1,18 +1,18 @@
 import { greyColor } from '@/Store/Color/grayColor';
-import { commands, unwrap } from '@/Utils/specta';
+import { commands } from '@/Utils/specta';
 import { usePathStore } from '@/Store/Node/usePathStore';
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { runProcessingForSingleFolder } from '@/PROCESSING/runProcessingForSingleFolder';
 import { abortNow } from '@/PROCESSING/utils/processingAbort';
-import { Box, Button, Divider, IconButton, Stack, Typography } from '@mui/material';
+import { RUN_PROCESSING } from '@/PROCESSING/runLanes';
+import { Box, Button, Divider, IconButton, Stack, Tooltip, Typography } from '@mui/material';
 import { useReactFlow } from '@xyflow/react';
-import { Play, Square } from 'lucide-react';
+import { FileText, Play, Square } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import PresetsModal from './PresetsModal';
 import DocModal from './DocModal';
-import { syncTgSearchSidecar } from '@/NODE_WIN/utils/syncTgSearchSidecar';
-import { syncPostSourcesSidecar } from '@/NODE_WIN/utils/syncPostSourcesSidecar';
-import { ensureProjectFolders } from '@/NODE_WIN/utils/ensureProjectFolders';
+import { saveFlow } from '@/NODE_WIN/utils/saveFlow';
+import { ProjectDescriptionModal } from '@/components/ProjectDescriptionModal';
 
 interface TopPanelProps {
 	title: string | null;
@@ -25,6 +25,7 @@ function TopPanel({ title }: TopPanelProps) {
 
 	const [presetsOpen, setPresetsOpen] = useState(false);
 	const [docOpen, setDocOpen] = useState(false);
+	const [descOpen, setDescOpen] = useState(false);
 
 	const reactFlow = useReactFlow();
 	const { path } = usePathStore();
@@ -34,11 +35,7 @@ function TopPanel({ title }: TopPanelProps) {
 		if (!path || isScanningProcess) return;
 
 		// Сначала сохраняем текущее состояние нод
-		const flow = reactFlow.toObject();
-		unwrap(await commands.saveFlowToOptionsFolder(path, flow as any));
-		await ensureProjectFolders(path, flow);
-		await syncTgSearchSidecar(path, flow);
-		await syncPostSourcesSidecar(path, flow);
+		await saveFlow(path, reactFlow.toObject());
 
 		// Запускаем обработку только для этой папки
 		await runProcessingForSingleFolder(path);
@@ -46,7 +43,8 @@ function TopPanel({ title }: TopPanelProps) {
 
 	const handleStop = useCallback(() => {
 		abortNow();
-		commands.abortProcessing();
+		// Полоса обработки: постинг — отдельный прогон, его процессы этот стоп не касается.
+		commands.abortProcessing(RUN_PROCESSING);
 		const { setIsScanning, setIsScanningProcess } = isScanningStore.getState();
 		setIsScanningProcess(false);
 		setIsScanning(false);
@@ -70,6 +68,20 @@ function TopPanel({ title }: TopPanelProps) {
 					{folderName}
 				</Typography>
 				<Divider orientation='vertical' flexItem />
+
+				{/* Описание проекта — размер и толщина как у иконок главного окна */}
+				<Tooltip title='Описание проекта' arrow>
+					<span>
+						<IconButton
+							size='small'
+							disabled={!path}
+							onClick={() => setDescOpen(true)}
+							sx={{ p: 0, mx: '12px', color: greyColor(65), '&:hover': { color: greyColor(90) } }}
+						>
+							<FileText strokeWidth={1} />
+						</IconButton>
+					</span>
+				</Tooltip>
 
 				{/* Центр — кнопки запуска/остановки */}
 				<Box
@@ -132,6 +144,16 @@ function TopPanel({ title }: TopPanelProps) {
 
 			{/* Modal: Documentation */}
 			<DocModal open={docOpen} onClose={() => setDocOpen(false)} />
+
+			{/* Modal: описание проекта — здесь проект уже открыт, путь под рукой */}
+			{path && (
+				<ProjectDescriptionModal
+					open={descOpen}
+					onClose={() => setDescOpen(false)}
+					projectName={folderName ?? ''}
+					projectPath={path}
+				/>
+			)}
 		</>
 	);
 }

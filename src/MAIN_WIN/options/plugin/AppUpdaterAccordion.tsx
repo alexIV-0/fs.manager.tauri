@@ -12,6 +12,8 @@ import {
 import { AlertCircle, CheckCircle, ChevronDown, Download, RefreshCw } from 'lucide-react';
 import { cyanColor, greyColor } from '@/Store/Color/grayColor';
 import { loadPlugin } from '@/PluginAPI/loader';
+// updater — не нода, ctx ему передать некому: подставляем host-сервисы сами.
+import { hostServices } from '@/PluginAPI/host';
 import { getVersion } from '@tauri-apps/api/app';
 import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -33,8 +35,14 @@ interface GithubRelease {
 }
 
 interface UpdaterMod {
-	fetchReleases: (owner: string, repo: string) => Promise<GithubRelease[]>;
-	downloadAndOpen: (url: string, filename: string) => Promise<string>;
+	fetchReleases: (owner: string, repo: string, http: typeof hostServices.http) => Promise<GithubRelease[]>;
+	downloadAndOpen: (
+		url: string,
+		filename: string,
+		http: typeof hostServices.http,
+		paths: typeof hostServices.paths,
+		system: typeof hostServices.system,
+	) => Promise<string>;
 	getPlatformAsset: (assets: GithubAsset[]) => GithubAsset | null;
 	compareVersions: (a: string, b: string) => number;
 	normalizeVersion: (tag: string) => string;
@@ -70,7 +78,7 @@ export const AppUpdaterAccordion: React.FC = () => {
 				if (!modRef.current) {
 					modRef.current = await loadPlugin('updater', PLUGIN_VERSION);
 				}
-				const data = await modRef.current!.fetchReleases(OWNER, REPO);
+				const data = await modRef.current!.fetchReleases(OWNER, REPO, hostServices.http);
 				if (!cancelled) setReleases((prev) => (prev.length === 0 ? data : prev));
 			} catch {
 				/* silent */
@@ -98,7 +106,7 @@ export const AppUpdaterAccordion: React.FC = () => {
 				modRef.current = await loadPlugin('updater', PLUGIN_VERSION);
 			}
 			const mod = modRef.current!;
-			const data = await mod.fetchReleases(OWNER, REPO);
+			const data = await mod.fetchReleases(OWNER, REPO, hostServices.http);
 			setReleases(data);
 		} catch (e: any) {
 			setError(e?.message ?? 'Failed to fetch releases');
@@ -170,7 +178,7 @@ export const AppUpdaterAccordion: React.FC = () => {
 			}
 			// Fallback: скачиваем DMG/EXE/AppImage и открываем системно.
 			setProgress(null);
-			await modRef.current.downloadAndOpen(asset.browser_download_url, asset.name);
+			await modRef.current.downloadAndOpen(asset.browser_download_url, asset.name, hostServices.http, hostServices.paths, hostServices.system);
 			setInstalled(release.tag_name);
 		} catch (e: any) {
 			setError(`Install failed: ${e?.message ?? e}`);

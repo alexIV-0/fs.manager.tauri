@@ -21,6 +21,11 @@ export async function sendFindItemToRegistrationProcessDatabase(_item: any): Pro
 
 		const payload = {
 			description: {
+				// id, назначенный сайтом (задача из очереди). Пусто — Rust посчитает свой,
+				// как и раньше. Без этого поля регистрация задачи легла бы в DbState под
+				// локальным ключом, а item:end пришёл бы с taskId — и статистика не
+				// нашла бы свою запись (`SITE_STATS_LINK_PLAN.md`).
+				dbItemId: String(d.dbItemId ?? ''),
 				curItem: d.curItem ?? '',
 				isFolder: Boolean(d.isFolder),
 				size: Number(d.size ?? 0),

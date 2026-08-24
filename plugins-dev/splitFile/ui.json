@@ -78,6 +78,18 @@
 					"value": false
 				},
 				"outputType": "boolean"
+			},
+			{
+				"id": "encode",
+				"controlType": "encodeSettings",
+				"controlProps": {
+					"label": "Encode",
+					"tooltip": "Кодирование выходных сегментов. Правится шестерёнкой в шапке ноды: в теле ноды это свойство не рисуется.",
+					"profile": "fastCut",
+					"value": ""
+				},
+				"required": false,
+				"outputType": "string"
 			}
 		],
 		"output": {

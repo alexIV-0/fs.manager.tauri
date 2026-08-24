@@ -5,7 +5,10 @@
 // Все HTTP — через http.* (Rust/reqwest, без CORS).
 
 import path from 'path';
-import { http } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// Сервисы приходят параметром из ctx точки входа через границу модуля —
+// у файла не остаётся собственного состояния, плагин кэшируется.
 
 export type SendAs = 'video' | 'document';
 
@@ -66,6 +69,7 @@ export async function publishToChannels(
 	token: string,
 	file: string,
 	opts: { caption: string; targets: PostTarget[]; sendAs: SendAs; baseUrl: string; onStatus?: (text: string) => void },
+	http: PluginContext['http'],
 ): Promise<ChannelResult[]> {
 	const base = opts.baseUrl || 'https://api.telegram.org';
 	const method = opts.sendAs === 'document' ? 'sendDocument' : 'sendVideo';

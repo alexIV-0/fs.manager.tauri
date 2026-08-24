@@ -1,4 +1,4 @@
-import { JsonNavigatorProperty, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { JsonNavigatorProperty, CustomNodeData, Property, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { commands, unwrap } from '@/Utils/specta';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
@@ -130,7 +130,7 @@ function JsonNavigator({ property, onChange }: JsonNavigatorProps) {
 	const { controlProps } = property;
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 
 	const [value, setValue] = useState<string>(controlProps.value ?? '');
 	const [jsonData, setJsonData] = useState<any>(null);

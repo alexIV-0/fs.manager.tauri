@@ -11,7 +11,7 @@
       "ass",
       "overlay", "scale", "crop", "pad", "format", "setpts", "settb", "setsar", "setparams",
       "select", "metadata", "blackframe", "thumbnail",
-      "eq", "hflip", "geq", "boxblur",
+      "eq", "hflip", "boxblur",
       "amix", "atempo", "apad", "tpad", "split", "color", "xfade",
       "astats", "ametadata", "asetnsamples"
     ],

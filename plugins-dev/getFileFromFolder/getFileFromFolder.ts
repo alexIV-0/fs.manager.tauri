@@ -3,14 +3,14 @@
 // Tauri-port: все fs-операции через @plugin-api/tauri helper.
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 import { extractFromParentheses } from '../../src/Utils/extractFromParentheses';
 import { getRandomInt } from '../../src/Utils/getRandomInt';
 
-export { onLoad } from '../_template/tauri';
 
-export async function getFileFromFolder(_item: any, _description: any): Promise<string[]> {
+export async function getFileFromFolder(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	let curPath: string[] = [..._item.inputFolder];

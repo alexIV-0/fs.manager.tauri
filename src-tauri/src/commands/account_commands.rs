@@ -71,7 +71,9 @@ pub(crate) fn read_accounts(path: &PathBuf) -> Vec<Value> {
 pub(crate) fn write_accounts(path: &PathBuf, accounts: &[Value]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(&Value::Array(accounts.to_vec()))
         .map_err(|e| format!("to_string_pretty: {}", e))?;
-    fs::write(path, content).map_err(|e| format!("write {}: {}", path.display(), e))
+    // Атомарно: здесь лежат токены аккаунтов. Обрыв на записи означал бы потерю
+    // авторизации во все платформы сразу.
+    super::fs_commands::write_atomic(path, content.as_bytes())
 }
 
 fn account_name(v: &Value) -> &str {

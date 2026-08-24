@@ -6,7 +6,7 @@ interface StatusBarState {
 }
 
 export const useStatusBar_Store = create<StatusBarState>((set) => ({
-	statusBar: 'waiting starting',
+	statusBar: 'слежение остановлено',
 
 	setStatusBarState: (text) =>
 		set(() => ({

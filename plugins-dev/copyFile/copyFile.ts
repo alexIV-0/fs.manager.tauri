@@ -4,13 +4,16 @@
 // заменена на copy_item в Rust (там же создаются родительские директории).
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
 
-export { onLoad } from '../_template/tauri';
-
-export async function copyFileFunc(_item: any, _description: any): Promise<string[]> {
+// `fs`/`sendToMW` приходят третьим аргументом (ctx), а не импортом из _template:
+// у плагина не остаётся module-local состояния, поэтому загрузчик кэширует модуль
+// вместо пересоздания на каждый вызов. Отсутствие экспорта `onLoad` — признак
+// нового стиля, по нему loader.ts и различает режимы.
+export async function copyFileFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	// Сегменты, заданные пользователем (папка/имя), либо дефолтное имя.
@@ -49,31 +52,26 @@ export async function copyFileFunc(_item: any, _description: any): Promise<strin
 			text: `${_description.infoText ?? ''}: [copy file] ${path.basename(fileFrom)} → ${path.basename(fileTo)}`,
 		});
 
-		// destination уже существует? Проверяем через exists (а не existsFile),
-		// потому что inputFile может быть папкой — existsFile вернул бы false
-		// и для проверки overwrite, и для пост-проверки после копирования.
-		const destExists = await fs.exists(fileTo);
+		// Одна команда вместо цепочки «проверить → скачать → скопировать → запомнить».
+		//
+		// Порядок здесь — инвариант: сначала проверяем актуальность по индексу
+		// (ноль запросов, ноль байт), и только если устарело — качаем. Разбей это
+		// на шаги, и однажды кто-то скачает три гигабайта, чтобы выяснить, что
+		// качать было не нужно.
+		//
+		// Для локальных источников поведение прежнее — сравнение по mtime.
+		const res = await fs.copyFromCloud(fileFrom, fileTo, Boolean(_item.overwriteOldest));
 
-		if (destExists) {
-			if (!_item.overwriteOldest) {
-				// overwrite=false — пропускаем (как в оригинальном Electron-плагине).
-				console.log('Destination exists and overwrite=false:', fileTo);
-				finalFile.push(fileTo);
-				continue;
-			}
-
-			// overwriteOldest=true: перезаписываем только если source новее.
-			const newer = await fs.isSourceNewer(fileFrom, fileTo);
-			if (!newer) {
-				console.log('Destination is newer or same age — skip:', path.basename(fileTo));
-				finalFile.push(fileTo);
-				continue;
-			}
+		if (res.action === 'skippedExists') {
+			console.log('Destination exists and overwrite=false:', fileTo);
+			finalFile.push(fileTo);
+			continue;
 		}
-
-		// copy_item в Rust сам создаёт родительские директории.
-		// overwrite:true — мы уже отфильтровали кейсы выше.
-		await fs.copy(fileFrom, fileTo, { overwrite: true });
+		if (res.action === 'skippedUpToDate') {
+			console.log('Destination is up to date — skip:', path.basename(fileTo));
+			finalFile.push(fileTo);
+			continue;
+		}
 
 		// Проверка что результат действительно появился (защита от тихого фейла).
 		// exists — потому что fileFrom может быть папкой.
@@ -83,7 +81,17 @@ export async function copyFileFunc(_item: any, _description: any): Promise<strin
 		}
 
 		if (_item.deleteAfter) {
-			await fs.remove(fileFrom).catch(() => {});
+			// Исходник из зеркала `remove` убирает и с диска, и из каталога облака —
+			// иначе он остался бы «только онлайн» и вернулся бы в работу при первой
+			// же гидрации. Отказ (сеть отвалилась на удалении в облаке) больше не
+			// глотаем молча: «галочка стоит, а файл на месте» выглядит как поломка
+			// ноды, хотя причина совсем в другом месте.
+			await fs.remove(fileFrom).catch((e: unknown) => {
+				sendToMW('log', {
+					level: 'warn',
+					text: `[copyFile] Не удалось удалить исходник ${path.basename(fileFrom)}: ${String(e)}`,
+				});
+			});
 		}
 
 		finalFile.push(fileTo);

@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod machine;
+mod storage;
 
 use commands::{
     fs_commands::*,
@@ -25,6 +27,7 @@ use commands::{
     youtube_auth_commands::*,
     youtube_upload_commands::*,
     tg_commands::*,
+    storage_commands::*,
 };
 use commands::plugin_commands::PluginManagerState;
 use commands::settings_commands::AppSettingsState;
@@ -36,17 +39,21 @@ use tauri::menu::{Menu, Submenu, PredefinedMenuItem};
 
 /// Specta-builder для генерации типобезопасных TS-биндингов (стадия «export-only»).
 ///
-/// Содержит ТОЛЬКО snake-реализации (НЕ camel-обёртки) — см. SPECTA_MIGRATION_PLAN.md §4.
-/// `generate_handler!` ниже пока остаётся ЕДИНСТВЕННЫМ источником истины для рантайма;
-/// этот билдер НЕ монтируется в `tauri::Builder` — используется исключительно для
-/// `export()` в debug-сборке. Поэтому коллизий имён в рантайме нет, поведение не меняется.
+/// ЕДИНСТВЕННЫЙ список команд приложения.
 ///
-/// Пилот миграции: модуль `ae_commands` (2 команды). Остальные модули добавляются
-/// в `collect_commands!` по мере миграции.
-#[cfg(debug_assertions)]
+/// Он же даёт типы (`export()` → `src/bindings.ts`) и он же регистрирует рантайм
+/// (`invoke_handler()` в `run()`). Раньше списков было ДВА — `collect_commands!` для
+/// типов и `tauri::generate_handler!` для рантайма, — и компилятор их расхождение не
+/// ловил: команда компилировалась, типизировалась, тесты были зелёные, а фронт получал
+/// «command not found». Так однажды отвалился весь клиент хранилища целиком, 26 команд.
+///
+/// Пока списков было два, от этого сторожил тест-сличитель. Теперь сличать нечего:
+/// добавить команду в одно место и забыть про другое стало невозможно.
 fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
+            // Ключ и подпись этой машины (режим воркера + имя файла статистики).
+            machine::machine_identity,
             run_script_in_ae,
             launch_ae_with_script,
             // fs watcher (мигрирован Stage 1 — call-sites на commands.*, camel-обёртки удалены)
@@ -85,6 +92,11 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             log_archive_clear,
             // processing (app-only часть — мигрирована; sendLog/setStatusBar плагинные, оставлены)
             abort_processing,
+            // Снятие сигнала прерывания на старте прогона. Долго была мёртвой: в
+            // рантайме есть, в specta не было, и никто её не звал — флаг гасился
+            // побочным эффектом в exec_command, из-за чего один убитый процесс
+            // снимал глобальный стоп. Теперь её зовёт startProcessContext().
+            reset_processing_signal,
             move_to_errors,
             send_node_start,
             send_node_done,
@@ -140,12 +152,14 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             read_file_sync,
             read_media_preview,
             write_file,
+            write_file_atomic,
             append_file,
             write_binary_file,
             check_file_path,
             check_folder_path,
             get_some_from_folder,
             list_subfolders,
+            read_folder_states,
             recursive_find_files,
             get_user_data_path,
             get_plugins_dev_path,
@@ -197,6 +211,113 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             tg_server_stop,
             tg_server_status,
             tg_cloud_log_out,
+            // Клиент облачного хранилища (см. ideasAndTest/R2_SYNC_PLAN.md)
+            storage_get_config,
+            storage_set_config,
+            storage_connect,
+            storage_connect_mock,
+            storage_disconnect,
+            storage_status,
+            storage_refresh_projects,
+            // Очередь задач конвейера (режим воркера).
+            storage_queue_ping,
+            storage_queue_claim,
+            storage_queue_progress,
+            storage_queue_done,
+            storage_queue_failed,
+            storage_queue_release,
+            storage_clients,
+            storage_projects,
+            storage_catch_up,
+            storage_catch_up_path,
+            storage_list_dir,
+            storage_browse,
+            storage_ensure_dir,
+            storage_local_files,
+            storage_drop_local,
+            storage_folder_badge,
+            storage_set_pinned,
+            storage_project_synced_at,
+            storage_ensure_local,
+            storage_upload,
+            storage_run_eviction,
+            storage_mirror_bytes,
+            storage_copy_from_mirror,
+            storage_mirror_path,
+            storage_download,
+            storage_detect_local_changes,
+            storage_transfers,
+            storage_cancel_transfer,
+            storage_not_uploaded,
+            storage_upload_now,
+            storage_dismiss_transfer,
+            storage_retry_transfer,
+            storage_clear_finished_transfers,
+            storage_subtree_stats,
+            storage_path_info,
+            storage_project_info,
+            storage_rename,
+            storage_move,
+            storage_rename_project,
+            storage_set_project_paused,
+            storage_mkdir,
+            storage_delete,
+            storage_purge_project,
+            storage_resolve_conflict,
+            storage_sync_now,
+            storage_drop_owner_local,
+            storage_mark_dirty,
+            storage_flush_uploads,
+
+            // ─── Дотянуто до полного паритета: раньше эти 46 команд жили ТОЛЬКО
+            // в generate_handler! и звались строкой (из TS и из плагинов), то есть
+            // без типов. Теперь список ОДИН и он же регистрирует рантайм.
+            commands::icon_commands::get_file_icon,
+            path_join,
+            open_node_window,
+            open_devtools,
+            request_data,
+            diag_log_write,
+            diag_log_path,
+            diag_log_clear,
+            is_processing_aborted,
+            set_processing_progress,
+            get_processing_progress,
+            add_processing_error,
+            processing_delete_item,
+            get_item_info,
+            process_item,
+            set_status_bar,
+            send_log,
+            exec_command,
+            kill_all_exec_processes,
+            ffmpeg_get_path,
+            ffprobe_get_path,
+            ffprobe_get_info,
+            ffmpeg_get_video_thumbnail,
+            ffmpeg_exec_with_progress,
+            read_media_preview_with_ffmpeg,
+            http_fetch,
+            http_upload,
+            http_download,
+            plugin_manager_init,
+            plugin_manager_load_plugin,
+            plugin_manager_unload_plugin,
+            plugin_manager_get_all_plugins,
+            plugin_manager_get_plugins_by_type,
+            plugin_manager_get_plugin,
+            plugin_manager_set_cost,
+            plugin_manager_get_plugin_ui,
+            plugin_manager_get_all_ui_nodes,
+            plugin_manager_get_ui_nodes,
+            plugin_manager_list,
+            plugin_manager_get_state,
+            plugin_manager_call,
+            plugin_manager_install,
+            plugin_manager_delete,
+            plugin_manager_destroy,
+            plugin_build,
+            vk_auth_capture,
         ])
 }
 
@@ -220,10 +341,11 @@ fn export_specta_bindings() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Export-only: в debug пересобираем src/bindings.ts из specta-билдера.
-    // generate_handler! НЕ трогаем — он остаётся invoke_handler'ом приложения.
+    // В debug заодно пересобираем src/bindings.ts из того же самого билдера.
     #[cfg(debug_assertions)]
     export_specta_bindings();
+
+    let specta = specta_builder();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -251,6 +373,7 @@ pub fn run() {
         .manage(Mutex::new(commands::preview_bounds::PreviewBoundsState::new()))
         .manage(Mutex::new(AppSettingsState::new()))
         .manage(Mutex::new(DbState::new()))
+        .manage(crate::storage::StorageService::new())
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -262,6 +385,11 @@ pub fn run() {
             let app_data_dir = app.path()
                 .app_data_dir()
                 .expect("Failed to get app data dir");
+
+            // Идентичность машины: UUID заводится при первом запуске и дальше только
+            // читается. Здесь, а не по требованию, потому что `AppHandle` есть только
+            // тут, а спрашивают её из мест без него (имя файла статистики).
+            machine::init(&app_data_dir);
 
             let mut plugin_state = PluginManagerState::new(cfg!(debug_assertions), app_data_dir);
 
@@ -284,13 +412,11 @@ pub fn run() {
 
             app.manage(Mutex::new(plugin_state));
 
-            // Инициализируем ExecState с ссылкой на abort_signal из ProcessingState
-            let processing_state_mutex = app.state::<std::sync::Mutex<commands::processing_commands::ProcessingState>>();
-            let processing_state = processing_state_mutex.lock().unwrap();
-            let abort_flag = processing_state.abort_signal.clone();
-            drop(processing_state);
-            let exec_state = commands::exec_commands::ExecState::new(abort_flag);
-            app.manage(exec_state);
+            // ExecState хранит только реестр запущенных процессов. Флаги прерывания
+            // живут в ProcessingState по ПОЛОСАМ (processing/posting) и берутся в
+            // `exec_command` по полосе вызова — раньше здесь клонировался один
+            // общий флаг, и потому стоп одного раннера убивал процессы другого.
+            app.manage(commands::exec_commands::ExecState::new());
             
             // Восстановить состояние главного окна ДО показа.
             // Окно создаётся скрытым (tauri.conf.json → "visible": false), позиция/размер
@@ -413,221 +539,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            // Native file icon (drag-preview)
-            commands::icon_commands::get_file_icon,
-            // File system commands
-            get_file_info,
-            get_file_type_by_extname,
-            test_and_create_folder,
-            test_and_create_folders,
-            create_text_file,
-            ensure_and_read_dir,
-            get_stat,
-            os_tmpdir,
-            hash_file,
-            rename_folder,
-            set_path_mtime,
-            copy_item,
-            move_item,
-            delete_item,
-            read_file_sync,
-            read_media_preview,
-            write_file,
-            append_file,
-            write_binary_file,
-            check_file_path,
-            check_folder_path,
-            get_some_from_folder,
-            list_subfolders,
-            recursive_find_files,
-            get_user_data_path,
-            get_plugins_dev_path,
-            get_platform_target,
-            get_cpu_count,
-            fonts_get_list,
-            fonts_load_one,
-            shell_open_path,
-            // Dialog commands (мигрированы на specta — snake-имена, реальные реализации)
-            select_folders,
-            select_files,
-            copy_to_clipboard,
-            show_in_folder,
-            open_file_with_default_app,
-            create_folder,
-            rename_file,
-            get_node_obj_from_file,
-            save_flow_to_options_folder,
-            get_paths_from_files,
-            request_data_preview,
-            open_dev_tools,
-            // Window state (мигрирован на specta — camel saveWindowState/loadWindowState удалены)
-            save_window_state,
-            load_window_state,
-            // Path utilities: только path_join (его зовут плагины через IPC);
-            // basename/dirname/extname/parse/relative удалены — приложение считает в renderer.
-            path_join,
-            // Window commands
-            open_node_window,
-            request_data_from_main_window,
-            send_data_to_node_window,
-            preview_open,
-            preview_resize,
-            preview_detect_alpha,
-            preview_transcode_webm,
-            preview_delete_temp,
-            open_devtools,
-            request_data,
-            // Log window
-            log_message,
-            log_window_open,
-            log_window_toggle,
-            log_window_close,
-            log_window_get_status,
-            log_window_get_history,
-            log_window_clear,
-            log_window_export,
-            log_window_open_quick,
-            log_window_open_errors_only,
-            log_window_has_errors,
-            log_window_get_recent,
-            log_window_get_errors,
-            log_window_emit_item_start,
-            log_window_emit_item_log,
-            log_window_emit_node_update,
-            log_window_emit_item_end,
-            log_window_emit_item_queued,
-            log_window_emit_substep_batch,
-            log_window_emit_abort_queued,
-            log_archive_list_days,
-            log_archive_get_day,
-            log_archive_cleanup,
-            log_archive_clear,
-            diag_log_write,
-            diag_log_path,
-            diag_log_clear,
-            intercept_console,
-            restore_console,
-            // File watcher
-            fs_watch_start,
-            fs_watch_stop,
-            // Processing
-            abort_processing,
-            is_processing_aborted,
-            reset_processing_signal,
-            set_processing_progress,
-            get_processing_progress,
-            add_processing_error,
-            move_to_errors,
-            processing_delete_item,
-            path_exists,
-            get_item_info,
-            process_item,
-            set_status_bar,
-            send_log,
-            send_node_start,
-            send_node_done,
-            send_node_error,
-            send_process_complete,
-            // External command (exec)
-            exec_command,
-            kill_all_exec_processes,
-            // FFmpeg
-            ffmpeg_get_path,
-            ffprobe_get_path,
-            ffprobe_get_info,
-            ffmpeg_get_video_thumbnail,
-            ffmpeg_exec_with_progress,
-            read_media_preview_with_ffmpeg,
-            // After Effects
-            run_script_in_ae,
-            launch_ae_with_script,
-            // App Settings & Color Types
-            app_settings_get,
-            app_settings_set,
-            app_settings_patch,
-            color_types_get,
-            color_types_set,
-            color_types_rescan,
-            color_types_add,
-            color_types_remove,
-            // File Types & Program Paths
-            file_types_get,
-            file_types_set,
-            program_paths_get,
-            program_paths_set,
-            // Cleanup & DB
-            cleanup_auto_delete,
-            db_register_found,
-            // Docs
-            docs_list,
-            docs_read,
-            // HTTP (Rust-side, no CORS)
-            http_fetch,
-            http_upload,
-            http_download,
-            // Plugins
-            plugin_manager_init,
-            plugin_manager_load_plugin,
-            plugin_manager_unload_plugin,
-            plugin_manager_get_all_plugins,
-            plugin_manager_get_plugins_by_type,
-            plugin_manager_get_plugin,
-            plugin_manager_set_cost,
-            plugin_manager_get_plugin_ui,
-            plugin_manager_get_all_ui_nodes,
-            plugin_manager_get_ui_nodes,
-            plugin_manager_list,
-            plugin_manager_get_state,
-            plugin_manager_call,
-            plugin_manager_install,
-            plugin_manager_delete,
-            plugin_manager_destroy,
-            plugin_build,
-            // Deps: авто-загрузка ffmpeg/ffprobe + whisper-моделей
-            deps_ffmpeg_status,
-            deps_download_ffmpeg,
-            deps_whisper_models_dir,
-            deps_list_whisper_models,
-            deps_download_whisper_model,
-            deps_download_tg_server,
-            // Preview render (ffmpeg-кадр для редакторов фильтров)
-            preview_render_frame,
-            preview_render_audio,
-            preview_clear_cache,
-            // Autopost: хранилище аккаунтов (App Support)
-            account_save,
-            account_list,
-            account_get_token,
-            account_add_channel,
-            account_remove_channel,
-            account_delete,
-            // VK OAuth + валидация
-            vk_auth_open,
-            vk_auth_capture,
-            vk_validate_token,
-            vk_groups_get,
-            youtube_auth_start,
-            youtube_refresh_token,
-            youtube_get_access_token,
-            youtube_upload_video,
-            youtube_set_thumbnail,
-            // Telegram: валидация токена бота + проверка канала + авто-обнаружение каналов
-            tg_validate_token,
-            tg_get_chat,
-            tg_discover_channels,
-            tg_discover_sources,
-            tg_get_updates,
-            tg_fetch_file,
-            tg_delete_message,
-            tg_set_reaction,
-            tg_create_forum_topic,
-            tg_base_url,
-            tg_server_start,
-            tg_server_stop,
-            tg_server_status,
-            tg_cloud_log_out,
-        ])
+        .invoke_handler(specta.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -639,5 +551,156 @@ mod specta_export_tests {
     #[test]
     fn export_bindings() {
         super::export_specta_bindings();
+    }
+
+    /// Достаёт имена из `<marker>[ … ]` — по одному идентификатору в строке,
+    /// комментарии и пути вида `commands::mod::name` отбрасываются.
+    fn list(src: &str, marker: &str) -> std::collections::BTreeSet<String> {
+        let start = src.find(marker).unwrap_or_else(|| panic!("не найден {marker}"));
+        let body = &src[start + marker.len()..];
+        let end = body.find("])").expect("не найден конец списка");
+        body[..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or("").trim().trim_end_matches(','))
+            .filter(|l| !l.is_empty())
+            .map(|l| l.rsplit("::").next().unwrap_or(l).to_string())
+            .collect()
+    }
+
+    /// Страж от возвращения ДВУХ списков команд.
+    ///
+    /// Здесь когда-то стоял тест-сличитель: `collect_commands!` против
+    /// `tauri::generate_handler!`. Он был нужен, пока списков было два и компилятор их
+    /// расхождение не ловил — команда компилировалась, типизировалась, тесты были
+    /// зелёные, а фронт получал «command not found» (так умер весь клиент хранилища,
+    /// 26 команд).
+    ///
+    /// Сличать больше нечего: рантайм собирается из ТОГО ЖЕ списка через
+    /// `specta.invoke_handler()`. Но вернуть `generate_handler!` рядом ничто не мешает,
+    /// а это молча вернёт и всю проблему — поэтому сторожим сам факт единственности.
+    #[test]
+    fn список_команд_ровно_один() {
+        let src = include_str!("lib.rs");
+
+        assert!(
+            src.contains(".invoke_handler(specta.invoke_handler())"),
+            "рантайм больше не берёт команды из specta-билдера — вернулся второй источник истины"
+        );
+
+        // Комментарии снимаем: имя старого макроса живёт в пояснениях (и в этом
+        // тесте), а искать надо ВЫЗОВ. Без этого страж падал бы на собственном тексте.
+        let code: String = src
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let marker = concat!("generate_", "handler![");
+        assert!(
+            !code.contains(marker),
+            "в lib.rs снова есть вызов {marker} — это второй список команд, и он разъедется с collect_commands!"
+        );
+
+        let specta = list(src, "collect_commands![");
+        assert!(specta.len() > 200, "specta-список разобран не полностью: {}", specta.len());
+        assert!(specta.contains("storage_connect_mock"), "парсер не видит storage-команд");
+        // Команды, которые до 2026-08-11 жили только в рантайме и звались строкой.
+        for raw in ["http_fetch", "process_item", "plugin_manager_call", "exec_command"] {
+            assert!(specta.contains(raw), "{raw} потерялся при переходе на единый список");
+        }
+    }
+
+    /// Встречный страж к тесту выше.
+    ///
+    /// Тот сторожит единственность списка. Здесь другое направление: каждая команда,
+    /// которую фронт или плагин зовёт СЫРОЙ строкой (`invoke('имя')`), обязана в этом
+    /// списке присутствовать.
+    ///
+    /// Зачем он остался и после перехода на единый список: сырой вызов строкой типы
+    /// обходит по определению. Плагины зовут `http_fetch`/`exec_command` через
+    /// `tauriAPI.invoke('имя')`, и переименование команды в Rust компилятор не заметит,
+    /// `tsc` не заметит, а вызов сломается в рантайме. Ловится только текстовой сверкой.
+    #[test]
+    fn сырые_invoke_из_ts_существуют_в_рантайме() {
+        use std::collections::BTreeSet;
+        use std::path::Path;
+
+        let runtime = list(include_str!("lib.rs"), "collect_commands![");
+        assert!(runtime.len() > 50, "рантайм-список разобран не полностью: {}", runtime.len());
+
+        fn collect(dir: &Path, out: &mut BTreeSet<String>) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if p.file_name().is_some_and(|n| n == "node_modules") {
+                        continue;
+                    }
+                    collect(&p, out);
+                    continue;
+                }
+                let is_ts = p.extension().is_some_and(|x| x == "ts" || x == "tsx");
+                // bindings.ts сгенерён — имена там согласованы с Rust по построению.
+                let generated = p.file_name().is_some_and(|n| n == "bindings.ts");
+                if !is_ts || generated {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&p) else { continue };
+                let bytes = text.as_bytes();
+                // Ищем ЛЮБОЙ вызывающий, чьё имя заканчивается на invoke: `invoke(`,
+                // `tauriInvoke(`, `invokeHost(`. Наивный поиск подстроки "invoke(" видит
+                // только первую форму — а через неё как раз почти ничего и не зовётся.
+                for (idx, _) in text.match_indices('(') {
+                    let mut start = idx;
+                    while start > 0 {
+                        let c = bytes[start - 1];
+                        if c.is_ascii_alphanumeric() || c == b'_' {
+                            start -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let callee = &text[start..idx];
+                    if !callee.to_ascii_lowercase().ends_with("invoke")
+                        && !callee.to_ascii_lowercase().ends_with("invokehost")
+                    {
+                        continue;
+                    }
+                    let rest = text[idx + 1..].trim_start();
+                    let Some(quote) = rest.chars().next() else { continue };
+                    if quote != '\'' && quote != '"' && quote != '`' {
+                        continue; // имя вычисляется — сверить нельзя
+                    }
+                    let body = &rest[1..];
+                    let Some(end) = body.find(quote) else { continue };
+                    let name = &body[..end];
+                    // Берём только snake_case: camelCase — алиасы обёртки tauri-api,
+                    // а имена с ':' принадлежат встроенным плагинам Tauri.
+                    let snake = !name.is_empty()
+                        && name.starts_with(|c: char| c.is_ascii_lowercase())
+                        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+                    if snake {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut called = BTreeSet::new();
+        collect(&root.join("src"), &mut called);
+        collect(&root.join("plugins-dev"), &mut called);
+
+        // Иначе «пустой» разбор дал бы пустую разность и тест прошёл бы, ничего не проверив.
+        assert!(
+            called.len() > 20,
+            "подозрительно мало сырых invoke найдено ({}) — сломался разбор, а не код",
+            called.len()
+        );
+
+        let missing: Vec<_> = called.difference(&runtime).collect();
+        assert!(
+            missing.is_empty(),
+            "TS зовёт команды, которых нет в списке команд — в рантайме это «command not found»: {missing:?}"
+        );
     }
 }

@@ -5,6 +5,9 @@
 
 
 export const commands = {
+async machineIdentity() : Promise<MachineIdentity> {
+    return await TAURI_INVOKE("machine_identity");
+},
 async runScriptInAe(args: RunScriptInAEArgs) : Promise<Result<AEResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("run_script_in_ae", { args }) };
@@ -281,9 +284,25 @@ async logArchiveClear() : Promise<Result<number, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async abortProcessing() : Promise<Result<null, string>> {
+async abortProcessing(lane: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("abort_processing") };
+    return { status: "ok", data: await TAURI_INVOKE("abort_processing", { lane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Снимает сигнал прерывания и обнуляет счётчики прогона.
+ * 
+ * Зовётся из `startProcessContext()` (src/PROCESSING/utils/processingAbort.ts) на
+ * старте каждого прогона. До этого команда была мёртвой, а флаг гасился побочным
+ * эффектом внутри `exec_command` — из-за чего первый убитый процесс снимал стоп
+ * для всех остальных.
+ */
+async resetProcessingSignal(lane: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reset_processing_signal", { lane }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -734,6 +753,30 @@ async writeFile(filePath: string, content: string) : Promise<Result<JsonValue, s
 }
 },
 /**
+ * Атомарная перезапись файла целиком — для файлов СОСТОЯНИЯ приложения.
+ * 
+ * Отличие от `write_file`: тот пишет напрямую (`fs::write` обрезает файл, потом
+ * наполняет), и крах в этом окне оставляет обрезанный файл. Здесь запись идёт через
+ * временный файл рядом с переименованием, поэтому на диске всегда либо прежнее
+ * содержимое целиком, либо новое целиком.
+ * 
+ * Почему отдельная команда, а не изменение `write_file`: тот универсальный и его
+ * зовут ПЛАГИНЫ для произвольных файлов, а переименование меняет inode — это может
+ * задеть вотчеры и жёсткие ссылки. Плагинам поведение оставлено прежним.
+ * 
+ * Применять к тому, что приложение перезаписывает целиком: `folderState.json`,
+ * сайдкары `postSources.json`/`tgSearch.json`, пресеты, `plugin.json`/`ui.json`
+ * из конструктора. Для дозаписи есть `append_file`.
+ */
+async writeFileAtomic(filePath: string, content: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("write_file_atomic", { filePath, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Дописывает строку в конец файла настоящим append'ом (O_APPEND), не перезаписывая файл.
  * Для append-only логов вроде _post/$MM.$YYYY.jsonl: краш посреди записи в худшем случае
  * оставит оборванную последнюю строку (парсер её пропустит), а не потеряет весь файл.
@@ -814,6 +857,22 @@ async listSubfolders(paths: string[]) : Promise<Result<JsonValue, string>> {
 }
 },
 /**
+ * Батч-чтение состояния вкл/выкл проектов из `<project>/options/folderState.json`.
+ * Для главной папки читает каждую подпапку верхнего уровня и возвращает объект
+ * `{ [projectName]: stateJson }` ТОЛЬКО для тех, где файл существует и парсится.
+ * Отсутствующий/битый файл просто пропускается (ключа нет) — так TS-гидратор отличает
+ * «есть состояние в папке» от «нужна ленивая миграция из legacy LS». Один IPC на всю
+ * главную папку вместо N round-trip к Google Drive.
+ */
+async readFolderStates(mainFolderPath: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_folder_states", { mainFolderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Рекурсивный поиск. Возвращает `{[type]: string[]}` — относительные пути от `path`,
  * разбитые по типу (как в Electron'е). Папки тоже могут включаться если в search есть type=folders.
  */
@@ -880,6 +939,14 @@ async fontsLoadOne(fontPath: string) : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Открыть путь системным средством. Реализация — `tauri-plugin-opener`
+ * (см. пояснение в `dialog_commands.rs`: рукописные `#[cfg]`-ветви убраны,
+ * на Windows там был небезопасный `cmd /c start`).
+ * 
+ * Отличие от `show_in_folder`: та РАСКРЫВАЕТ папку и выделяет в ней элемент,
+ * а эта просто открывает путь тем, что назначено в системе.
+ */
 async shellOpenPath(folderPath: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("shell_open_path", { folderPath }) };
@@ -1329,6 +1396,1141 @@ async tgCloudLogOut(token: string) : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Настройки без токена: его renderer'у показывать незачем, достаточно факта.
+ */
+async storageGetConfig() : Promise<Result<ConnectionConfig, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_get_config") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сохранить настройки. Пустой `token` означает «не менять» — иначе замаскированное
+ * значение из интерфейса затёрло бы настоящий токен.
+ */
+async storageSetConfig(patch: ConnectionConfig) : Promise<Result<ConnectionConfig, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_set_config", { patch }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Поднять клиент из сохранённых настроек и спросить у бэкенда, что он умеет.
+ * 
+ * Отдельная команда, а не автоподключение на старте: сеть может быть недоступна,
+ * и запуск программы не должен от этого зависеть.
+ */
+async storageConnect() : Promise<Result<StorageStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_connect") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Подключиться к моку — для разработки и демонстрации без бэкенда.
+ * Данные ненастоящие, и `status.mock = true` обязан быть виден в интерфейсе.
+ */
+async storageConnectMock() : Promise<Result<StorageStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_connect_mock") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Отключить хранилище: и живое, и демо.
+ * 
+ * Сбрасывает и запомненный режим — иначе при следующем запуске демо поднялось бы
+ * само, и «отключил» выглядело бы как «не сработало».
+ */
+async storageDisconnect() : Promise<Result<StorageStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_disconnect") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageStatus() : Promise<Result<StorageStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Обновить список клиентов и проектов. Без этого `/tree` звать не по чему:
+ * `projectId` больше взять негде.
+ */
+async storageRefreshProjects() : Promise<Result<ProjectsResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_refresh_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * «Я на связи» без запроса задачи.
+ * 
+ * Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние
+ * «машина включена, воркер выключен» сайту не видно вовсе, и в админке один
+ * индикатор отвечал бы сразу за два разных факта.
+ */
+async storageQueuePing() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_ping") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Взять следующую задачу. `null` — очередь пуста, это норма, а не ошибка.
+ */
+async storageQueueClaim() : Promise<Result<QueueTask | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_claim") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Двинуть шаг и продлить аренду.
+ */
+async storageQueueProgress(taskId: string, stepId: string, status: QueueStepStatus, message: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_progress", { taskId, stepId, status, message }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageQueueDone(taskId: string, outFiles: string[], totalCost: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_done", { taskId, outFiles, totalCost }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageQueueFailed(taskId: string, error: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_failed", { taskId, error }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Вернуть задачу в очередь — аварийный стоп, не дожидаясь протухания аренды.
+ */
+async storageQueueRelease(taskId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_queue_release", { taskId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageClients() : Promise<Result<RemoteClient[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_clients") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageProjects(clientId: string | null) : Promise<Result<RemoteProject[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_projects", { clientId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Догнать проект: полный `/tree` при первом обращении, дальше цикл `/delta`.
+ */
+async storageCatchUp(projectId: string) : Promise<Result<StorageSyncReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_catch_up", { projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Догнать дельты для проекта, заданного ПУТЁМ, а не `project_id`.
+ * 
+ * Раннер оперирует путями и про идентификаторы каталога не знает. Один вызов на
+ * проект в начале витка — и дальше весь виток можно доверять индексу: иначе
+ * пришлось бы делать HEAD на каждый из десяти тысяч файлов.
+ * 
+ * `None` — путь не в зеркале (обычная локальная папка), и это не ошибка.
+ */
+async storageCatchUpPath(path: string) : Promise<Result<StorageSyncReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_catch_up_path", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Содержимое папки со значками — один вызов на папку.
+ */
+async storageListDir(projectId: string, folderPath: string) : Promise<Result<StorageDirEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_list_dir", { projectId, folderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Содержимое папки в зеркале. `None` — путь не под зеркалом, читайте диск как обычно.
+ */
+async storageBrowse(path: string) : Promise<Result<BrowseEntry[] | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_browse", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Создать папку зеркала на диске. `false` — путь не под зеркалом.
+ */
+async storageEnsureDir(path: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_ensure_dir", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Локальные копии, которые можно освободить (только синхронизированные).
+ */
+async storageLocalFiles() : Promise<Result<LocalFileRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_local_files") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить локальную копию, оставив файл в облаке. Возвращает освобождённые байты.
+ */
+async storageDropLocal(fileId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_drop_local", { fileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Агрегат одной папки — для модалки «Информация» и для заголовков.
+ */
+async storageFolderBadge(projectId: string, folderPath: string) : Promise<Result<FolderBadge, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_folder_badge", { projectId, folderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * «Оставить оффлайн» — локальный флаг этой машины, в облако не уходит.
+ */
+async storageSetPinned(fileId: string, pinned: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_set_pinned", { fileId, pinned }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Был ли по проекту полный `/tree`. Нужно, чтобы отличать «пусто» от «не знаю»:
+ * иначе непосещённая папка покажет «0 файлов» вместо честного «неизвестно».
+ */
+async storageProjectSyncedAt(projectId: string) : Promise<Result<number | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_project_synced_at", { projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сделать так, чтобы по пути лежал актуальный файл, и вернуть этот путь.
+ * 
+ * **Вне зеркала — no-op**, возвращает путь как есть. Поэтому вызов безопасно
+ * ставить везде, где путь превращается в файл, не разбираясь «здесь надо или нет».
+ */
+async storageEnsureLocal(path: string) : Promise<Result<EnsureResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_ensure_local", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Залить файл из зеркала в облако: `presign` → `PUT` → **`notify`**.
+ * 
+ * Третий шаг обязателен. Если он не прошёл — операция считается неудачной, даже
+ * когда байты уже в бакете: иначе получим объект, которого каталог не видит.
+ */
+async storageUpload(path: string) : Promise<Result<UploadResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_upload", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Прогон чистки кэша. Политику берём из настроек, если не передана явно.
+ * 
+ * Два инварианта внутри не выключаются настройкой: незалитое и горячее не
+ * вытесняются никогда. `report.keptUnsafe > 0` означает, что в зеркале есть
+ * файлы, существующие только здесь, — это стоит показать.
+ */
+async storageRunEviction(policy: EvictionPolicy | null) : Promise<Result<EvictionReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_run_eviction", { policy }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сколько байт занимают локальные копии сейчас — для настроек и статусбара.
+ */
+async storageMirrorBytes() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_mirror_bytes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Копирование из зеркала с режимом «переписать устаревший».
+ * 
+ * Одна команда, а не три, потому что порядок здесь — инвариант:
+ * **проверить актуальность → только потом гидратировать → скопировать → запомнить
+ * версию.** Разбей это на части, и рано или поздно кто-то скачает три гигабайта,
+ * чтобы выяснить, что качать было не нужно, а про «запомнить версию» просто забудет.
+ * 
+ * Для источника вне зеркала ведёт себя как раньше — сравнение по mtime.
+ */
+async storageCopyFromMirror(src: string, dest: string, overwriteOldest: boolean) : Promise<Result<CopyReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_copy_from_mirror", { src, dest, overwriteOldest }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Где этот файл лежал бы в зеркале. Нужно интерфейсу, чтобы позвать
+ * `storage_ensure_local`: renderer не должен сам собирать путь — раскладка
+ * зеркала это дело клиента, а не UI.
+ */
+async storageMirrorPath(fileId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_mirror_path", { fileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Скачать файл по его `file_id` — обёртка над `ensure_local` для интерфейса.
+ */
+async storageDownload(fileId: string) : Promise<Result<EnsureResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_download", { fileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сверить локальные копии с диском и обновить состояния.
+ * 
+ * Движок значков к диску не обращается (иначе листинг на тысячу файлов делал бы
+ * тысячу `stat`), поэтому факт ручной правки должен кто-то обнаружить явно.
+ * Зовётся по кнопке и перед витком обработки. Возвращает, сколько файлов
+ * оказались изменёнными локально.
+ */
+async storageDetectLocalChanges() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_detect_local_changes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Список передач: активные первыми, затем недавно завершённые.
+ * 
+ * Завершённые показываем намеренно: ошибка, о которой никто не узнал, —
+ * это ошибка, которая повторится.
+ */
+async storageTransfers(limit: number | null) : Promise<Result<TransferRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_transfers", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageCancelTransfer(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_cancel_transfer", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Отменить передачу. Прерывание происходит в цикле чтения между кусками,
+ * недокачанный `.part` удаляется.
+ * Что лежит здесь и не уехало в облако — включая остановленное вручную.
+ */
+async storageNotUploaded(limit: number | null) : Promise<Result<NotUploadedRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_not_uploaded", { limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Отправить файл в облако по явной команде человека — снимая прошлую остановку.
+ */
+async storageUploadNow(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_upload_now", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Убрать задачу из списка передач (обычно — упавшую).
+ */
+async storageDismissTransfer(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_dismiss_transfer", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Повторить упавшую передачу. Заливка встаёт в очередь сразу, скачивание уходит
+ * в фоновую задачу. Если исходника больше нет — задача снимается, и об этом
+ * сообщается текстом.
+ */
+async storageRetryTransfer(id: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_retry_transfer", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async storageClearFinishedTransfers() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_clear_finished_transfers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Статистика поддерева для модалки «Информация».
+ * 
+ * `known = false` означает «полного `/tree` по проекту ещё не делали» — это НЕ
+ * то же самое, что «пусто», и интерфейс обязан их различать.
+ */
+async storageSubtreeStats(projectId: string, folderPath: string) : Promise<Result<SubtreeStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_subtree_stats", { projectId, folderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сведения о пути БЕЗ скачивания: существует ли, размер, время, есть ли копия.
+ * 
+ * Ключевая команда шва. Проверки существования и `stat` обязаны отвечать из
+ * каталога, а не гидратировать: иначе первый же обход проекта скачает весь архив.
+ */
+async storagePathInfo(path: string) : Promise<Result<PathInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_path_info", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сведения о проекте по пути: архивный ли, приостановлен ли.
+ * 
+ * Раннер обязан пропускать архивные проекты (`STORAGE_API.md`, «Processing flags»),
+ * а интерфейс — показывать это значком. `None` — путь не проект зеркала, и это не
+ * ошибка: локальные папки сюда попадают штатно.
+ */
+async storageProjectInfo(path: string) : Promise<Result<ProjectInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_project_info", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Переименовать файл или папку зеркала — в каталоге и на диске.
+ * 
+ * `None` — путь не в зеркале, зовущий переименовывает как обычно. Уровни выше
+ * проекта (владелец, сам проект) дают понятный отказ: их имена живут на сайте.
+ */
+async storageRename(path: string, newName: string) : Promise<Result<RenameReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_rename", { path, newName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Перенести файл или папку зеркала в другую папку ТОГО ЖЕ проекта.
+ * 
+ * Тот же `/rename`, только меняется `folderPath`: байты не двигаются, `s3Key` не
+ * трогается. `None` — источник или приёмник вне зеркала, зовущий переносит сам
+ * (для выгрузки наружу это гидрация + обычное копирование).
+ */
+async storageMove(path: string, destDir: string) : Promise<Result<RenameReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_move", { path, destDir }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Переименовать проект: имя в каталоге, затем папка зеркала.
+ * `None` — путь не в зеркале.
+ */
+async storageRenameProject(path: string, newName: string) : Promise<Result<RenameReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_rename_project", { path, newName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Включить/выключить проект в каталоге (галочка во второй колонке).
+ * `None` — путь не проект зеркала, зовущий решает сам (локальная папка).
+ */
+async storageSetProjectPaused(path: string, paused: boolean) : Promise<Result<null | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_set_project_paused", { path, paused }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Создать папку зеркала В КАТАЛОГЕ и на диске. `None` — путь не в зеркале.
+ * 
+ * Отличается от `storage_ensure_dir`: та только материализует на диске папку,
+ * которая в каталоге уже есть. Здесь папка в каталоге ЗАВОДИТСЯ — иначе у неё нет
+ * `file_id`, а значит ни переименования, ни удаления, ни значка синхронизации.
+ */
+async storageMkdir(path: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_mkdir", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить файл или папку зеркала — **двухступенчато**.
+ * 
+ * Первое нажатие убирает локальную копию (файл остаётся в облаке), второе —
+ * удаляет в облаке. Вторая ступень возвращает `needsConfirm`, пока `allow_online`
+ * не выставлен: у бэкенда нет корзины, и удаление в облаке необратимо.
+ * 
+ * `None` — путь не в зеркале, зовущий удаляет как обычно.
+ */
+async storageDelete(path: string, allowOnline: boolean | null) : Promise<Result<DeleteStage | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_delete", { path, allowOnline }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Выжечь проект: удалить в облаке всё содержимое и убрать локальную папку.
+ * 
+ * Одна ступень и без подтверждения здесь — по назначению: спрашивает интерфейс, до
+ * вызова, и спрашивает один раз про весь проект. Возвращённый отчёт обязан быть
+ * показан человеку целиком: **запись самого проекта остаётся** (удалять проект под
+ * machine token бэкенд не умеет, просьба 3.7), и `options` он защищает 403. Сказать
+ * «проект удалён» по успешному ответу этой команды — соврать.
+ * 
+ * `None` — путь не в зеркале, зовущий удаляет папку как обычную.
+ */
+async storagePurgeProject(path: string) : Promise<Result<PurgeReport | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_purge_project", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Разрешить конфликт: `takeCloud = true` — взять облачную версию, `false` — залить свою.
+ * 
+ * Конфликт единственное состояние, которое программа не решает сама: любой
+ * автовыбор теряет данные. Здесь только исполнение выбора человека.
+ */
+async storageResolveConflict(path: string, takeCloud: boolean) : Promise<Result<FileState | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_resolve_conflict", { path, takeCloud }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Догнать каталог прямо сейчас — кнопка «Обновить» у владельца.
+ * 
+ * Не перерисовывает интерфейс: он рисуется из локальной БД. Задача кнопки —
+ * подтянуть саму БД (дельты по тёплым проектам) и подвинуть локальные копии за
+ * изменившимися логическими путями.
+ */
+async storageSyncNow() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_sync_now") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Освободить диск от локальных копий владельца. Онлайн не трогается.
+ * 
+ * Незалитое остаётся на диске (инвариант кэша) и попадает в отчёт: интерфейс
+ * обязан сказать, что удалено не всё, а не соврать «готово».
+ */
+async storageDropOwnerLocal(path: string) : Promise<Result<DropOwnerReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_drop_owner_local", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сообщить, что по этим путям что-то появилось или изменилось.
+ * 
+ * `ready = true` — «файл дописан, заливай не дожидаясь затишья». Так зовёт
+ * раннер: он знает точно, шаг завершён. `ready = false` — «просто посмотри»,
+ * как это делает вотчер.
+ * 
+ * Пути вне зеркала молча отбрасываются — вызов безопасно ставить где угодно, не
+ * разбираясь заранее, облачный ли это путь. Возвращает, сколько путей принято.
+ */
+async storageMarkDirty(paths: string[], ready: boolean | null) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_mark_dirty", { paths, ready }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Объявить готовыми всех накопившихся кандидатов: конец витка, писать больше некому.
+ * 
+ * Заливку выполняет демон на следующем пульсе (≤3 с) — команда только снимает
+ * ожидание затишья. Так она отвечает мгновенно и не держит IPC-вызов на время
+ * передачи гигабайтов.
+ */
+async storageFlushUploads() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_flush_uploads") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает иконку файла как строку "data:image/png;base64,...".
+ * При ошибке возвращает Err — фронт тогда откатывается на нарисованную canvas-иконку.
+ */
+async getFileIcon(path: string, size: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_file_icon", { path, size }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pathJoin(segments: string[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("path_join", { segments }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openNodeWindow(data: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_node_window", { data }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Toggles the Web Inspector for the window that invoked the command.
+ * `window` is injected by Tauri — it's the caller's own webview, so F12 in any
+ * window opens that window's devtools. The inspector methods are compiled in
+ * because `tauri` is built with the `devtools` feature (see Cargo.toml).
+ */
+async openDevtools() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_devtools") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Handshake: окно (nodeWin/previewWin) запрашивает свои данные после монтирования React.
+ * Решает race-condition: tauri://loaded → emit("update-data") может произойти раньше, чем
+ * React успел подписаться. Команда смотрит метку вызывающего webview и шлёт last_data.
+ */
+async requestData() : Promise<void> {
+    await TAURI_INVOKE("request_data");
+},
+async diagLogWrite(msg: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("diag_log_write", { msg }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async diagLogPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("diag_log_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async diagLogClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("diag_log_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async isProcessingAborted(lane: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("is_processing_aborted", { lane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setProcessingProgress(currentStep: string, totalSteps: number, completedSteps: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_processing_progress", { currentStep, totalSteps, completedSteps }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProcessingProgress() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_processing_progress") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addProcessingError(error: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_processing_error", { error }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить файл/папку (processing)
+ */
+async processingDeleteItem(itemPath: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("processing_delete_item", { itemPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Получить информацию о файле/папке
+ */
+async getItemInfo(path: string) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_item_info", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async processItem(item: JsonValue) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("process_item", { item }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setStatusBar(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_status_bar", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendLog(level: string, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("send_log", { level, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async execCommand(args: ExecCommandArgs) : Promise<Result<ExecOutput, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("exec_command", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async killAllExecProcesses(lane: string | null) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kill_all_exec_processes", { lane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri-команда: возвращает путь к ffmpeg (из настроек или системный поиск)
+ */
+async ffmpegGetPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_get_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri-команда: возвращает путь к ffprobe (из настроек или системный поиск)
+ */
+async ffprobeGetPath() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffprobe_get_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Возвращает полную информацию о медиафайле через ffprobe (JSON-строку).
+ * Async-обёртка нужна по той же причине что и у ffmpeg_exec_with_progress:
+ * плагины дёргают ffprobe на каждом шаге, sync-команды быстро забивают
+ * Tauri worker-pool и блокируют параллельные IPC.
+ */
+async ffprobeGetInfo(filePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffprobe_get_info", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Снимает кадр из видеофайла и возвращает его как base64 data URL (image/png).
+ */
+async ffmpegGetVideoThumbnail(filePath: string, timestampSec: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_get_video_thumbnail", { filePath, timestampSec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Запускает ffmpeg-команду с отслеживанием прогресса через stderr.
+ * Эмитит "processing-event" со статусбаром, **дросселированно** (не чаще раза в 200мс),
+ * чтобы не засорять event-bus и не блокировать UI thread.
+ * 
+ * Async-обёртка через `spawn_blocking` критична: иначе sync `child.wait()` забивает
+ * Tauri worker-pool, и параллельные IPC (path_exists, get_stat и т.п.) встают в очередь
+ * → UI замирает. С async-командой Tauri-runtime спокойно делит ресурсы.
+ */
+async ffmpegExecWithProgress(args: string[], durationSec: number | null, nodeId: string | null, statusText: string | null, runLane: string | null) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ffmpeg_exec_with_progress", { args, durationSec, nodeId, statusText, runLane }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Расширенная версия read_media_preview: для видео запускает ffmpeg и возвращает кадр.
+ * Если ffmpeg не найден — возвращает пустую строку.
+ */
+async readMediaPreviewWithFfmpeg(filePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_media_preview_with_ffmpeg", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Универсальный HTTP-запрос (GET/POST/PUT/...) с опциональным строковым телом.
+ * Возвращает { status, ok, body }. Не бросает при 4xx/5xx — отдаёт статус.
+ */
+async httpFetch(args: HttpFetchArgs) : Promise<Result<HttpResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("http_fetch", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Multipart/form-data upload с локальными файлами (читает их в Rust → нет CORS).
+ * files: [{ field, path, mime?, filename? }], fields: [{ field, value }].
+ */
+async httpUpload(args: HttpUploadArgs) : Promise<Result<HttpResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("http_upload", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Скачивает URL в локальный файл потоково (чанками). Возвращает количество записанных байт.
+ * Если передан nodeId/statusText — эмитит прогресс в UI (статусбар/нода).
+ */
+async httpDownload(args: HttpDownloadArgs) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("http_download", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerInit() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_init") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerLoadPlugin(folderName: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_load_plugin", { folderName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerUnloadPlugin(pluginId: string, version: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_unload_plugin", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetAllPlugins() : Promise<Result<PluginInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_all_plugins") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetPluginsByType(pluginType: string) : Promise<Result<PluginInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_plugins_by_type", { pluginType }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetPlugin(pluginId: string, version: string | null) : Promise<Result<PluginInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_plugin", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Записывает централизованную цену (cost/costUnit) в plugin.json плагина и обновляет
+ * in-memory manifest. Вызывается из Settings → Plugins. Пишем именно в загруженный
+ * plugin.json (plugin.path) — то, что читает менеджер; читаем JSON как Value и правим
+ * только два поля, чтобы не потерять остальные/порядок ключей.
+ */
+async pluginManagerSetCost(pluginId: string, version: string, cost: string, costUnit: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_set_cost", { pluginId, version, cost, costUnit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetPluginUi(pluginId: string, version: string) : Promise<Result<PluginUINode | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_plugin_ui", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetAllUiNodes() : Promise<Result<PluginUINode[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_all_ui_nodes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetUiNodes() : Promise<Result<PluginUINode[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_ui_nodes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerList() : Promise<Result<JsonValue[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerGetState() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_get_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerCall(pluginId: string, version: string, method: string, args: JsonValue[]) : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_call", { pluginId, version, method, args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerInstall(filePath: string) : Promise<Result<PluginInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_install", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerDelete(pluginId: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_delete", { pluginId, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async pluginManagerDestroy() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_manager_destroy") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Собирает один плагин из `plugins-dev/<id>` в `distr-plugins/` через
+ * `plugins-dev/_packScripts/build-plugin.js` (esbuild). Доступно только в dev —
+ * в собранном приложении нет ни исходников, ни node.
+ * 
+ * GUI-процесс на macOS не наследует PATH из шелла, поэтому node запускается через
+ * login-shell (`$SHELL -lc`), который подтягивает PATH из профиля (homebrew/nvm).
+ */
+async pluginBuild(pluginId: string) : Promise<Result<PluginBuildResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin_build", { pluginId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Вызывается init-скриптом при перехвате токена (если IPC доступен). Рассылает
+ * событие в UI и закрывает окно. Внутренняя команда (не в TS-биндингах).
+ */
+async vkAuthCapture(token: string, expiresIn: number | null, userId: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vk_auth_capture", { token, expiresIn, userId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1349,10 +2551,191 @@ export type AEResult = { success: boolean; data: JsonValue | null; error: string
  */
 temp_script_path?: string | null }
 export type ArchiveDay = { date: string; items: number; bytes: number }
-export type CopyMoveOptions = { use_hash_check?: boolean; overwrite?: boolean }
+/**
+ * Одна строка листинга по ФАЙЛОВОМУ пути — то, чем колонки рисуют зеркало.
+ * 
+ * Отличие от `StorageDirEntry`: здесь есть `path`, потому что колонкам нужен путь,
+ * а не логические координаты. Имя и путь — РАЗНЫЕ поля не случайно: на уровнях
+ * клиента и проекта имя человеческое, а путь — реальное место на диске.
+ */
+export type BrowseEntry = { name: string; path: string; isDir: boolean; sizeBytes: number | null; 
+/**
+ * Идентификатор записи: для файла и папки внутри проекта — `file_id` каталога,
+ * для строки клиента — `client_id`, для строки проекта — `project_id`.
+ * Интерфейсу нужен именно он, чтобы связать строку с сущностью каталога.
+ */
+fileId: string | null; state: FileState | null; aggregate: FolderAggregate | null; pinned: boolean; progress: number | null; error: string | null; 
+/**
+ * Только у строки проекта: проект приостановлен на сайте (`is_paused`).
+ * 
+ * Чекбокс во второй колонке обязан это отражать: если человек выключил проект на
+ * сайте, программа не должна его обрабатывать и показывать включённым.
+ */
+paused: boolean; 
+/**
+ * Только у строки проекта: проект убран в архив на сайте.
+ * 
+ * Обработку по нему запускать нельзя, и человек обязан видеть это в колонке —
+ * иначе «почему проект не обрабатывается» отлаживается только чтением БД.
+ */
+archived: boolean }
+/**
+ * `GET /capabilities` — что бэкенд умеет прямо сейчас.
+ * Хардкодить флаги нельзя: они меняются его релизами, а не нашими.
+ */
+export type Capabilities = { apiVersion: number; multipart: boolean; rename: boolean; copy: boolean; sharing: boolean; clients?: boolean; originMtime?: boolean; contentHash?: boolean }
+export type ConnectionConfig = { 
+/**
+ * Адрес сайта, например `https://hub.example.com`. Путь `/api/storage/v1`
+ * клиент добавляет сам.
+ */
+baseUrl: string; 
+/**
+ * Machine token (`mch_…`), **непривязанный к проекту**: у привязанного
+ * `scopedProjectId` проверяется раньше роли и не пустит даже админа.
+ */
+token: string; 
+/**
+ * Корень зеркала — единственная папка, за которой следит клиент.
+ */
+mirrorRoot: string; 
+/**
+ * Сколько часов держать локальную копию после последнего обращения.
+ */
+keepHours: number | null; 
+/**
+ * Аварийный лимит размера зеркала в гигабайтах: поверх TTL, чтобы диск не
+ * забился, если открыть руками десяток мастеров.
+ */
+maxMirrorGb: number | null; 
+/**
+ * Маски «всегда горячих» файлов. `None` — берём дефолт.
+ */
+hotPatterns: string[] | null; 
+/**
+ * Прошлое подключение было к демо-фикстурам.
+ * 
+ * Нужно, чтобы восстановить режим при запуске. Без этого после перезапуска
+ * облачная папка молча превращалась в обычную локальную: значков нет,
+ * синхронизации нет, а причина не видна нигде.
+ */
+demo: boolean }
+export type CopyAction = 
+/**
+ * Скопировали.
+ */
+"copied" | 
+/**
+ * Файл на месте уже есть, а перезапись не разрешена.
+ */
+"skippedExists" | 
+/**
+ * Файл на месте есть и сделан из ТОЙ ЖЕ версии источника. Ничего не качали.
+ */
+"skippedUpToDate"
+/**
+ * Опции копирования/перемещения.
+ * 
+ * Поле `useHashCheck` убрано (2026-08-10): оно принималось, но НЕ читалось ни
+ * `copy_item`, ни `move_item` — то есть API обещал проверку целостности, которой
+ * не было. В Electron-версии проверка существовала и закрывала конкретный риск:
+ * файлы лежали в папке Google-синхронизатора и могли быть скачаны не полностью.
+ * Сейчас за «байты на месте» отвечает шов хранилища (`storage_ensure_local` /
+ * `storage_copy_from_mirror`), то есть гарантия стала явной и переехала уровнем выше.
+ */
+export type CopyMoveOptions = { overwrite?: boolean }
+export type CopyReport = { action: CopyAction; bytes: number | null; 
+/**
+ * Пришлось ли скачивать источник. `false` при `SkippedUpToDate` — в этом весь смысл.
+ */
+hydrated: boolean }
+/**
+ * Что сделало (или сделает) удаление. Интерфейсу нужно различать: после первой
+ * ступени файл остаётся в облаке, после второй — нет.
+ */
+export type DeleteStage = 
+/**
+ * Убрали только локальную копию. Файл остался в облаке.
+ */
+"localCopy" | 
+/**
+ * Копии не было — удалили в облаке.
+ */
+"online" | 
+/**
+ * В каталоге записи нет: файл жил только на диске, в облаке удалять нечего.
+ */
+"localOnly" | 
+/**
+ * Вторая ступень требует подтверждения: пока у бэкенда нет корзины, удаление
+ * в облаке необратимо.
+ */
+"needsConfirm"
 export type DialogFilter = { name: string; extensions: string[] }
 export type DocFile = { name: string; fileName: string }
 export type DocSection = { name: string; files: DocFile[] }
+/**
+ * Итог освобождения диска от копий одного владельца.
+ */
+export type DropOwnerReport = { removed: number; freedBytes: number; 
+/**
+ * Сколько копий оставили: в них работа, которой в облаке ещё нет.
+ */
+keptUnsafe: number }
+export type EnsureOutcome = 
+/**
+ * Путь не под зеркалом — вернули как есть. Это самый частый исход и он
+ * бесплатный: локальная рабочая папка, абсолютные пути, режим без облака.
+ */
+"notInMirror" | 
+/**
+ * Локальная копия уже актуальна. Ни одного запроса в сеть.
+ */
+"alreadyFresh" | 
+/**
+ * Скачали.
+ */
+"downloaded" | 
+/**
+ * Файл есть на диске, но в каталоге его нет — значит положили руками.
+ * Его надо ЗАЛИТЬ, а не качать; путь возвращаем как есть.
+ */
+"localOnly"
+export type EnsureResult = { path: string; outcome: EnsureOutcome; bytes: number | null }
+export type EvictionPolicy = { 
+/**
+ * Сколько часов держать копию после последнего обращения. 0 — «никогда не
+ * удалять по времени» (только по лимиту размера).
+ */
+ttlHours: number; 
+/**
+ * Аварийный предел размера зеркала. `None` — без ограничения.
+ */
+maxBytes: number | null; 
+/**
+ * Маски «всегда горячих» файлов от корня проекта.
+ */
+hotPatterns: string[] }
+export type EvictionReport = { scanned: number; evicted: number; freedBytes: number; 
+/**
+ * Оставлено по маске «всегда горячих».
+ */
+keptHot: number; keptPinned: number; 
+/**
+ * Оставлено потому, что вытеснять было НЕЛЬЗЯ: незалитое, конфликт, ошибка.
+ * Если это число не ноль — в зеркале есть что-то, что существует только здесь.
+ */
+keptUnsafe: number }
+export type ExecCommandArgs = { cmd: string; args: string[]; cwd?: string | null; nodeId?: string | null; env?: ([string, string])[] | null; 
+/**
+ * Полоса прогона (`processing` / `posting`) — чей стоп убивает этот процесс.
+ * 
+ * `None` = обработка: столько же, сколько было до появления полос, когда флаг
+ * прерывания был один. Так продолжают работать старые установленные бандлы
+ * плагинов, которые про полосы не знают.
+ */
+runLane?: string | null }
+export type ExecOutput = { exit_code: number; stdout: string; stderr: string; killed: boolean }
 export type FfmpegInstallResult = { 
 /**
  * true только если ffmpeg+ffprobe скачаны И gate по required пройден.
@@ -1368,10 +2751,171 @@ missingRequired: string[];
 missingOptional: string[] }
 export type FfmpegStatus = { installed: boolean; version: string | null; ffmpegPath: string | null; ffprobePath: string | null }
 export type FileInfo = { path: string; name: string; size: number; is_dir: boolean; is_file: boolean; modified: number | null; created: number | null; extension: string }
+export type FileState = 
+/**
+ * Только в облаке, локальной копии нет.
+ */
+"cloud" | 
+/**
+ * Скачивается.
+ */
+"downloading" | 
+/**
+ * Локальная копия есть и совпадает с облаком.
+ */
+"fresh" | 
+/**
+ * Локальная копия есть, но в облаке новее.
+ */
+"stale" | 
+/**
+ * Есть только локально — в облаке файла нет вообще.
+ */
+"localOnly" | 
+/**
+ * В облаке есть, но у нас новее: надо залить.
+ */
+"localModified" | 
+/**
+ * Заливается.
+ */
+"uploading" | 
+/**
+ * И локально, и в облаке изменилось после последней синхронизации.
+ * Не решаем сами: оба автоварианта теряют данные.
+ */
+"conflict" | 
+/**
+ * Передача упала.
+ */
+"error"
+export type FolderAggregate = 
+/**
+ * Внутри нет файлов (могут быть только вложенные папки).
+ */
+"empty" | 
+/**
+ * Ничего не скачано.
+ */
+"allCloud" | 
+/**
+ * Часть скачана.
+ */
+"mixed" | 
+/**
+ * Скачано всё.
+ */
+"allLocal" | 
+/**
+ * Внутри что-то качается.
+ */
+"downloading" | 
+/**
+ * Внутри есть незалитое или изменённое локально.
+ */
+"needsUpload" | 
+/**
+ * Внутри есть конфликт.
+ */
+"conflict" | 
+/**
+ * Внутри есть ошибка.
+ */
+"error"
+export type FolderBadge = { aggregate: FolderAggregate; files: number; bytes: number; localFiles: number; localBytes: number }
 export type FontInfo = { name: string; path: string; loadable: boolean }
+export type HttpDownloadArgs = { url: string; dest: string; headers?: ([string, string])[] | null; 
+/**
+ * ID ноды — если передан, прогресс скачивания шлётся как processing-event
+ * с тем же payload-форматом, что у ffmpeg ({ type:"statusbar", payload:{text,progress} }).
+ */
+nodeId?: string | null; 
+/**
+ * Префикс текста в статусбаре (напр. "⬇️ Скачивание result.mp3"). Само наличие
+ * nodeId ИЛИ statusText включает показ прогресса; без них — тихое скачивание как раньше.
+ */
+statusText?: string | null }
+export type HttpFetchArgs = { url: string; method?: string | null; headers?: ([string, string])[] | null; body?: string | null }
+export type HttpResponse = { status: number; ok: boolean; body: string }
+export type HttpUploadArgs = { url: string; headers?: ([string, string])[] | null; files?: UploadFile[] | null; fields?: UploadField[] | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+/**
+ * Строка вкладки «локальные копии»: файл, который синхронизирован И лежит на диске.
+ */
+export type LocalFileRow = { fileId: string; name: string; path: string; 
+/**
+ * Клиент/проект — чтобы понимать, откуда файл, не читая длинный путь.
+ */
+project: string; sizeBytes: number; 
+/**
+ * Unix-секунды последнего обращения: по нему считается вытеснение.
+ */
+lastAccess: number; pinned: boolean }
 export type LogHistory = { items: JsonValue[] }
+/**
+ * Ключ и подпись машины для renderer'а.
+ * 
+ * Нужны режиму воркера: `uuid` уходит в очередь («кто взял задачу»), `label` — в
+ * интерфейс. Секрета здесь нет: это идентификатор, а не токен, и отдавать его наружу
+ * безопасно — в отличие от `ConnectionConfig::token`, который редактируется.
+ */
+export type MachineIdentity = { uuid: string; label: string; slug: string }
 export type MoveToErrorsResult = { success: boolean; moved_to: string | null; error: string | null }
+/**
+ * Строка вкладки «Не в облаке»: файл есть здесь, а в хранилище его нет.
+ * 
+ * Зачем отдельный список: значок такого файла видно только в той папке, куда
+ * человек зашёл, а вопрос «всё ли я отправил» — про зеркало целиком. Особенно
+ * после ручной остановки: такой файл не поедет сам никогда (см. `Pending::decline`),
+ * и без списка он остаётся незамеченным навсегда.
+ */
+export type NotUploadedRow = { path: string; name: string; 
+/**
+ * Папка относительно корня зеркала — чтобы понять, чей это файл, не читая путь.
+ */
+folder: string; sizeBytes: number; 
+/**
+ * Unix-секунды mtime: по нему сортируется список.
+ */
+mtime: number; 
+/**
+ * `new` — в облаке нет вовсе; `modified` — правили здесь; `stopped` — заливку
+ * остановили вручную, сама она не возобновится.
+ */
+reason: string }
+/**
+ * Ответ на «что это за путь» БЕЗ скачивания.
+ * 
+ * Нужен там, где коду нужны метаданные, а не содержимое: проверки существования
+ * и `stat` при обходе дерева. Если бы они гидратировали, первый же обход проекта
+ * скачал бы весь архив.
+ */
+export type PathInfo = { 
+/**
+ * Путь под зеркалом. `false` — обычный локальный файл, всё как раньше.
+ */
+inMirror: boolean; 
+/**
+ * Существует ли: на диске ИЛИ в облаке. Для кода, решающего «обрабатывать
+ * или пропустить», облачный файл существует — он просто ещё не здесь.
+ */
+exists: boolean; 
+/**
+ * Есть ли локальная копия прямо сейчас.
+ */
+local: boolean; isFolder: boolean; size: number | null; 
+/**
+ * Unix seconds. Для облачного файла — исходное время из каталога.
+ */
+mtime: number | null; fileId: string | null }
+/**
+ * Результат сборки плагина. Форма совпадает с тем, что ждёт фронтовый handleBuild
+ * (success/stdout/stderr/error).
+ */
+export type PluginBuildResult = { success: boolean; stdout: string; stderr: string; error?: string | null }
+export type PluginInfo = { id: string; version: string; name: string; description: string; type: string[]; hasUI: boolean; path: string; manifest: PluginManifest; uiType: string | null; cost: string; costUnit: string }
+export type PluginManifest = { id: string; name: string; description: string; version: string; apiVersion: number; type: string[]; main: string; ui: JsonValue | null; external: string[]; cost?: string; costUnit?: string; resourcePool?: string | null }
+export type PluginUINode = { id: string; type: string; position: JsonValue; width: number; height: number; plugin_id?: string | null; plugin_version?: string | null; plugin_path?: string | null; plugin_name?: string | null; ui_type?: string | null; data: JsonValue }
 export type PreviewAudioResult = { 
 /**
  * Абсолютный путь к WAV в кэше (фронт превращает в asset-URL через toFileUrl).
@@ -1444,6 +2988,133 @@ maxDim: number | null;
  */
 namespace: string }
 export type PreviewResizeOpts = { width: number; height: number; aspectRatio?: number | null; extraHeight?: number | null }
+/**
+ * Сведения о проекте для прикладного кода: обрабатывать его или нет.
+ * 
+ * Три флага рядом, и путать их нельзя (`STORAGE_API.md`, «Processing flags»):
+ * `paused` — человек приостановил, `archived` — проект уехал в архив на сайте.
+ * Архивность живёт в своём поле, а не в `group_name`: группа отвечает только за
+ * раскладку интерфейса сайта.
+ */
+export type ProjectInfo = { projectId: string; name: string; archived: boolean; archivedAt: string | null; paused: boolean }
+/**
+ * Ответ `GET /projects`. Под ADMIN-токеном — все клиенты и проекты,
+ * под scoped-токеном — только его проект.
+ */
+export type ProjectsResponse = { clients?: RemoteClient[]; 
+/**
+ * Владельцы проектов. Бэкенд пока не присылает — тогда имена берём из
+ * идентификаторов, добытых из ключей.
+ */
+users?: RemoteUser[]; projects?: RemoteProject[] }
+/**
+ * Итог выжигания проекта: что ушло, что бэкенд не отдал.
+ * 
+ * Считается по каталогу «до минус после», а не сложением удалённых записей: папка
+ * удаляется одним запросом с каскадом на стороне бэкенда, и сколько файлов внутри
+ * него ушло, из ответа не видно.
+ */
+export type PurgeReport = { filesDeleted: number; freedBytes: number; 
+/**
+ * Осталось в облаке. `0` — проект пуст, и в нём осталась только запись самого
+ * проекта (её программа удалить не может, эндпоинта нет).
+ */
+filesLeft: number; 
+/**
+ * Локальную папку проекта убрали с диска.
+ */
+localRemoved: boolean; 
+/**
+ * Почему папку оставили. `None` — убрали, или её на диске и не было.
+ */
+localKept: string | null; 
+/**
+ * Что бэкенд не отдал — с его же текстом отказа. Догадка о причине здесь хуже
+ * цитаты: `options` защищён 403 по контракту, а сеть отваливается своими словами.
+ */
+skipped: PurgeSkipped[] }
+export type PurgeSkipped = { 
+/**
+ * Логический путь внутри проекта (`IN/a.mov`, `options`).
+ */
+path: string; error: string }
+/**
+ * Статус шага в `progress`.
+ */
+export type QueueStepStatus = "running" | "done" | "error"
+/**
+ * Задача из очереди сайта (`POST /api/storage/v1/queue`, action `claim`).
+ * 
+ * Ни путей, ни ссылок здесь нет намеренно: presigned URL живёт минуты, а задача
+ * может простоять в очереди часы и переретраиться завтра. В `payload` лежит
+ * идентичность файла — превращает её в локальный путь машина.
+ */
+export type QueueTask = { id: string; projectId: string; projectName?: string; ownerEmail?: string; 
+/**
+ * Собранный сайтом объект обработки: `processingQueue`, шаги, `description`.
+ */
+payload: JsonValue; attempts?: number; maxAttempts?: number; 
+/**
+ * До какого момента задача числится за этой машиной.
+ */
+leaseExpiresAt?: string | null }
+/**
+ * Клиент — верхний уровень иерархии. Живёт только в Postgres:
+ * в раскладке ключей R2 его нет, поэтому переименование бесплатно.
+ */
+export type RemoteClient = { id: string; displayName: string }
+export type RemoteProject = { id: string; name: string; 
+/**
+ * `None` — проект не привязан к клиенту (лежит в корне).
+ */
+clientId: string | null; 
+/**
+ * Владелец проекта — **первый уровень зеркала**.
+ * 
+ * Раскладка бакета `projects/{userId}/{projectId}/…`, то есть уровень
+ * пользователя в данных есть всегда. А вот в ответе `/projects` его пока нет
+ * (`serializeProject` не кладёт `userId`, хотя рядом им же проверяет права) —
+ * поэтому поле опциональное, и пока бэкенд молчит, владелец добывается из
+ * `s3Key` первого же файла проекта. Появится в ответе — возьмём оттуда, код
+ * менять не придётся.
+ */
+userId?: string | null; groupName: string; isActive: boolean; isPaused: boolean; 
+/**
+ * Проект убран в архив на сайте — **обработку по нему запускать нельзя**.
+ * 
+ * Три флага рядом, и путать их нельзя (`STORAGE_API.md`, «Processing flags»):
+ * `is_paused` — пользователь приостановил, `is_active` — legacy-зеркало
+ * `!is_paused`, `is_archived` — проект уехал в архив. Архивность живёт именно
+ * здесь, а не в `group_name`: группа отвечает только за раскладку интерфейса
+ * сайта.
+ */
+isArchived?: boolean; 
+/**
+ * Когда заархивировали. ISO-8601; `None` — не архивный.
+ */
+archivedAt?: string | null; 
+/**
+ * ISO-8601.
+ */
+updatedAt: string }
+/**
+ * Владелец проектов. Приходит из `/projects`, когда бэкенд научится отдавать; до
+ * тех пор существует только как идентификатор, добытый из ключа.
+ */
+export type RemoteUser = { id: string; 
+/**
+ * **Основное имя папки владельца.** Email узнаваем и уникален, в отличие от
+ * `full_name`, который бывает пустым и повторяется.
+ */
+email?: string; fullName?: string; 
+/**
+ * Общий вариант, если бэкенд отдаёт одно готовое имя вместо полей.
+ */
+displayName?: string }
+/**
+ * Итог переименования в облаке — для интерфейса и логов.
+ */
+export type RenameReport = { fileId: string; oldPath: string; newPath: string; isFolder: boolean }
 export type RunScriptInAEArgs = { 
 /**
  * Путь к исполняемому файлу AE (aerender или After Effects.app)
@@ -1470,6 +3141,10 @@ keep_temp_files: boolean | null;
  */
 timeout_sec: number | null; 
 /**
+ * Полоса прогона (`processing`/`posting`) — чей стоп прерывает ОЖИДАНИЕ AE.
+ */
+run_lane?: string | null; 
+/**
  * Убивать предыдущий процесс AE перед запуском (Windows), чтобы "-r" гарантированно
  * попал в холодный старт — AE не подхватывает "-r", если уже открыт. По умолчанию true;
  * выключается галкой в ноде, если вдруг понадобится оставить AE открытым вручную.
@@ -1487,6 +3162,120 @@ export type SelectFoldersOptions = { multiSelect?: boolean }
  * Возвращает метаданные файла (для полифила node:fs.stat).
  */
 export type StatInfo = { size: number; mtimeMs: number; atimeMs: number; ctimeMs: number; birthtimeMs: number; isFile: boolean; isDir: boolean; isSymlink: boolean }
+/**
+ * Одна строка списка: всё, что нужно нарисовать, одним запросом.
+ * 
+ * Специально не заставляем renderer звать значок на каждую строку отдельно —
+ * иначе на папке в тысячу файлов получим тысячу IPC-вызовов.
+ */
+export type StorageDirEntry = { fileId: string; name: string; folderPath: string; isFolder: boolean; sizeBytes: number | null; contentType: string | null; 
+/**
+ * Для файлов.
+ */
+state: FileState | null; pinned: boolean; progress: number | null; error: string | null; 
+/**
+ * Для папок — агрегат по всему поддереву.
+ */
+aggregate: FolderAggregate | null; subtreeFiles: number | null; subtreeBytes: number | null; subtreeLocalBytes: number | null }
+export type StorageStatus = { 
+/**
+ * Заданы ли адрес и токен в настройках.
+ * 
+ * Отличается от `connected`: настроено — значит «этой программой облако
+ * используют», подключено — значит «клиент поднят прямо сейчас». Интерфейс
+ * прячет облачную секцию, пока не настроено и не подключено: показывать
+ * кнопку подключения тому, кто хранилище не заводил, незачем.
+ */
+configured: boolean; 
+/**
+ * Поднят ли клиент сейчас.
+ */
+connected: boolean; 
+/**
+ * Корень зеркала. Пусто — облака нет вообще, и шов в ядре должен стать
+ * no-op БЕЗ единого IPC-вызова: иначе сканирование локальных папок
+ * удвоит обращения на ровном месте.
+ */
+mirrorRoot: string; 
+/**
+ * Работаем на моке — то есть данные ненастоящие. Это должно быть видно в UI,
+ * иначе легко принять фикстуры за живой бэкенд.
+ */
+mock: boolean; baseUrl: string; 
+/**
+ * Что умеет бэкенд. До первого успешного запроса всё `false`.
+ */
+caps: Capabilities; 
+/**
+ * Ошибка последней попытки соединиться.
+ */
+lastError: string | null; 
+/**
+ * Поднялась ли слежка за зеркалом.
+ * 
+ * `false` при подключённом клиенте — не поломка, но важная разница: файлы,
+ * положенные руками, будут находиться редким полным обходом (до 10 минут), а
+ * не за секунды. Без этого поля «почему файл не залился сразу» неотлаживаемо.
+ */
+watching: boolean; 
+/**
+ * Сколько путей ждут заливки в очереди кандидатов. Диагностика: очередь,
+ * которая не пустеет, означает, что заливка стоит.
+ */
+pendingUploads: number }
+export type StorageSyncReport = { pages: number; upserted: number; deleted: number; skipped: number; rebootstrapped: boolean; cursor: number }
+/**
+ * Прямой ребёнок папки с ГЛУБОКИМИ итогами по своему поддереву.
+ */
+export type SubtreeChild = { 
+/**
+ * `""` — файлы, лежащие прямо в этой папке (не в подпапке).
+ */
+name: string; isFolder: boolean; files: number; bytes: number; localFiles: number; localBytes: number; 
+/**
+ * `options`, `_stats`, `_post` — служебное. Не скрываем, но приглушаем:
+ * «проект 52 ГБ» включает логи, и это надо отличать от контента.
+ */
+internal: boolean }
+export type SubtreeStats = { projectId: string; folderPath: string; 
+/**
+ * `false` — полного `/tree` по проекту ещё не делали. Это НЕ то же самое,
+ * что «пусто»: показать «0 файлов» там, где мы просто не спрашивали, —
+ * худший вид вранья в интерфейсе.
+ */
+known: boolean; files: number; bytes: number; localFiles: number; localBytes: number; children: SubtreeChild[] }
+/**
+ * Строка панели передач.
+ */
+export type TransferRow = { id: number; fileId: string | null; projectId: string; 
+/**
+ * `"down"` | `"up"`.
+ */
+direction: string; name: string; bytesTotal: number | null; bytesDone: number; 
+/**
+ * `queued` | `active` | `paused` | `error` | `done`.
+ */
+state: string; error: string | null; updatedAt: number }
+export type UploadField = { field: string; value: string }
+export type UploadFile = { field: string; path: string; mime?: string | null; filename?: string | null }
+export type UploadResult = { 
+/**
+ * Пусто у сайдкара: строки в каталоге у служебных JSON-ов нет вовсе.
+ */
+fileId: string; 
+/**
+ * Пусто у сайдкара: ключ ему назначает бэкенд, и он канонический, не физический.
+ */
+s3Key: string; bytes: number; strategy: UploadStrategy; 
+/**
+ * Ушло каналом сайдкаров (`PUT /sidecars`), а не `presign` + `notify`.
+ */
+sidecar?: boolean }
+/**
+ * Как заливать. `Multipart` пока не реализован — поля `upload_id`/`parts_done`
+ * в `transfers` уже есть, чтобы при появлении эндпоинтов не менять схему.
+ */
+export type UploadStrategy = "singlePut" | "multipart"
 export type WhisperModel = { name: string; filename: string; sizeBytes: number; sizeLabel: string; downloaded: boolean; recommended: boolean }
 export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
 /**

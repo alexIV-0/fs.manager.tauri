@@ -7,10 +7,10 @@
 // и сортируем синхронно по готовым числам.
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 
-export { onLoad } from '../_template/tauri';
-
+// `fs` протаскивается параметром: host-сервисы приходят в ctx (третий аргумент
+// точки входа), у модуля не остаётся состояния → загрузчик его кэширует.
 export type SortMethod = 'StartNumber' | 'EndNumber' | 'Name' | 'Date' | 'Size';
 
 function extractNumberFromStart(filePath: string): number {
@@ -26,7 +26,7 @@ function extractNumberFromEnd(filePath: string): number {
 }
 
 /** Предсобирает значение, по которому будем сортировать, для каждого файла. */
-async function precomputeKeys(files: string[], method: SortMethod): Promise<Map<string, number>> {
+async function precomputeKeys(files: string[], method: SortMethod, fs: any): Promise<Map<string, number>> {
 	const keys = new Map<string, number>();
 
 	if (method === 'Date' || method === 'Size') {
@@ -47,7 +47,7 @@ async function precomputeKeys(files: string[], method: SortMethod): Promise<Map<
 	return keys;
 }
 
-async function sortFiles(files: string[], method: SortMethod, ascending: boolean): Promise<string[]> {
+async function sortFiles(files: string[], method: SortMethod, ascending: boolean, fs: any): Promise<string[]> {
 	let sorted: string[];
 
 	if (method === 'Name') {
@@ -55,7 +55,7 @@ async function sortFiles(files: string[], method: SortMethod, ascending: boolean
 			path.basename(a).toLowerCase().localeCompare(path.basename(b).toLowerCase()),
 		);
 	} else {
-		const keys = await precomputeKeys(files, method);
+		const keys = await precomputeKeys(files, method, fs);
 		sorted = [...files].sort((a, b) => (keys.get(a) ?? 0) - (keys.get(b) ?? 0));
 	}
 
@@ -70,7 +70,8 @@ function pickMethod(raw: unknown): SortMethod {
 	return allowed.includes(v as SortMethod) ? (v as SortMethod) : 'Name';
 }
 
-export async function sortByType(_item: any, _description: any): Promise<string[]> {
+export async function sortByType(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const files: string[] = _item.import?.inputFile ?? [];
 	if (files.length === 0) {
 		sendToMW('log', { level: 'warn', text: `[sortByType] inputFile is empty` });
@@ -86,7 +87,7 @@ export async function sortByType(_item: any, _description: any): Promise<string[
 		text: `${_description.infoText}: [sorting]\n${method} ${ascending ? '↑' : '↓'}`,
 	});
 
-	const sorted = await sortFiles(files, method, ascending);
+	const sorted = await sortFiles(files, method, ascending, fs);
 	sendToMW('log', { level: 'info', text: `Result (${method} ${ascending ? 'asc' : 'desc'}):\n${sorted.join('\n')}` });
 	return sorted;
 }

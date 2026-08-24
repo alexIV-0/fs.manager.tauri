@@ -11,13 +11,12 @@
 // в отличие от VK, где токен долгоживущий.
 
 import path from 'path';
-import { sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
-import { appendRecord, writeCooldown, PostRecord } from './_postLog';
+import { appendRecord, writeCooldown } from '../../src/PROCESSING/autoPost/postLog';
+import type { PostRecord } from '../../src/PROCESSING/autoPost/types';
 
-export { onLoad } from '../_template/tauri';
 
-const api = () => (window as any).tauriAPI;
 const PLATFORM = 'youtube';
 
 function toArr(v: any): string[] {
@@ -42,7 +41,8 @@ function resolveText(linked: any, field: any, description: any, file: string): s
 	return String(formatNameByPattern({ string: raw, description, file }));
 }
 
-export async function autoPostYTFunc(_item: any, _description: any): Promise<string[]> {
+export async function autoPostYTFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW, invoke } = ctx;
 	const file = toArr(_item?.import?.inputFile)[0];
 	if (!file) {
 		sendToMW('log', { level: 'error', text: '[autoPostYT] нет входного файла (inputFile)' });
@@ -74,7 +74,7 @@ export async function autoPostYTFunc(_item: any, _description: any): Promise<str
 	// Свежий access_token (refresh-aware: читает аккаунт, обновляет по refresh_token, persist'ит).
 	let accessToken: string;
 	try {
-		accessToken = await api().invoke('youtube_get_access_token', { mainFolderName, name: account });
+		accessToken = await invoke('youtube_get_access_token', { mainFolderName, name: account });
 	} catch (e) {
 		sendToMW('log', { level: 'error', text: '[autoPostYT] токен: ' + String(e) });
 		return [];
@@ -82,7 +82,7 @@ export async function autoPostYTFunc(_item: any, _description: any): Promise<str
 
 	try {
 		sendToMW('statusbar', { text: `Постинг на YouTube: ${path.basename(file)}…` });
-		const res: any = await api().invoke('youtube_upload_video', {
+		const res: any = await invoke('youtube_upload_video', {
 			accessToken,
 			filePath: file,
 			meta: { title, description, tags, categoryId, privacyStatus: 'public', madeForKids },
@@ -93,7 +93,7 @@ export async function autoPostYTFunc(_item: any, _description: any): Promise<str
 		const thumb = toArr(_item?.import?.thumbnail)[0] || String(_item?.thumbnail ?? '').trim();
 		if (thumb && res?.videoId) {
 			try {
-				await api().invoke('youtube_set_thumbnail', { accessToken, videoId: res.videoId, imagePath: thumb });
+				await invoke('youtube_set_thumbnail', { accessToken, videoId: res.videoId, imagePath: thumb });
 				sendToMW('log', { level: 'info', text: '[autoPostYT] обложка установлена' });
 			} catch (e) {
 				sendToMW('log', { level: 'warn', text: `[autoPostYT] обложка не поставилась (нужен канал с подтв. телефоном?): ${String(e)}` });

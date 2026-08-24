@@ -1,4 +1,4 @@
-import { TimeCodeProperty, CustomNodeData, CustomNode, Property } from '@/NODE_WIN/definitions/types';
+import { TimeCodeProperty, CustomNodeData, CustomNode, Property, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { Stack, TextField } from '@mui/material';
@@ -82,7 +82,7 @@ export default function TimeCode({ property, onChange }: TimeCodeProps) {
 
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 
 	const [isExternal, setIsExternal] = useState(false);
 	const [displayValue, setDisplayValue] = useState('00:00:00');

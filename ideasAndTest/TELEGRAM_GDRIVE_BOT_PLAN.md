@@ -1,7 +1,7 @@
 # Plan: Telegram → GDrive Collector Plugin (`autoTGcollect`)
 
 ## Статус
-🟡 ПРОЕКТИРОВАНИЕ (2026-06-24). Зеркало-противоположность [autoPostTG](TELEGRAM_AUTOPOST_PLAN.md):
+🟡 ПРОЕКТИРОВАНИЕ (2026-06-24). Зеркало-противоположность [autoPostTG](+TELEGRAM_AUTOPOST_PLAN.md):
 тот **постит** из программы в Telegram, этот **собирает** медиа из Telegram в папки проектов.
 Отдельный плагин, общий с autoPostTG модуль команд (`tg_commands.rs`).
 
@@ -422,7 +422,7 @@ auto-disable) → папка просто игнорируется в цикле
 
 - [ARCHITECTURE_DISTRIBUTED.md](ARCHITECTURE_DISTRIBUTED.md) — этот бот = «второй источник
   триггера» / вход в GDrive-шину; при переезде на сайт становится webhook на control plane.
-- [TELEGRAM_AUTOPOST_PLAN.md](TELEGRAM_AUTOPOST_PLAN.md) — общий `tg_commands.rs`, общий
+- [+TELEGRAM_AUTOPOST_PLAN.md](+TELEGRAM_AUTOPOST_PLAN.md) — общий `tg_commands.rs`, общий
   менеджер локального сервера, общий стиль хранения аккаунта; бот сбора ОТДЕЛЬНЫЙ от бота постинга.
 - [VISION.md](VISION.md) — `tgSearch.json` = частный случай `folderConfig` (конфиг в папке проекта).
 - [TELEGRAM_BOTS_SETUP.md](TELEGRAM_BOTS_SETUP.md) — runbook ручной настройки ботов под клиента/проект

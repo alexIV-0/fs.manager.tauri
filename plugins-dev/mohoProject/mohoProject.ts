@@ -2,11 +2,11 @@
 // Tauri-port: child_process.exec → exec helper (Rust exec_command), fs через helper.
 
 import path from 'path';
-import { fs, exec, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 
-export { onLoad } from '../_template/tauri';
 
-export async function mohoProjectFunc(_item: any, _description: any): Promise<string[]> {
+export async function mohoProjectFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, exec, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const inputFiles = _item.import?.inputFile ?? [];

@@ -4,15 +4,23 @@
 // Tauri-port: fs / ffmpeg / mkdir — через @plugin-api/tauri helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 /** Аналог copyFileWithAddMetadata из Electron — копирует видео через ffmpeg с -metadata description=...
  *  Раньше использовал spawnFFmpegCommand из main; здесь — helper.ffmpeg.exec. */
-async function copyVideoWithMetadata(fileFrom: string, fileTo: string, description: any, nodeId?: string): Promise<void> {
+// ctx перед необязательным nodeId: host-сервисы приходят из него, поэтому у
+// модуля не остаётся состояния и загрузчик его кэширует.
+async function copyVideoWithMetadata(
+	fileFrom: string,
+	fileTo: string,
+	description: any,
+	ctx: PluginContext,
+	nodeId?: string,
+): Promise<void> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const metadata = {
 		department: 'inovationHub',
 		modification: description.automationType,
@@ -50,7 +58,8 @@ async function copyVideoWithMetadata(fileFrom: string, fileTo: string, descripti
 	}
 }
 
-export async function saveFileOnGDFunc(_item: any, _description: any): Promise<string[]> {
+export async function saveFileOnGDFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const fileType = getFileTypeByExt(_item.import.inputFile[0], _description.typeOfFile);
@@ -99,7 +108,7 @@ export async function saveFileOnGDFunc(_item: any, _description: any): Promise<s
 		});
 
 		if (fileType === 'video') {
-			await copyVideoWithMetadata(fileFrom, fileTo, _description, _item.id);
+			await copyVideoWithMetadata(fileFrom, fileTo, _description, ctx, _item.id);
 		} else {
 			await fs.copy(fileFrom, fileTo, { overwrite: Boolean(_item.overwriteOldest) });
 			// верификация копии

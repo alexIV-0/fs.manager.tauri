@@ -1,0 +1,10 @@
+{
+	"id": "remoteWorker",
+	"name": "Remote Worker",
+	"description": "Queue adapter for the distributed pipeline: claim a task from the site, report progress, finish or release it. Provides createQueue with two sources — live site and local mock fixtures.",
+	"version": "1.0.0",
+	"apiVersion": 1,
+	"type": ["system"],
+	"main": "remoteWorker.js",
+	"external": []
+}

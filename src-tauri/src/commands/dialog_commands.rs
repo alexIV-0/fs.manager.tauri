@@ -149,49 +149,28 @@ pub fn copy_to_clipboard(_app: tauri::AppHandle, path: String) -> Result<(), Str
 
 // ==================== SHELL ====================
 
+// Открытие путей отдано `tauri-plugin-opener` (он уже подключён в lib.rs).
+//
+// Рукописные ветви `#[cfg]` убраны, и не только ради краткости. На Windows здесь
+// было `cmd /c start "" <путь>` — известно опасный шаблон (класс CVE-2024-24576):
+// `cmd.exe` разбирает командную строку по своим правилам, и кавычки, которые
+// расставляет `std::process::Command`, не нейтрализуют `&`, `|`, `^` в пути.
+// Плагин открывает путь без прослойки шелла.
+//
+// Побочно стало строже: `open_path` возвращает ошибку, если файла нет, — раньше
+// процесс запускался молча и пользователь видел пустоту вместо сообщения. А
+// `reveal_item_in_dir` сам делает `canonicalize`.
+
 #[tauri::command]
 #[specta::specta]
 pub fn show_in_folder(_app: tauri::AppHandle, path: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").arg("-R").arg(&path).spawn().map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        if let Some(parent) = Path::new(&path).parent() {
-            std::process::Command::new("xdg-open").arg(parent).spawn().map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
+    tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn open_file_with_default_app(_app: tauri::AppHandle, path: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", &path])
-            .hide_console()
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| e.to_string())
 }
 
 // ==================== FOLDER/FILE ====================
@@ -232,12 +211,10 @@ pub fn save_flow_to_options_folder(
     // Сохраняем в {path}/options/options.json
     let json_path = path_buf.join("options").join("options.json");
 
-    if let Some(parent) = json_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
+    // Атомарно: обрезанный options.json — это потерянный граф нод, то есть
+    // собственно работа пользователя. `write_atomic` сам создаёт родительские папки.
     let content = serde_json::to_string_pretty(&flow).map_err(|e| e.to_string())?;
-    fs::write(&json_path, content).map_err(|e| e.to_string())?;
+    super::fs_commands::write_atomic(&json_path, content.as_bytes())?;
 
     Ok(serde_json::json!({ "success": true, "path": json_path.to_string_lossy().to_string() }))
 }

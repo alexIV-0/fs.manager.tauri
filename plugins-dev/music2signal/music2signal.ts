@@ -1,9 +1,8 @@
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 import { parseAstatsEnvelope, presentIntervals, coverageRatio, energyPeak, detectEvents } from '../../src/Utils/audioEnvelope';
 import path from 'path';
 
-export { onLoad } from '../_template/tauri';
 
 // ── music2signal ────────────────────────────────────────────────────────────────────
 // Анализ музыкального стема → сигнальный JSON:
@@ -15,7 +14,8 @@ function clampWindow(v: number): number {
 	return Number.isFinite(v) && v >= 20 && v <= 500 ? Math.round(v) : 100;
 }
 
-export async function music2signalFunc(_item: any, _description: any, _ctx?: any): Promise<string[]> {
+export async function music2signalFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFiles: string[] = [];
 	const windowMs = clampWindow(Number(_item.windowMs));
 	const saveToFile = !(_item.saveToFile === false || _item.saveToFile === 'false');

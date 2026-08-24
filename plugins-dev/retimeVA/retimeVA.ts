@@ -2,11 +2,10 @@
 // до заданной целевой длительности. Tauri-port: ffmpeg через helper.
 
 import path from 'path';
-import { fs, ffmpeg, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { getFileTypeByExt } from '../../src/Utils/getFileTypeByExt';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 
-export { onLoad } from '../_template/tauri';
 
 // ffmpeg-фильтр atempo ограничен 0.5..2.0; для значений вне — строим цепочку.
 function buildAtempoChain(tempo: number): string {
@@ -33,7 +32,8 @@ function pickAudioCodec(ext: string): string {
 	return 'aac';
 }
 
-export async function retimeVAFunc(_item: any, _description: any): Promise<string[]> {
+export async function retimeVAFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, ffmpeg, sendToMW } = ctx;
 	const finalFile: string[] = [];
 
 	const inputVA: string[] = _item.import.inputVA ?? [];

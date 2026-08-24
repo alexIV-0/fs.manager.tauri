@@ -6,8 +6,13 @@
 //   const releases = await mod.fetchReleases('alexIV-0', 'fs.manager.tauri')
 //   await mod.downloadAndOpen(asset.browser_download_url, asset.name)
 
-import { http, paths, onLoad } from '../_template/tauri';
-export { onLoad };
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// Это НЕ нода: плагин грузят напрямую из React (AppUpdaterAccordion) через
+// loadPlugin, минуя processItem, поэтому ctx третьим аргументом ему никто не
+// передаёт. Сервисы принимаем параметрами — их подставляет вызывающий компонент,
+// у которого есть доступ к hostServices. Экспорт `onLoad` убран: его наличие
+// запрещало loader.ts кэшировать модуль.
 
 export interface GithubAsset {
 	name: string;
@@ -77,7 +82,7 @@ export function getCurrentPlatform(): PlatformKey {
  * Fetches all releases from a GitHub repo.
  * Returns releases sorted newest-first, excluding drafts.
  */
-export async function fetchReleases(owner: string, repo: string): Promise<GithubRelease[]> {
+export async function fetchReleases(owner: string, repo: string, http: PluginContext['http']): Promise<GithubRelease[]> {
 	const response = await http.fetch(
 		`https://api.github.com/repos/${owner}/${repo}/releases`,
 		{
@@ -108,7 +113,13 @@ export async function fetchReleases(owner: string, repo: string): Promise<Github
  *
  * Returns the downloaded file path.
  */
-export async function downloadAndOpen(downloadUrl: string, filename: string): Promise<string> {
+export async function downloadAndOpen(
+	downloadUrl: string,
+	filename: string,
+	http: PluginContext['http'],
+	paths: PluginContext['paths'],
+	system: PluginContext['system'],
+): Promise<string> {
 	const tmpDir = await paths.tmpdir();
 	const dest = `${tmpDir}/${filename}`;
 
@@ -117,8 +128,7 @@ export async function downloadAndOpen(downloadUrl: string, filename: string): Pr
 	});
 
 	// Open with system default — on macOS mounts DMG, on Windows runs installer
-	const api = () => (window as any).tauriAPI;
-	await api().invoke('shell_open_path', { folderPath: dest });
+	await system.openPath(dest);
 
 	return dest;
 }

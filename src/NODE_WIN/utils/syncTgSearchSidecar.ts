@@ -92,7 +92,7 @@ export async function syncTgSearchSidecar(path: string, flow: any): Promise<void
 			deleteAfterDownload,
 		};
 
-		await commands.writeFile(sidecarPath, JSON.stringify(sidecar, null, 2));
+		await commands.writeFileAtomic(sidecarPath, JSON.stringify(sidecar, null, 2));
 	} catch (e) {
 		console.error('[syncTgSearchSidecar] ошибка синка tgSearch.json:', e);
 	}

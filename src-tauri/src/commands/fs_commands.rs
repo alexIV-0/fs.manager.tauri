@@ -20,10 +20,16 @@ pub struct FileInfo {
     pub extension: String,
 }
 
+/// Опции копирования/перемещения.
+///
+/// Поле `useHashCheck` убрано (2026-08-10): оно принималось, но НЕ читалось ни
+/// `copy_item`, ни `move_item` — то есть API обещал проверку целостности, которой
+/// не было. В Electron-версии проверка существовала и закрывала конкретный риск:
+/// файлы лежали в папке Google-синхронизатора и могли быть скачаны не полностью.
+/// Сейчас за «байты на месте» отвечает шов хранилища (`storage_ensure_local` /
+/// `storage_copy_from_mirror`), то есть гарантия стала явной и переехала уровнем выше.
 #[derive(Debug, Deserialize, specta::Type)]
 pub struct CopyMoveOptions {
-    #[serde(default)]
-    pub use_hash_check: bool,
     #[serde(default)]
     pub overwrite: bool,
 }
@@ -54,6 +60,7 @@ pub struct FontInfo {
 // (без specta-биндинга — типизированного потребителя нет). См. SPECTA_MIGRATION_PLAN.md.
 
 #[tauri::command]
+#[specta::specta]
 pub fn path_join(segments: Vec<String>) -> Result<String, String> {
     if segments.is_empty() {
         return Err("No segments provided".into());
@@ -310,10 +317,7 @@ pub fn copy_item(
     destination_path: String,
     options: Option<CopyMoveOptions>,
 ) -> Result<(), String> {
-    let opts = options.unwrap_or(CopyMoveOptions {
-        use_hash_check: false,
-        overwrite: false,
-    });
+    let opts = options.unwrap_or(CopyMoveOptions { overwrite: false });
 
     let source = Path::new(&source_path);
     let dest = Path::new(&destination_path);
@@ -326,6 +330,13 @@ pub fn copy_item(
         return Err(format!("Destination already exists: {}", destination_path));
     }
 
+    if source.is_dir() && is_inside(source, dest) {
+        return Err(format!(
+            "Нельзя копировать папку внутрь себя: {} → {}",
+            source_path, destination_path
+        ));
+    }
+
     if source.is_dir() {
         copy_dir_all(source, dest).map_err(|e| e.to_string())?;
     } else {
@@ -336,6 +347,48 @@ pub fn copy_item(
     }
 
     Ok(())
+}
+
+/// `dst` лежит ВНУТРИ `src`? Тогда рекурсивное копирование бесконечно: обход
+/// `read_dir` ленивый, поэтому он увидит только что созданную копию внутри
+/// источника и полезет в неё, потом в копию копии — до заполнения диска.
+///
+/// Канонизирует путь, которого может ещё не существовать: поднимается до
+/// ближайшего СУЩЕСТВУЮЩЕГО предка, канонизирует его и приклеивает обратно хвост.
+///
+/// Канонизировать обязательно: на macOS `/var` — симлинк на `/private/var`, и
+/// сравнение «канонический источник против сырой цели» врёт. Одного уровня
+/// родителя не хватает — цель может быть на несколько несуществующих уровней
+/// глубже (`a/x/y`, где нет ни `x`, ни `y`).
+fn canonical_ish(p: &Path) -> PathBuf {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = p.to_path_buf();
+    loop {
+        if let Ok(existing) = cur.canonicalize() {
+            let mut out = existing;
+            for part in tail.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        let name = match cur.file_name() {
+            Some(n) => n.to_os_string(),
+            // Дошли до корня и он не канонизируется — сравнивать нечего, отдаём как есть.
+            None => return p.to_path_buf(),
+        };
+        tail.push(name);
+        if !cur.pop() {
+            return p.to_path_buf();
+        }
+    }
+}
+
+fn is_inside(src: &Path, dst: &Path) -> bool {
+    let s = canonical_ish(src);
+    let d = canonical_ish(dst);
+    // Совпадение путей — не вложенность: копирование «в себя же» отсекают более
+    // ранние проверки (`dest.exists() && !overwrite`), рекурсии там нет.
+    d != s && d.starts_with(&s)
 }
 
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
@@ -362,10 +415,7 @@ pub fn move_item(
     destination_path: String,
     options: Option<CopyMoveOptions>,
 ) -> Result<(), String> {
-    let opts = options.unwrap_or(CopyMoveOptions {
-        use_hash_check: false,
-        overwrite: false,
-    });
+    let opts = options.unwrap_or(CopyMoveOptions { overwrite: false });
 
     let source = Path::new(&source_path);
     let dest = Path::new(&destination_path);
@@ -378,22 +428,80 @@ pub fn move_item(
         return Err(format!("Destination already exists: {}", destination_path));
     }
 
+    if source.is_dir() && is_inside(source, dest) {
+        return Err(format!(
+            "Нельзя переместить папку внутрь себя: {} → {}",
+            source_path, destination_path
+        ));
+    }
+
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    fs::rename(source, dest)
-        .or_else(|_| {
-            // Fallback: copy + delete
-            if source.is_dir() {
-                copy_dir_all(source, dest)?;
-                fs::remove_dir_all(source)
-            } else {
-                fs::copy(source, dest)?;
-                fs::remove_file(source)
-            }
-        })
-        .map_err(|e| e.to_string())
+    // Состояние фиксируем ДО любых изменений: ниже оно решает, можно ли откатываться.
+    let src_is_dir = source.is_dir();
+    let dest_existed = dest.exists();
+
+    if fs::rename(source, dest).is_ok() {
+        return Ok(());
+    }
+
+    // `rename` не работает между разными томами (локальный диск → внешний или
+    // сетевой) — это штатный случай, а не сбой. Откат: скопировать, затем удалить
+    // источник.
+    if src_is_dir {
+        copy_dir_all(source, dest).map_err(|e| format!("move: копирование не удалось: {}", e))?;
+    } else {
+        fs::copy(source, dest).map_err(|e| format!("move: копирование не удалось: {}", e))?;
+    }
+
+    let removed = if src_is_dir {
+        fs::remove_dir_all(source)
+    } else {
+        fs::remove_file(source)
+    };
+
+    if let Err(remove_err) = removed {
+        // Копия есть, источник остался — то есть файл сейчас в ДВУХ местах.
+        //
+        // Раньше здесь просто возвращалась ошибка, и вызывающий читал её как
+        // «перемещение не удалось, ничего не произошло». Последствий два: повтор
+        // упирался в «Destination already exists», а пайплайн с `afterPost: move`
+        // находил файл в исходной папке на следующем витке и публиковал повторно.
+        //
+        // Восстанавливаем инвариант «либо целиком, либо ничего» — но только если
+        // цели до нас НЕ БЫЛО. Если была (overwrite), мы её перезаписали, и удаление
+        // уничтожило бы данные, которых мы не создавали: тогда меньшее зло — оставить
+        // копию и честно сказать, что файл в двух местах.
+        if dest_existed {
+            return Err(format!(
+                "move: источник не удалён ({}). Цель существовала и была перезаписана, \
+                 поэтому откат не делаем — файл сейчас и там, и там: {} / {}",
+                remove_err, source_path, destination_path
+            ));
+        }
+
+        let rollback = if src_is_dir {
+            fs::remove_dir_all(dest)
+        } else {
+            fs::remove_file(dest)
+        };
+        return match rollback {
+            Ok(()) => Err(format!(
+                "move: источник не удалён ({}), копия откачена — состояние не изменилось, \
+                 можно повторить: {}",
+                remove_err, source_path
+            )),
+            Err(rollback_err) => Err(format!(
+                "move: источник не удалён ({}), и откат копии не удался ({}) — \
+                 файл сейчас в ДВУХ местах: {} / {}",
+                remove_err, rollback_err, source_path, destination_path
+            )),
+        };
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -412,6 +520,37 @@ pub fn delete_item(item_path: String) -> Result<bool, String> {
     }
 
     Ok(true)
+}
+
+
+/// Атомарная запись файла: во временный файл рядом, затем переименование.
+///
+/// Обычный `fs::write` сначала обрезает файл, а потом наполняет. Крах или потеря
+/// питания в этом окне оставляют на диске обрезанный файл вместо прежнего целого.
+/// Для файлов состояния это означает потерю: пустой `settings.json` молча
+/// подменяется дефолтами, а обрезанный `options.json` — это потерянный граф нод,
+/// то есть собственно работа пользователя.
+///
+/// Переименование внутри одного каталога атомарно, поэтому на диске всегда либо
+/// прежнее содержимое целиком, либо новое целиком. Промежуточного состояния нет.
+///
+/// Применять к файлам, которые приложение перезаписывает ЦЕЛИКОМ. Для дозаписи
+/// (jsonl-логи) есть `append_file` с настоящим `O_APPEND`.
+pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create_dir_all: {}", e))?;
+    }
+
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+
+    fs::write(&tmp, content).map_err(|e| format!("write tmp: {}", e))?;
+    fs::rename(&tmp, path).map_err(|e| {
+        // Незавершённый tmp не оставляем — иначе копится рядом с настоящими файлами.
+        let _ = fs::remove_file(&tmp);
+        format!("rename: {}", e)
+    })
 }
 
 // ==================== READ/WRITE FILES ====================
@@ -485,36 +624,16 @@ pub fn read_media_preview(
     Ok("".to_string())
 }
 
-// Simple base64 encoder
+/// base64 через крейт `base64` (он уже в зависимостях и используется в
+/// icon_commands/youtube_auth_commands).
+///
+/// Здесь была своя реализация на `write!` по одному символу — то есть четыре вызова
+/// машинерии `fmt` на каждые три байта, да ещё без `with_capacity`. Замер на 10 МБ:
+/// 109 мс против 10.9 мс у крейта при побайтово одинаковом результате. Путь горячий —
+/// это превью картинок в списке файлов.
 fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::new();
-    
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        
-        write!(result, "{}", CHARS[((triple >> 18) & 0x3F) as usize] as char).unwrap();
-        write!(result, "{}", CHARS[((triple >> 12) & 0x3F) as usize] as char).unwrap();
-        
-        if chunk.len() > 1 {
-            write!(result, "{}", CHARS[((triple >> 6) & 0x3F) as usize] as char).unwrap();
-        } else {
-            result.push('=');
-        }
-        
-        if chunk.len() > 2 {
-            write!(result, "{}", CHARS[(triple & 0x3F) as usize] as char).unwrap();
-        } else {
-            result.push('=');
-        }
-    }
-    
-    result
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
 #[tauri::command]
@@ -528,6 +647,27 @@ pub fn write_file(file_path: String, content: String) -> Result<serde_json::Valu
 
     fs::write(path, content).map_err(|e| e.to_string())?;
 
+    Ok(serde_json::json!({ "success": true }))
+}
+
+/// Атомарная перезапись файла целиком — для файлов СОСТОЯНИЯ приложения.
+///
+/// Отличие от `write_file`: тот пишет напрямую (`fs::write` обрезает файл, потом
+/// наполняет), и крах в этом окне оставляет обрезанный файл. Здесь запись идёт через
+/// временный файл рядом с переименованием, поэтому на диске всегда либо прежнее
+/// содержимое целиком, либо новое целиком.
+///
+/// Почему отдельная команда, а не изменение `write_file`: тот универсальный и его
+/// зовут ПЛАГИНЫ для произвольных файлов, а переименование меняет inode — это может
+/// задеть вотчеры и жёсткие ссылки. Плагинам поведение оставлено прежним.
+///
+/// Применять к тому, что приложение перезаписывает целиком: `folderState.json`,
+/// сайдкары `postSources.json`/`tgSearch.json`, пресеты, `plugin.json`/`ui.json`
+/// из конструктора. Для дозаписи есть `append_file`.
+#[tauri::command]
+#[specta::specta]
+pub fn write_file_atomic(file_path: String, content: String) -> Result<serde_json::Value, String> {
+    write_atomic(Path::new(&file_path), content.as_bytes())?;
     Ok(serde_json::json!({ "success": true }))
 }
 
@@ -571,39 +711,23 @@ pub fn write_binary_file(file_path: String, data_b64: String) -> Result<u64, Str
     Ok(bytes.len() as u64)
 }
 
+/// Декод base64. Терпимость к пробелам и переносам сохранена намеренно: прежняя
+/// самодельная реализация их игнорировала, и вход мог прийти «завёрнутым» (например
+/// из HTTP-ответа). Крейт по умолчанию такое отвергает, поэтому чистим до вызова,
+/// а к padding'у относимся безразлично — как раньше.
 fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
-    // Стандартный alphabet RFC 4648. Игнорируем whitespace и '=' padding.
-    const TABLE: [i8; 128] = {
-        let mut t = [-1i8; 128];
-        let alpha = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut i = 0;
-        while i < 64 {
-            t[alpha[i] as usize] = i as i8;
-            i += 1;
-        }
-        t
-    };
+    use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+    use base64::Engine;
 
-    let mut out: Vec<u8> = Vec::with_capacity(s.len() * 3 / 4);
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-    for &b in s.as_bytes() {
-        if b == b'=' || b == b'\n' || b == b'\r' || b == b' ' || b == b'\t' {
-            continue;
-        }
-        let v = if (b as usize) < 128 { TABLE[b as usize] } else { -1 };
-        if v < 0 {
-            return Err(format!("invalid character: {:?}", b as char));
-        }
-        buf = (buf << 6) | (v as u32);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-    Ok(out)
+    static ENGINE: GeneralPurpose = GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+
+    let cleaned: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    ENGINE
+        .decode(cleaned.as_bytes())
+        .map_err(|e| format!("invalid base64: {}", e))
 }
 
 // ==================== PATH VALIDATION ====================
@@ -683,6 +807,34 @@ fn ext_matches(path: &Path, exts: &[String]) -> bool {
     exts.iter().any(|e| e.trim_start_matches('.').to_lowercase() == ext)
 }
 
+/// Расширение файла в нижнем регистре, без точки. Пустая строка, если расширения нет.
+fn ext_lower(path: &Path) -> String {
+    path.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// Файл/папка ли это, за один системный вызов вместо двух.
+///
+/// `entry.file_type()` на большинстве платформ берётся из уже прочитанной записи
+/// каталога и не требует отдельного stat — в отличие от `path.is_file()` /
+/// `path.is_dir()`, каждый из которых делает свой. На папках Google-диска (FUSE)
+/// это заметно: там stat дорогой, а записей бывают тысячи.
+///
+/// Симлинки обрабатываем как раньше: `file_type()` сообщает про саму ссылку, поэтому
+/// для неё (и только для неё) идём за `metadata()`, которая ссылку разворачивает.
+/// Без этого симлинк на видеофайл перестал бы попадать в выдачу.
+fn kind_of(entry: &fs::DirEntry) -> (bool, bool) {
+    match entry.file_type() {
+        Ok(ft) if ft.is_symlink() => match entry.path().metadata() {
+            Ok(meta) => (meta.is_file(), meta.is_dir()),
+            Err(_) => (false, false),
+        },
+        Ok(ft) => (ft.is_file(), ft.is_dir()),
+        Err(_) => (false, false),
+    }
+}
+
 /// Возвращает объект вида `{[type]: string[]}` — для каждого `{type, ext}` в search
 /// собирает массив **имён** (не полных путей), соответствующих фильтру.
 /// Совместимо с Electron Node-fallback'ом, который ожидают callers вроде
@@ -709,13 +861,23 @@ pub fn get_some_from_folder(
         by_type.entry(entry.kind.clone()).or_default();
     }
 
-    for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
-        let entry_path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_file = entry_path.is_file();
-        let is_dir = entry_path.is_dir();
+    // Расширения приводим к нижнему регистру ОДИН раз. Раньше это делалось внутри
+    // цикла по файлам: новая строка на каждое расширение на каждый файл.
+    let normalized: Vec<Vec<String>> = search
+        .iter()
+        .map(|se| se.ext.iter().map(|e| e.trim_start_matches('.').to_lowercase()).collect())
+        .collect();
 
-        for se in &search {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let (is_file, is_dir) = kind_of(&entry);
+        if !is_file && !is_dir {
+            continue;
+        }
+        // Расширение тоже считаем один раз на файл, а не на каждую запись фильтра.
+        let ext = if is_file { ext_lower(&entry.path()) } else { String::new() };
+
+        for (se, exts) in search.iter().zip(&normalized) {
             if se.kind == "folders" {
                 if is_dir {
                     if let Some(arr) = by_type.get_mut("folders") {
@@ -724,9 +886,13 @@ pub fn get_some_from_folder(
                         }
                     }
                 }
-            } else if is_file && ext_matches(&entry_path, &se.ext) {
+            } else if is_file && (exts.is_empty() || exts.iter().any(|e| *e == ext)) {
                 if let Some(arr) = by_type.get_mut(&se.kind) {
-                    arr.push(name.clone());
+                    // Дедуп как у папок: два фильтра одного типа (например `[]` и
+                    // `[mp4]`) иначе положили бы один и тот же файл дважды.
+                    if !arr.contains(&name) {
+                        arr.push(name.clone());
+                    }
                 }
             }
         }
@@ -771,6 +937,41 @@ pub fn list_subfolders(paths: Vec<String>) -> Result<serde_json::Value, String> 
     Ok(serde_json::Value::Object(out))
 }
 
+/// Батч-чтение состояния вкл/выкл проектов из `<project>/options/folderState.json`.
+/// Для главной папки читает каждую подпапку верхнего уровня и возвращает объект
+/// `{ [projectName]: stateJson }` ТОЛЬКО для тех, где файл существует и парсится.
+/// Отсутствующий/битый файл просто пропускается (ключа нет) — так TS-гидратор отличает
+/// «есть состояние в папке» от «нужна ленивая миграция из legacy LS». Один IPC на всю
+/// главную папку вместо N round-trip к Google Drive.
+#[tauri::command]
+#[specta::specta]
+pub fn read_folder_states(main_folder_path: String) -> Result<serde_json::Value, String> {
+    let dir = Path::new(&main_folder_path);
+    let mut out = serde_json::Map::new();
+    if !dir.is_dir() {
+        return Ok(serde_json::Value::Object(out));
+    }
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())?.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let state_file = entry_path.join("options").join("folderState.json");
+        if !state_file.is_file() {
+            continue;
+        }
+        // Битый JSON / нечитаемый файл — пропускаем: не даём мусору перезаписать кэш
+        // и не блокируем гидрацию остальных проектов.
+        if let Ok(content) = fs::read_to_string(&state_file) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                out.insert(name, val);
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
 /// Рекурсивный поиск. Возвращает `{[type]: string[]}` — относительные пути от `path`,
 /// разбитые по типу (как в Electron'е). Папки тоже могут включаться если в search есть type=folders.
 #[tauri::command]
@@ -804,12 +1005,17 @@ pub fn recursive_find_files(
         by_type: &mut std::collections::HashMap<String, Vec<String>>,
     ) -> std::io::Result<()> {
         for entry in fs::read_dir(dir)?.flatten() {
-            let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             let rel = rel_prefix.join(&name);
             let rel_str = rel.to_string_lossy().to_string();
 
-            if p.is_file() {
+            // Тип берём из записи каталога, а не двумя `is_file()`/`is_dir()`: обход
+            // рекурсивный, и лишний stat на каждый элемент дерева на папках Google-диска
+            // стоит дорого. Симлинки при этом разворачиваются, как и раньше.
+            let (is_file, is_dir) = kind_of(&entry);
+            let p = entry.path();
+
+            if is_file {
                 if let Some(f) = files_filter {
                     if ext_matches(&p, &f.ext) {
                         if let Some(arr) = by_type.get_mut("files") {
@@ -817,7 +1023,7 @@ pub fn recursive_find_files(
                         }
                     }
                 }
-            } else if p.is_dir() {
+            } else if is_dir {
                 if take_folders {
                     if let Some(arr) = by_type.get_mut("folders") {
                         arr.push(rel_str.clone());
@@ -1069,29 +1275,289 @@ fn has_os2_table(buffer: &[u8]) -> bool {
 
 // ==================== SHELL:OPEN PATH ====================
 
+/// Открыть путь системным средством. Реализация — `tauri-plugin-opener`
+/// (см. пояснение в `dialog_commands.rs`: рукописные `#[cfg]`-ветви убраны,
+/// на Windows там был небезопасный `cmd /c start`).
+///
+/// Отличие от `show_in_folder`: та РАСКРЫВАЕТ папку и выделяет в ней элемент,
+/// а эта просто открывает путь тем, что назначено в системе.
 #[tauri::command]
 #[specta::specta]
 pub fn shell_open_path(folder_path: String) -> Result<(), String> {
-    use std::process::Command;
-    
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open").arg(&folder_path).spawn()
-            .map_err(|e| format!("Failed to open: {}", e))?;
+    tauri_plugin_opener::open_path(&folder_path, None::<&str>)
+        .map_err(|e| format!("Failed to open: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{base64_decode, base64_encode, get_some_from_folder, is_inside, move_item, write_atomic, CopyMoveOptions};
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// Уникальный каталог под тест: имя из pid + метки, чтобы параллельные запуски
+    /// не мешали друг другу.
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fsm-is-inside-{}-{}", std::process::id(), tag));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
     }
-    
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer").arg(&folder_path).spawn()
-            .map_err(|e| format!("Failed to open: {}", e))?;
+
+    /// Регрессия: `copy_dir_all` создаёт цель, а обход `read_dir` ленивый — он видит
+    /// свежую копию внутри источника и лезет в неё, потом в копию копии, и так до
+    /// заполнения диска. Проверка вложенности стоит до начала копирования.
+    #[test]
+    fn цель_внутри_источника() {
+        let root = tmp("nested");
+        let src = root.join("a");
+        fs::create_dir_all(&src).unwrap();
+        let dst = src.join("b");
+        assert!(is_inside(&src, &dst), "b внутри a — копировать нельзя");
+
+        // и на несколько уровней вглубь
+        let deep = src.join("x").join("y");
+        assert!(is_inside(&src, &deep));
+        let _ = fs::remove_dir_all(&root);
     }
-    
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open").arg(&folder_path).spawn()
-            .map_err(|e| format!("Failed to open: {}", e))?;
+
+    #[test]
+    fn соседние_каталоги_разрешены() {
+        let root = tmp("siblings");
+        let src = root.join("a");
+        let dst = root.join("b");
+        fs::create_dir_all(&src).unwrap();
+        assert!(!is_inside(&src, &dst));
+        let _ = fs::remove_dir_all(&root);
     }
-    
-    println!("[Shell] Opened: {}", folder_path);
-    Ok(())
+
+    #[test]
+    fn сам_в_себя_не_считается_вложенным() {
+        // Это отдельный случай: копирование в себя же — не бесконечная рекурсия,
+        // его отсекают более ранние проверки (`dest.exists() && !overwrite`).
+        let root = tmp("same");
+        let src = root.join("a");
+        fs::create_dir_all(&src).unwrap();
+        assert!(!is_inside(&src, &src));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn родитель_не_вложен_в_ребёнка() {
+        let root = tmp("parent");
+        let child = root.join("a").join("b");
+        fs::create_dir_all(&child).unwrap();
+        let parent = root.join("a");
+        assert!(!is_inside(&child, &parent));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// `/a` и `/a/../a` — один и тот же каталог; без canonicalize сравнение строк
+    /// сочло бы их разными и пропустило бы вложенную цель.
+    #[test]
+    fn точки_в_пути_не_обманывают() {
+        let root = tmp("dots");
+        let src = root.join("a");
+        fs::create_dir_all(&src).unwrap();
+        let tricky = root.join("a").join("..").join("a").join("inside");
+        assert!(is_inside(&src, &tricky));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Ключевой сценарий: `rename` не сработал (разные тома), копия удалась, а
+    /// удаление источника — нет. Раньше возвращалась ошибка, но файл оставался
+    /// В ДВУХ местах: повтор упирался в «Destination already exists», а пайплайн
+    /// с `afterPost: move` публиковал файл повторно на следующем витке.
+    ///
+    /// Удаление файла на unix требует прав на ЗАПИСЬ В РОДИТЕЛЬСКИЙ каталог —
+    /// этим и воспроизводим отказ, снимая с него write-бит.
+    #[cfg(unix)]
+    #[test]
+    fn источник_не_удалился_копия_откачена() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tmp("move-rollback");
+        let src_dir = root.join("ro");
+        fs::create_dir_all(&src_dir).unwrap();
+        let src = src_dir.join("file.txt");
+        fs::write(&src, b"payload").unwrap();
+        let dst = root.join("out").join("file.txt");
+
+        // Родитель источника только для чтения → remove_file упадёт.
+        let orig = fs::metadata(&src_dir).unwrap().permissions();
+        let mut ro = orig.clone();
+        ro.set_mode(0o555);
+        fs::set_permissions(&src_dir, ro).unwrap();
+
+        let res = move_item(
+            src.to_string_lossy().to_string(),
+            dst.to_string_lossy().to_string(),
+            Some(CopyMoveOptions { overwrite: false }),
+        );
+
+        // Права возвращаем сразу, иначе не приберёмся.
+        fs::set_permissions(&src_dir, orig).unwrap();
+
+        let err = res.expect_err("перемещение обязано вернуть ошибку");
+        assert!(err.contains("откачена"), "ожидали сообщение об откате, получили: {err}");
+        assert!(src.exists(), "источник должен остаться на месте");
+        assert!(!dst.exists(), "копия должна быть удалена — иначе файл в двух местах");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Если цель существовала до нас (overwrite), откат запрещён: удаление уничтожило
+    /// бы данные, которых мы не создавали. Тогда честно сообщаем «файл в двух местах».
+    #[cfg(unix)]
+    #[test]
+    fn перезаписанную_цель_не_откатываем() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tmp("move-no-rollback");
+        let src_dir = root.join("ro");
+        fs::create_dir_all(&src_dir).unwrap();
+        let src = src_dir.join("file.txt");
+        fs::write(&src, b"new").unwrap();
+
+        let out = root.join("out");
+        fs::create_dir_all(&out).unwrap();
+        let dst = out.join("file.txt");
+        fs::write(&dst, b"pre-existing").unwrap();
+
+        let orig = fs::metadata(&src_dir).unwrap().permissions();
+        let mut ro = orig.clone();
+        ro.set_mode(0o555);
+        fs::set_permissions(&src_dir, ro).unwrap();
+
+        let res = move_item(
+            src.to_string_lossy().to_string(),
+            dst.to_string_lossy().to_string(),
+            Some(CopyMoveOptions { overwrite: true }),
+        );
+
+        fs::set_permissions(&src_dir, orig).unwrap();
+
+        let err = res.expect_err("перемещение обязано вернуть ошибку");
+        assert!(err.contains("и там, и там"), "ожидали отказ от откатa, получили: {err}");
+        assert!(dst.exists(), "перезаписанную цель удалять нельзя");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // ── base64 ───────────────────────────────────────────────────────────────
+    // Реализация переехала на крейт; тесты фиксируют контракт, который был у
+    // самодельной версии, чтобы он не потерялся при следующей правке.
+
+    #[test]
+    fn base64_туда_и_обратно() {
+        for payload in [b"".as_ref(), b"a", b"ab", b"abc", b"abcd", b"\x00\xff\x7f binary"] {
+            let enc = base64_encode(payload);
+            let dec = base64_decode(&enc).expect("должно декодироваться");
+            assert_eq!(dec, payload, "round-trip сломался на {:?}", payload);
+        }
+    }
+
+    #[test]
+    fn base64_совпадает_с_ожидаемой_строкой() {
+        // Стандартный алфавит RFC 4648 с padding — как было.
+        assert_eq!(base64_encode(b"a"), "YQ==");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+    }
+
+    /// Прежний декодер молча пропускал пробелы, \n, \r и \t — вход мог прийти
+    /// «завёрнутым» (например из HTTP-ответа). Крейт такое отвергает, поэтому чистим
+    /// до вызова. Тест сторожит именно это поведение.
+    #[test]
+    fn base64_терпит_пробелы_и_переносы() {
+        let wrapped = "YWJj\nZGVm\r\n  Z2hp\t";
+        let dec = base64_decode(wrapped).expect("завёрнутый base64 должен читаться");
+        assert_eq!(dec, b"abcdefghi");
+    }
+
+    #[test]
+    fn base64_терпит_отсутствие_padding() {
+        assert_eq!(base64_decode("YQ").unwrap(), b"a");
+        assert_eq!(base64_decode("YWI").unwrap(), b"ab");
+    }
+
+    #[test]
+    fn base64_отвергает_мусор() {
+        assert!(base64_decode("YQ!!").is_err());
+        assert!(base64_decode("привет").is_err());
+    }
+
+    /// Тип элемента теперь берётся из записи каталога (`entry.file_type()`) вместо двух
+    /// отдельных `is_file()`/`is_dir()`. Ловушка: `file_type()` сообщает про САМУ ссылку,
+    /// поэтому без разворачивания симлинк на видеофайл выпал бы из выдачи. Тест сторожит
+    /// именно это — что оптимизация не потеряла файлы.
+    #[cfg(unix)]
+    #[test]
+    fn симлинк_на_файл_остаётся_файлом() {
+        let root = tmp("symlink");
+        let real = root.join("real.mp4");
+        fs::write(&real, b"data").unwrap();
+        let link = root.join("link.mp4");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let out = get_some_from_folder(root.to_string_lossy().to_string(), None).unwrap();
+        let files = out.get("files").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let names: Vec<String> = files.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+
+        assert!(names.contains(&"real.mp4".to_string()), "обычный файл: {names:?}");
+        assert!(names.contains(&"link.mp4".to_string()), "симлинк тоже файл: {names:?}");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Два фильтра одного типа (`[]` и `[mp4]`) раньше кладли один файл дважды:
+    /// у папок дедуп был, у файлов — нет.
+    #[test]
+    fn файл_не_дублируется_при_двух_фильтрах() {
+        use super::SearchEntry;
+        let root = tmp("dedup");
+        fs::write(root.join("clip.mp4"), b"x").unwrap();
+
+        let search = vec![
+            SearchEntry { kind: "files".to_string(), ext: vec![] },
+            SearchEntry { kind: "files".to_string(), ext: vec!["mp4".to_string()] },
+        ];
+        let out = get_some_from_folder(root.to_string_lossy().to_string(), Some(search)).unwrap();
+        let files = out.get("files").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        assert_eq!(files.len(), 1, "файл должен попасть в выдачу один раз: {files:?}");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // ── write_atomic ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn атомарная_запись_создаёт_файл_и_родителей() {
+        let root = tmp("atomic-create");
+        let p = root.join("deep").join("nested").join("state.json");
+        write_atomic(&p, b"{\"a\":1}").unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "{\"a\":1}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Регрессия: обычный `fs::write` обрезает файл перед наполнением, и крах в этом
+    /// окне оставлял обрезанный `options.json` — потерянный граф нод. Проверяем, что
+    /// временный файл не остаётся: значит запись прошла через rename, а не поверх.
+    #[test]
+    fn атомарная_запись_не_оставляет_временный_файл() {
+        let root = tmp("atomic-tmp");
+        let p = root.join("options.json");
+        write_atomic(&p, b"first").unwrap();
+        write_atomic(&p, b"second").unwrap();
+
+        let leftovers: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+
+        assert!(leftovers.is_empty(), "временные файлы должны исчезать: {leftovers:?}");
+        assert_eq!(fs::read_to_string(&p).unwrap(), "second");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

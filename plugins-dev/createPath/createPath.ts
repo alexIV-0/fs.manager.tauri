@@ -1,8 +1,7 @@
 import { formatNameByPattern } from '../../src/Utils/formatNameByPattern';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import path from 'path';
-import { sendToMW } from '../_template/pluginSender';
 
-export { onLoad } from '../_template/pluginSender';
 
 // Windows MAX_PATH safety margin: leave room for filenames inside the folder (~40+ chars)
 const WIN_MAX_PATH = 200;
@@ -19,7 +18,8 @@ interface ItemType {
 	};
 }
 
-export async function createPathFunc(_item: ItemType, _description: any) {
+export async function createPathFunc(_item: ItemType, _description: any, ctx: PluginContext) {
+	const { sendToMW } = ctx;
 	sendToMW('statusbar', `${_description.infoText}: [create Path]\n `);
 	let curPath = [..._item.path];
 

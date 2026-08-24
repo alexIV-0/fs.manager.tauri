@@ -245,6 +245,25 @@ fn emit_progress(
 
 // ==================== Скачивание (reqwest streaming) ====================
 
+/// Качает `url` в `dest` потоком, с прогрессом.
+///
+/// Три вещи, которых здесь раньше не было и каждая из них видна пользователю:
+///
+/// 1. **Таймауты.** `Client::builder()` без них не имеет никаких: зависший
+///    зеркальный сервер держал загрузку вечно, и выйти можно было только
+///    перезапуском приложения. Полного таймаута нет намеренно — трёхгигабайтная
+///    модель качается долго и законно; вместо него таймаут ПРОСТОЯ.
+///
+/// 2. **Проверка полноты.** Если сервер прислал `Content-Length`, а скачалось
+///    меньше — это обрыв, а не успех. Хеши не проверяем: их негде взять, апстрим
+///    их не публикует. А вот усечение по длине ловится надёжно.
+///
+/// 3. **Запись через временный файл.** Раньше поток лился прямо в `dest`, и обрыв
+///    оставлял усечённый файл на месте настоящего. Для ffmpeg это ловил гейт
+///    возможностей, а вот усечённая whisper-модель просто загружалась и давала
+///    невнятную ошибку или мусорный результат. Теперь `dest` появляется только
+///    целиком: пишем в `<dest>.part` и переименовываем (в том же каталоге, то есть
+///    атомарно).
 async fn download_to(
     app: &tauri::AppHandle,
     url: &str,
@@ -254,6 +273,8 @@ async fn download_to(
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent("fs-manager-tauri")
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -270,27 +291,53 @@ async fn download_to(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
+
+    let mut part = dest.as_os_str().to_os_string();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
 
     let mut downloaded: u64 = 0;
     let mut last = std::time::Instant::now();
     let mut first = true;
     emit_progress(app, progress_id, "download", label, 0, total);
 
-    while let Some(chunk) = res
-        .chunk()
-        .await
-        .map_err(|e| format!("download stream error: {}", e))?
-    {
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as u64;
-        if first || last.elapsed().as_millis() >= 150 {
-            first = false;
-            last = std::time::Instant::now();
-            emit_progress(app, progress_id, "download", label, downloaded, total);
+    let stream_result = async {
+        while let Some(chunk) = res
+            .chunk()
+            .await
+            .map_err(|e| format!("download stream error: {}", e))?
+        {
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
+            if first || last.elapsed().as_millis() >= 150 {
+                first = false;
+                last = std::time::Instant::now();
+                emit_progress(app, progress_id, "download", label, downloaded, total);
+            }
+        }
+        file.flush().map_err(|e| e.to_string())
+    }
+    .await;
+
+    // Недокачанный `.part` не оставляем: иначе он копится в app_data и путает глаз.
+    if let Err(e) = stream_result {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+
+    if let Some(expected) = total {
+        if downloaded != expected {
+            let _ = std::fs::remove_file(&part);
+            return Err(format!(
+                "загрузка неполная: получено {} из {} байт ({}). Повторите попытку.",
+                downloaded, expected, url
+            ));
         }
     }
-    file.flush().map_err(|e| e.to_string())?;
+
+    std::fs::rename(&part, dest).map_err(|e| format!("не удалось завершить загрузку: {}", e))?;
+
     emit_progress(
         app,
         progress_id,
@@ -323,7 +370,28 @@ fn extract_binary_from_zip(zip_path: &Path, target: &str, dest: &Path) -> Result
             .unwrap_or_default();
         if base.eq_ignore_ascii_case(target) {
             let mut out = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+
+            // С границей, а не голым `io::copy`: степень сжатия нулей неограниченна,
+            // поэтому запись с нужным именем внутри архива может писать на диск
+            // бесконечно. Здесь риск ниже, чем у плагинов (адреса фиксированные,
+            // HTTPS), но цена защиты — одна строка. Предел заведомо больше любого
+            // ffmpeg/whisper-бинаря (те — сотни МБ).
+            const MAX_BINARY_BYTES: u64 = 1024 * 1024 * 1024;
+            let written = std::io::copy(
+                &mut std::io::Read::take(&mut entry, MAX_BINARY_BYTES + 1),
+                &mut out,
+            )
+            .map_err(|e| e.to_string())?;
+
+            if written > MAX_BINARY_BYTES {
+                drop(out);
+                let _ = std::fs::remove_file(dest);
+                return Err(format!(
+                    "{} в архиве больше предела {} байт — распаковка отменена",
+                    target, MAX_BINARY_BYTES
+                ));
+            }
+
             set_executable(dest)?;
             return Ok(true);
         }

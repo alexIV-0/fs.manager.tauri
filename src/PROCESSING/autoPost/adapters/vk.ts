@@ -4,6 +4,7 @@
 // HTTP идёт через Rust/reqwest (без CORS).
 
 import { basename } from '@/Utils/path';
+import { commands, unwrap } from '@/Utils/specta';
 
 const V = '5.199';
 
@@ -13,7 +14,6 @@ interface HttpResponse {
 	body: string;
 }
 
-const api = () => (window as any).tauriAPI;
 
 export interface PublishResult {
 	ownerId: number;
@@ -62,12 +62,14 @@ async function vkApi(method: string, params: Record<string, any>, version = V): 
 		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
 		.join('&');
 
-	const res: HttpResponse = await api().invoke('http_fetch', {
-		url: `https://api.vk.com/method/${method}`,
-		method: 'POST',
-		headers: [['Content-Type', 'application/x-www-form-urlencoded']],
-		body,
-	});
+	const res: HttpResponse = unwrap(
+		await commands.httpFetch({
+			url: `https://api.vk.com/method/${method}`,
+			method: 'POST',
+			headers: [['Content-Type', 'application/x-www-form-urlencoded']],
+			body,
+		}),
+	);
 
 	let json: any;
 	try {
@@ -116,10 +118,14 @@ export async function publishVideo(
 
 	step('upload', 'running');
 	log(`шаг 2/3 upload video_file (${basename(file)})…`, 'upload');
-	const up: HttpResponse = await api().invoke('http_upload', {
-		url: save.upload_url,
-		files: [{ field: 'video_file', path: file, filename: basename(file), mime: 'video/mp4' }],
-	});
+	const up: HttpResponse = unwrap(
+		await commands.httpUpload({
+			url: save.upload_url,
+			files: [{ field: 'video_file', path: file, filename: basename(file), mime: 'video/mp4' }],
+			fields: null,
+			headers: null,
+		}),
+	);
 	if (!up.ok) throw new Error(`upload video_file: HTTP ${up.status}`);
 	log(`шаг 2/3 ✓ файл залит (HTTP ${up.status})`, 'upload');
 	step('upload', 'done');

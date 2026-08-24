@@ -3,12 +3,13 @@
 // проверка через @plugin-api/tauri helper.
 
 import path from 'path';
-import { fs, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { getRandomInt } from '../../src/Utils/getRandomInt';
 
-export { onLoad } from '../_template/tauri';
-
-async function resolveSearchText(raw: string): Promise<string> {
+// `fs` приходит параметром, а не импортом: host-сервисы теперь передаются в ctx
+// (третий аргумент точки входа), поэтому у модуля не остаётся состояния и
+// загрузчик кэширует его вместо пересоздания на каждый вызов.
+async function resolveSearchText(raw: string, fs: any): Promise<string> {
 	if (!raw) return '';
 	if (await fs.existsFile(raw)) {
 		return path.parse(raw).name;
@@ -43,13 +44,14 @@ function findBestMatchIndex(inputArr: string[], words: string[]): number {
 	return bestIdx;
 }
 
-export async function elementFromArrayFunc(_item: any, _description: any): Promise<string[]> {
+export async function elementFromArrayFunc(_item: any, _description: any, ctx: PluginContext): Promise<string[]> {
+	const { fs, sendToMW } = ctx;
 	const inputArr: string[] = _item.import?.inputFile ?? [];
 	const mode: string = _item.ddm ?? 'First';
 
 	const importedText: any[] = _item.import?.textInFName ?? [];
 	const rawText: string = importedText.length > 0 ? String(importedText[0] ?? '') : String(_item.textInFName ?? '');
-	const searchText = await resolveSearchText(rawText);
+	const searchText = await resolveSearchText(rawText, fs);
 	const words = splitWords(searchText);
 
 	let finalFile: string[] = [];

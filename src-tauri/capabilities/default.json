@@ -1,6 +1,6 @@
 {
 	"identifier": "default",
-	"description": "Default capability with full access",
+	"description": "Права, нужные ВСЕМ четырём окнам: события, пути, управление собственным окном, текстовый буфер обмена, картинка из буфера (вставка скриншота в редактор описания проекта — он открывается и из главного окна, и из окна нод). Всё, что нужно только главному окну, вынесено в main.json — окна логов и превью этого не получают.",
 	"windows": ["*"],
 	"permissions": [
 		"core:default",
@@ -8,14 +8,12 @@
 		"core:path:default",
 		"core:resources:default",
 		"core:window:default",
-		"core:window:allow-create",
 		"core:window:allow-close",
 		"core:window:allow-show",
 		"core:window:allow-hide",
 		"core:window:allow-set-size",
 		"core:window:allow-set-position",
 		"core:webview:default",
-		"core:webview:allow-create-webview-window",
 		"fs:default",
 		"fs:read-all",
 		"fs:write-all",
@@ -23,17 +21,9 @@
 		"fs:scope-app",
 		"fs:scope-appdata",
 		"fs:scope-home",
-		"dialog:default",
-		"opener:default",
 		"clipboard-manager:allow-read-text",
 		"clipboard-manager:allow-write-text",
-		"clipboard:allow-read-files",
-		"clipboard:allow-write-files-uris",
-		"clipboard:allow-write-files",
-		"clipboard:allow-read-files-uris",
-		"clipboard:allow-has-files",
-		"drag:default",
-		"updater:default",
-		"process:default"
+		"clipboard:allow-has-image",
+		"clipboard:allow-read-image-binary"
 	]
 }

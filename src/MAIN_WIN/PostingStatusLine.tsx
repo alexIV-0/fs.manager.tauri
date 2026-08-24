@@ -5,6 +5,7 @@
 import { Typography } from '@mui/material';
 import { useEffect, useState } from 'react';
 import { usePosting_store } from '@/Store/Processing/usePosting_store';
+import { statusTextSx } from './Universal/StatusRow';
 
 // Обратный отсчёт в формате MM:SS (напр. 00:24, 01:30).
 function fmtCountdown(sec: number): string {
@@ -38,15 +39,7 @@ export default function PostingStatusLine() {
 	}
 
 	return (
-		<Typography
-			variant='body1'
-			sx={{
-				fontSize: '1.4rem',
-				whiteSpace: 'pre-wrap',
-				wordBreak: 'break-word',
-				opacity: isPosting ? 1 : 0.5,
-			}}
-		>
+		<Typography variant='body1' sx={statusTextSx(isPosting)}>
 			{text}
 		</Typography>
 	);

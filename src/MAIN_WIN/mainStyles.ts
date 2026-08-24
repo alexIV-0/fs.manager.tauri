@@ -46,6 +46,19 @@ export const topShadowStyle = {
 	boxShadow: `0px 7px 10px 0px rgba(0, 0, 0, 0.5)`,
 };
 
+/**
+ * Тень верхней полосы колонки. Зелёная — когда выбранная главная папка облачная.
+ *
+ * Вынесено сюда, а не размазано по колонкам: полос три (проекты и обе панели
+ * третьей колонки), и подкрашивать их порознь значит однажды забыть одну.
+ */
+export const ONLINE_TOP_SHADOW = `0px 7px 10px 0px rgba(76, 175, 80, 0.35)`;
+
+export const topShadowFor = (online: boolean) => ({
+	zIndex: 1,
+	boxShadow: online ? ONLINE_TOP_SHADOW : `0px 7px 10px 0px rgba(0, 0, 0, 0.5)`,
+});
+
 export const automationListStyle = {
 	p: '4px',
 	width: '100%',

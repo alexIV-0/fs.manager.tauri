@@ -1,4 +1,4 @@
-import { SliderProperty, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { SliderProperty, CustomNodeData, Property, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { Box, Slider, Stack, TextField, Typography } from '@mui/material';
@@ -9,6 +9,7 @@ import { colorTypes_store } from '@/Store/Color/colorTypes_store';
 import InputHandle from '../components/InputHandle';
 import PropertyLabelEditor from './PropertyLabelEditor';
 import TooltipOrDelete from './TooltipOrDelete';
+import { clampForFormat, formatNumeric, normalizeNumeric, numericConfigKey, parseNumeric, sliderConfig } from '@/Utils/numericFormat';
 
 interface CustomSliderProps {
 	property: SliderProperty;
@@ -26,16 +27,17 @@ function CustomSlider({ property, onChange }: CustomSliderProps) {
 
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 
-	const initialValue = controlProps.value ?? controlProps.initValue ?? 0;
-	const [actualValue, setActualValue] = useState<number>(Number(initialValue));
-	const [inputValue, setInputValue] = useState<string>(String(initialValue));
+	const config = sliderConfig(controlProps);
+	const configKey = numericConfigKey(config);
+	const { min: minValue, max: maxValue } = config;
+
+	const initialValue = Number(controlProps.value ?? controlProps.initValue ?? 0);
+	const [actualValue, setActualValue] = useState<number>(normalizeNumeric(initialValue, config));
+	const [inputValue, setInputValue] = useState<string>(() => formatNumeric(normalizeNumeric(initialValue, config), config));
 	const [isFocused, setIsFocused] = useState(false);
 
-	const minValue = controlProps.minValue ?? 0;
-	const maxValue = controlProps.maxValue ?? 100;
-	const step = controlProps.step ?? 1;
 	const allowManualInput = controlProps.isTextInput ?? controlProps.useValuesAsLabels ?? false;
 	const showMinMaxLabels = controlProps.minMaxValueVisible ?? true;
 
@@ -75,27 +77,35 @@ function CustomSlider({ property, onChange }: CustomSliderProps) {
 		}, 0);
 	}, [nodeId, property.id, reactFlow, handleEdgeRemoval, handleNodePropertyChange, updateNodeInternals]);
 
+	// Слайдер отдаёт значения кратные step, но для float step вида 0.1 всплывает
+	// плавающая точка (0.30000000000000004) — приводим к формату.
 	const handleSliderChange = (_event: Event, value: number | number[]) => {
-		const newValue = typeof value === 'number' ? value : value[0];
+		const newValue = clampForFormat(typeof value === 'number' ? value : value[0], config);
 		setActualValue(newValue);
-		setInputValue(String(newValue));
+		setInputValue(formatNumeric(newValue, config));
 		onChange?.(newValue);
 	};
 
 	const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		if (!allowManualInput) return;
 		const value = e.target.value;
-		if (!/^-?[0-9]*\.?[0-9]*$/.test(value)) return;
+		// В таймкоде допустимы ':' — общий числовой фильтр их бы съел.
+		const allowed = config.format === 'timecode' ? /^-?[0-9:.,]*$/ : /^-?[0-9]*[.,]?[0-9]*$/;
+		if (!allowed.test(value)) return;
 		setInputValue(value);
 	};
 
 	const handleInputBlur = () => {
 		if (!allowManualInput) return;
 		setIsFocused(false);
-		const parsedValue = parseFloat(inputValue) || 0;
-		setActualValue(parsedValue);
-		setInputValue(String(parsedValue));
-		onChange?.(parsedValue);
+		const parsed = parseNumeric(inputValue, config, config.allowManualOverride);
+		if (parsed === null) {
+			setInputValue(formatNumeric(actualValue, config)); // мусор на входе — откат
+			return;
+		}
+		setActualValue(parsed);
+		setInputValue(formatNumeric(parsed, config));
+		onChange?.(parsed);
 	};
 
 	const handleInputFocus = () => {
@@ -109,12 +119,17 @@ function CustomSlider({ property, onChange }: CustomSliderProps) {
 		}
 	};
 
-	const sliderValue = Math.max(minValue, Math.min(maxValue, actualValue));
+	// Сам слайдер границы не переступает, даже если ручной ввод вывел значение за них.
+	const sliderValue = clampForFormat(actualValue, config);
 
+	// Значение/настройки пришли снаружи (вход, шестерёнка, pluginBuilder) —
+	// пересобираем и значение, и текст в поле (формат мог поменяться).
 	useEffect(() => {
-		setActualValue(Number(controlProps.value ?? controlProps.initValue ?? 0));
-		setInputValue(String(controlProps.value ?? controlProps.initValue ?? 0));
-	}, [controlProps.value]);
+		const next = normalizeNumeric(Number(controlProps.value ?? controlProps.initValue ?? 0), config);
+		setActualValue(next);
+		setInputValue(formatNumeric(next, config));
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [controlProps.value, configKey]);
 
 	return (
 		<Stack direction='column' px='12px' className='nodrag' gap={0.5}>
@@ -128,22 +143,24 @@ function CustomSlider({ property, onChange }: CustomSliderProps) {
 
 			<Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
 				{showMinMaxLabels && (
-					<Typography sx={{ color: '#ffffff4a', fontWeight: 'bold', fontSize: '1rem', minWidth: '30px' }}>{minValue}</Typography>
+					<Typography sx={{ color: '#ffffff4a', fontWeight: 'bold', fontSize: '1rem', minWidth: '30px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+						{formatNumeric(minValue, config)}
+					</Typography>
 				)}
 
 				<Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-					<Slider min={minValue} max={maxValue} value={sliderValue} onChange={handleSliderChange} step={step} size='small' />
+					<Slider min={minValue} max={maxValue} value={sliderValue} onChange={handleSliderChange} step={config.step} size='small' />
 
 					{allowManualInput ? (
 						<TextField
-							value={isFocused ? inputValue : actualValue}
+							value={isFocused ? inputValue : formatNumeric(actualValue, config)}
 							onChange={handleInputChange}
 							onBlur={handleInputBlur}
 							onFocus={handleInputFocus}
 							onKeyDown={handleKeyDown}
 							size='small'
 							sx={{
-								width: '70px',
+								width: config.format === 'timecode' ? '106px' : '70px',
 								'& .MuiInputBase-input': {
 									fontFamily: 'monospace',
 									fontSize: '1rem',
@@ -154,12 +171,16 @@ function CustomSlider({ property, onChange }: CustomSliderProps) {
 							}}
 						/>
 					) : (
-						<Typography sx={{ color: defColor, fontSize: '1rem', minWidth: '40px', textAlign: 'right' }}>{actualValue}</Typography>
+						<Typography sx={{ color: defColor, fontSize: '1rem', minWidth: '40px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+							{formatNumeric(actualValue, config)}
+						</Typography>
 					)}
 				</Box>
 
 				{showMinMaxLabels && (
-					<Typography sx={{ color: '#ffffff4a', fontWeight: 'bold', fontSize: '1rem', minWidth: '30px' }}>{maxValue}</Typography>
+					<Typography sx={{ color: '#ffffff4a', fontWeight: 'bold', fontSize: '1rem', minWidth: '30px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+						{formatNumeric(maxValue, config)}
+					</Typography>
 				)}
 			</Box>
 		</Stack>

@@ -1,16 +1,14 @@
-import { Property, CustomNodeData } from '@/NODE_WIN/definitions/types';
+import { Property, CustomNodeData, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
-import { Stack, Typography, TextField, IconButton } from '@mui/material';
+import { Stack, Typography, TextField } from '@mui/material';
 import { useEdges, useNodesData, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Trash2 } from 'lucide-react';
 
-import MyToolTip from './CustomTooltip';
+import TooltipOrDelete from './TooltipOrDelete';
 import { CustomNode } from '@/NODE_WIN/definitions/types';
 import InputHandle from '../components/InputHandle';
-import { greyColor, redColor } from '@/Store/Color/grayColor';
 
 export default function LinkProperty({ property }: { property: Property }) {
 	const nodeId = useNodeContext();
@@ -33,8 +31,8 @@ export default function LinkProperty({ property }: { property: Property }) {
 	const editLabel = property.controlType === 'link' ? ((property.controlProps as any).editLabel ?? false) : false;
 	const tooltip = property.controlProps?.tooltip ?? '';
 
-	// Динамический компонент: editLabel=true И tooltip пустой → показываем удаление
-	const isDynamic = editLabel && !tooltip;
+	// Свойство добавлено пользователем через «+» → своя подсказка + корзина
+	const isDynamic = isDynamicProperty(property);
 
 	const [isEditingLabel, setIsEditingLabel] = useState(false);
 	const [labelValue, setLabelValue] = useState(property.controlProps?.label ?? '');
@@ -167,27 +165,8 @@ export default function LinkProperty({ property }: { property: Property }) {
 					</Typography>
 				)}
 
-				{/* Если динамический — иконка удаления, иначе tooltip */}
-				{isDynamic ? (
-					<IconButton
-						// size='small'
-						disableRipple
-						onClick={handleDelete}
-						className='nodrag'
-						sx={{
-							ml: 'auto',
-							width: 30,
-							// height: 26,
-							padding: 0,
-							color: greyColor(50),
-							'&:hover': { color: redColor(50, 70) },
-						}}
-					>
-						<Trash2 size={22} strokeWidth={1} />
-					</IconButton>
-				) : (
-					<MyToolTip tooltip={tooltip} ml='auto' />
-				)}
+				{/* Общий трейлинг: своя подсказка + корзина у динамического, tooltip у статического. */}
+				<TooltipOrDelete isDynamic={isDynamic} tooltip={tooltip} onDelete={handleDelete} property={property} />
 			</Stack>
 
 			<Typography variant='body1' sx={{ fontSize: '12px' }}>

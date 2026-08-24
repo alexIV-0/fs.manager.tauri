@@ -1,15 +1,22 @@
 import { TitleSettings, TitleFormatSettings } from './types';
 
+/**
+ * Ключи ФОРМАТОВ, а не все поля настроек. Раньше здесь стоял `keyof TitleSettings`, и
+ * это ломалось от любого нового поля рядом с форматами (`encode`): ключ вдруг мог
+ * указывать не на `TitleFormatSettings`.
+ */
+type FormatKey = 'landscape' | 'portrait' | 'square';
+
 export function pickBestFormat(realWidth: number, realHeight: number, settings: TitleSettings): TitleFormatSettings {
 	const realRatio = realWidth / realHeight;
 
-	const formats: { key: keyof TitleSettings; ratio: number }[] = [
+	const formats: { key: FormatKey; ratio: number }[] = [
 		{ key: 'landscape', ratio: settings.landscape.videoWidth / settings.landscape.videoHeight },
 		{ key: 'portrait', ratio: settings.portrait.videoWidth / settings.portrait.videoHeight },
 		{ key: 'square', ratio: settings.square.videoWidth / settings.square.videoHeight },
 	];
 
-	let bestKey: keyof TitleSettings = 'landscape';
+	let bestKey: FormatKey = 'landscape';
 	let bestDiff = Infinity;
 
 	for (const f of formats) {

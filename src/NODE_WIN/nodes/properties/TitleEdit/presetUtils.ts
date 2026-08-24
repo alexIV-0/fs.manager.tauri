@@ -34,7 +34,7 @@ export async function loadPresetIndex(): Promise<TitlePresetItem[]> {
 
 export async function savePresetIndex(items: TitlePresetItem[]): Promise<void> {
 	const indexPath = await getIndexPath();
-	unwrap(await commands.writeFile(indexPath, JSON.stringify(items, null, 2)));
+	unwrap(await commands.writeFileAtomic(indexPath, JSON.stringify(items, null, 2)));
 }
 
 // ── Данные пресета ────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ export async function loadPresetData(id: string): Promise<TitleSettings | null> 
 
 export async function savePresetData(id: string, settings: TitleSettings): Promise<void> {
 	const dataPath = await getPresetDataPath(id);
-	unwrap(await commands.writeFile(dataPath, JSON.stringify(settings, null, 2)));
+	unwrap(await commands.writeFileAtomic(dataPath, JSON.stringify(settings, null, 2)));
 }
 
 // ── Удаление ──────────────────────────────────────────────────────────────────

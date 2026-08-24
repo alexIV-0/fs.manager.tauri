@@ -1,5 +1,9 @@
 import { filePathNamePattern } from '@/NODE_WIN/utils/searchTypes';
 import { pathPattern_store, programPathPattern_store, folderPath_store } from '@/Store/MainWin/pathPattern_store';
+import { commands, unwrap } from '@/Utils/specta';
+import { cyanColor, greyColor } from '@/Store/Color/grayColor';
+import { Box, Button } from '@mui/material';
+import { FolderOpen } from 'lucide-react';
 import { CustomUserSettings } from '../CustomUserSettings';
 import { FfmpegDownloadSection, WhisperModelsSection, TgServerSection } from './DepsDownloadPanel';
 
@@ -7,6 +11,16 @@ export default function TabPaths() {
 	const pathPattern = pathPattern_store();
 	const programmPathPattern = programPathPattern_store();
 	const folderPathStore = folderPath_store();
+
+	// Папка настроек = app_data_dir (settings.json, fileTypes.json и т.п.); открываем её в проводнике.
+	const handleOpenSettingsFolder = async () => {
+		try {
+			const dir = unwrap(await commands.getUserDataPath());
+			if (dir) await commands.shellOpenPath(dir);
+		} catch {
+			/* игнорируем — не критично */
+		}
+	};
 
 	const pathText = `Тут указываем кастомные маски для путей, которые будут потом использоваться как
 маски с $ в начале.
@@ -39,6 +53,17 @@ export default function TabPaths() {
 			/>
 			<WhisperModelsSection />
 			<TgServerSection />
+			<Box sx={{ px: 1, pt: 1, pb: 2 }}>
+				<Button
+					variant='outlined'
+					size='small'
+					onClick={handleOpenSettingsFolder}
+					startIcon={<FolderOpen size={16} />}
+					sx={{ textTransform: 'none', borderColor: cyanColor(60), color: greyColor(90) }}
+				>
+					Открыть папку с настройками
+				</Button>
+			</Box>
 		</>
 	);
 }

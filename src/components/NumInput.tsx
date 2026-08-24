@@ -24,7 +24,9 @@ export function NumInput({ value, onChange, min, max, integer, style, disabled, 
 	}, [value]);
 
 	const commit = () => {
-		const n = integer ? parseInt(local, 10) : parseFloat(local);
+		// Запятая как десятичный разделитель: parseFloat('0,5') дал бы 0.
+		const raw = integer ? local : local.replace(',', '.');
+		const n = integer ? parseInt(raw, 10) : parseFloat(raw);
 		if (!isNaN(n)) {
 			let v = n;
 			if (min !== undefined) v = Math.max(min, v);

@@ -4,15 +4,15 @@
 // run_script_in_ae — здесь только формируем args.
 
 import path from 'path';
-import { fs, ae, sendToMW } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
 import { createPathForFileByPattern } from '../../src/Utils/createPathForFileByPattern';
 // Дефолтный (встроенный) набор свойств ноды. esbuild инлайнит этот json в бандл.
 // Всё, что юзер добавил через «+», в этом наборе отсутствует → это его параметры.
 import defaultUi from './ui.json';
 
-export { onLoad } from '../_template/tauri';
 
-export async function aeProcess(_item: any, _description: any): Promise<any[]> {
+export async function aeProcess(_item: any, _description: any, ctx: PluginContext): Promise<any[]> {
+	const { fs, ae, sendToMW } = ctx;
 	let finalFile: any[] = [];
 
 	let curPath: string[] = _item.targetPath.length === 0 ? ['$clearName ($random(3))'] : [..._item.targetPath];

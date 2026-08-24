@@ -648,6 +648,7 @@ export function ColumnFolderView({
 														onMultiSelectRange={() => onMultiSelectRange?.(i, item, col.items)}
 														source={sourceType}
 														columnIndex={i}
+														storage={item.storage}
 													/>
 												))}
 										</List>
@@ -672,6 +673,7 @@ export function ColumnFolderView({
 														onMultiSelectRange={() => onMultiSelectRange?.(i, item, col.items)}
 														source={sourceType}
 														columnIndex={i}
+														storage={item.storage}
 													/>
 												))}
 										</List>

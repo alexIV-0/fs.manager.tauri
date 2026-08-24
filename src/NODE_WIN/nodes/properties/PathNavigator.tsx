@@ -1,4 +1,4 @@
-import { PathNavigatorProperty, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { PathNavigatorProperty, CustomNodeData, Property, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { commands, unwrap } from '@/Utils/specta';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
@@ -40,7 +40,7 @@ function PathNavigator({ property, onChange }: PathNavigatorProps) {
 	const { controlProps } = property;
 	const editLabel = controlProps?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 
 	const [value, setValue] = useState<string>(controlProps.value ?? '');
 	const [activeSegIndex, setActiveSegIndex] = useState<number | null>(null);

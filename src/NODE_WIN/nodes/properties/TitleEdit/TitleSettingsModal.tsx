@@ -128,7 +128,10 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 						isOpen={presetsOpen}
 						currentSettings={settings}
 						onLoad={(newSettings) => {
-							setSettings(newSettings);
+							// Пресет описывает ВИД титров, а `encode` в том же JSON — настройка выхода
+							// ноды (попап в шапке). Загрузка пресета заменяет настройки целиком, и без
+							// этой строки выбранный кодек молча возвращался бы к дефолту.
+							setSettings((prev) => ({ ...newSettings, encode: prev.encode }));
 							setPresetsOpen(false);
 						}}
 						onClose={() => setPresetsOpen(false)}

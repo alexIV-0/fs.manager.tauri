@@ -10,6 +10,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { NodeName } from './NodeName';
 import NodeCost from './NodeCost';
+import NodeEncodeSettings from './NodeEncodeSettings';
 
 // Нода переключаема, если не unique (или явно disablable) — та же логика,
 // что и для показа кнопки Power в шапке.
@@ -143,6 +144,7 @@ function NodeHeader() {
 			)}
 			<NodeName />
 			<NodeCost textColor={textColor} />
+			<NodeEncodeSettings textColor={textColor} />
 			{node.data.isUnique ? null : (
 				<IconButton onClick={handleRemove} size='small' sx={{ color: textColor }}>
 					<X />

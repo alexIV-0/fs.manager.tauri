@@ -101,7 +101,10 @@ const argMappers: Record<string, (...args: any[]) => any> = {
 	// Docs
 	// docs_list/docs_read мигрированы на tauri-specta (commands.docsList/docsRead) — мапперы не нужны.
 	// Log window: log_window_* мигрированы на tauri-specta (commands.logWindow*) — мапперы не нужны.
-	// (мёртвые toggle/get_status/open_quick/open_errors_only/emit_item_start/console остаются snake-командами.)
+	// Мёртвая половина API (log_message/toggle/close/get_status/get_recent/get_errors/
+	// has_errors/open_quick/open_errors_only/emit_item_start/console) УДАЛЕНА 2026-08-10:
+	// её не вызывал никто, а фильтры уровней, поиск и «только с ошибками» окно делает
+	// на клиенте поверх items.
 	// log_archive_* мигрированы на tauri-specta (commands.logArchive*) — мапперы не нужны.
 	diag_log_write: (msg: string) => ({ msg }),
 	diag_log_path: () => ({}),
@@ -355,6 +358,30 @@ export const tauriAPI = {
 	removeProcessingEvent: (callback: (event: { type: string; payload: any }) => void) => {
 		const wrapped = (callback as any).__tauriWrapped;
 		tauriOff('processing-event', wrapped ?? callback);
+	},
+
+	/// Состояние файлов зеркала изменилось — скачали, залили, вытеснили.
+	///
+	/// Отдельно от `onFsChanged`: событие файловой системы говорит «файл на диске
+	/// поменялся», а это — «поменялось состояние синхронизации», и приходит оно в
+	/// том числе когда на диске ничего не менялось (например, файл ЗАЛИТ). Обёртку
+	/// храним по той же причине, что и у `fs-changed`: отписка без listener убила бы
+	/// весь Set слушателей канала.
+	onStorageChanged: (callback: (paths: string[]) => void) => {
+		const wrapper = (_event: any, paths: string[]) => callback(paths ?? []);
+		tauriOn('storage-changed', wrapper);
+		return () => tauriOff('storage-changed', wrapper);
+	},
+
+	/// Список проектов изменился: имя, архив, пауза, состав.
+	///
+	/// Отдельно от `storage-changed`: тот про файлы, этот про сами проекты. Архив и
+	/// пауза живут в `projects` и в журнал изменений не попадают, поэтому узнать о них
+	/// можно только перечитав список — и сообщить об этом надо отдельным событием.
+	onStorageProjectsChanged: (callback: () => void) => {
+		const wrapper = () => callback();
+		tauriOn('storage-projects-changed', wrapper);
+		return () => tauriOff('storage-projects-changed', wrapper);
 	},
 
 	onFsChanged: (callback: (changedPath: string) => void) => {

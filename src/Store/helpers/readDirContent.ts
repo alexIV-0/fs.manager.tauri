@@ -1,5 +1,7 @@
 import { joinPath } from '../../Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
+import type { FileState, FolderAggregate } from '@/bindings';
+import { browseMirror } from '@/Utils/storageSeam';
 
 /* ===========================================================
  * 🧩 TYPES
@@ -9,6 +11,37 @@ export interface FileItem {
 	name: string;
 	path: string;
 	isDir: boolean;
+	/** Заполнено только для записей из облачного зеркала — для значка состояния.
+	    Для обычных локальных папок этих полей нет, и всё работает как раньше.
+
+	    Форма берётся из шва (`MirrorItem`), а не описывается заново: это ровно те
+	    данные, что пришли из каталога. Своя копия типа однажды уже разошлась —
+	    в ней не было `archived`/`paused`, и сравнение строк молча их не замечало. */
+	storage?: import('@/Utils/storageSeam').MirrorItem['storage'];
+}
+
+/**
+ * Одинаковы ли данные значка синхронизации — то есть можно ли НЕ перерисовывать.
+ *
+ * Живёт одной функцией на всю программу, потому что сравнивать это приходится в
+ * трёх местах (стор колонок и оба `memo`-компонента строки), и каждое место,
+ * забывшее про часть полей, стоило дня диагностики: путь у облачного файла не
+ * меняется никогда — меняются состояние, проценты, пин. Проверка «ничего не
+ * изменилось» обязана сравнивать то, что РИСУЕТСЯ.
+ */
+export function sameStorage(a: FileItem['storage'], b: FileItem['storage']): boolean {
+	if (!a && !b) return true;
+	if (!a || !b) return false;
+	return (
+		a.state === b.state &&
+		a.aggregate === b.aggregate &&
+		a.pinned === b.pinned &&
+		a.progress === b.progress &&
+		a.error === b.error &&
+		a.archived === b.archived &&
+		a.paused === b.paused &&
+		a.sizeBytes === b.sizeBytes
+	);
 }
 
 export interface Column {
@@ -74,6 +107,16 @@ export async function readDirContent(folderPath: string, ensureDir = false): Pro
 	if (cached) {
 		console.log(`[perf] readDir CACHE: ${folderPath.split('/').pop()}`);
 		return cached;
+	}
+
+	// Папка в облачном зеркале читается из каталога, а не с диска: файл, который
+	// ещё не скачан, физически отсутствует, но существовать в списке ОБЯЗАН —
+	// ровно как папка гуглдиска, где всё видно, а качается по открытию.
+	// Вне зеркала (обычный случай) `browseMirror` не делает ни одного IPC-вызова.
+	const fromMirror = await browseMirror(folderPath);
+	if (fromMirror) {
+		dirCache.set(folderPath, { items: fromMirror, ts: Date.now() });
+		return fromMirror;
 	}
 
 	const t0 = performance.now();

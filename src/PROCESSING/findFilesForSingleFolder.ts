@@ -1,7 +1,6 @@
 import { isScanningStore } from '@/Store/MainWin/isScaning_store';
 import { localFolders_stor } from '@/Store/MainWin/localFolders_store';
 import { mainFolders_stor } from '@/Store/MainWin/mainFolders_store';
-import { folderPath_store, pathPattern_store, programPathPattern_store, typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { useWorkProject_Store } from '@/Store/Processing/useWorkProject_Store';
 import { findItemAndCreateProps } from './findItemAndCreateProps';
 import { clearFileNameAndID } from './utils/clearFileNameAndID';
@@ -12,6 +11,8 @@ import { sendFindItemToRegistrationProcessDatabase } from './utils/sendFindItemT
 import { joinPath } from '@/Utils/joinPath';
 import { basename } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
+import { injectMachineLocals } from './utils/machineLocals';
+import { ensureLocal, pathInfo } from '@/Utils/storageSeam';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
@@ -61,7 +62,9 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	}
 
 	// ====== проверяем options.json =======
-	const optionsFile = joinPath(projectPathOnGD, 'options', 'options.json');
+	// Проект может лежать в облаке — тогда конфиг надо сначала получить. Это
+	// нужны БАЙТЫ, поэтому здесь гидрация. Вне зеркала вызов — no-op.
+	const optionsFile = await ensureLocal(joinPath(projectPathOnGD, 'options', 'options.json'));
 	if (unwrap(await commands.checkFilePath(optionsFile, null)) == '') {
 		console.log('--- no "options.json" file:\n', optionsFile);
 		return;
@@ -81,21 +84,12 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	}
 
 	// преобразуем ноды в очередь процессов
-	const processArr = createProcessQueue(nodesProps);
-
-	const typeOfFileRaw = typeOfFile_store.getState().patternStore;
-	const typeOfFile = Object.fromEntries(typeOfFileRaw.map((t: any) => [t.name, t.path]));
-	const programmPathRaw = programPathPattern_store.getState().patternStore;
-	const programmPath = Object.fromEntries(programmPathRaw.map((t: any) => [t.name, t.path]));
-	const folderPathRaw = folderPath_store.getState().patternStore;
-	const folderPath = Object.fromEntries(folderPathRaw.map((t: any) => [t.name, t.path]));
-
-	// Пользовательские алиасы путей (TabPaths → pathPattern_store). Используются как $<name>
-	// внутри масок путей в плагинах. Подстановка выполняется в formatNameByPattern.
-	const pathAliasesRaw = pathPattern_store.getState().patternStore;
-	const pathAliases = Object.fromEntries(
-		pathAliasesRaw.filter((t: any) => /^[A-Za-z0-9_]+$/.test(t.name)).map((t: any) => [t.name, joinPath(...(t.path ?? []))]),
-	);
+	// Цикл в графе означает, что часть нод молча не выполнится — говорим об этом
+	// вслух, уровнем error: это не шум, а причина «пайплайн не сработал».
+	const processArr = createProcessQueue(nodesProps, 'mainSearch', (message) => {
+		console.warn('[createProcessQueue]', message);
+		void commands.sendLog('error', `[${projectName}] ${message}`).catch(() => {});
+	});
 
 	const description = getDescription(nodesProps);
 	description.year = year;
@@ -104,12 +98,12 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 	description.projectPathGD = projectPathOnGD;
 	description.mainFolderName = mainFolderName;
 	description.mainFolderPath = mainFolderPath;
-	description.localFolder = localFolder;
 	description.infoText = `${mainFolderName}/${projectName}`;
-	description.typeOfFile = typeOfFile;
-	description.programmPath = programmPath;
-	description.folderPath = folderPath;
-	description.pathAliases = pathAliases;
+
+	// Пути к программам, папки данных, алиасы масок, словарь типов, локальный корень —
+	// всё, что у каждой машины своё. Общая функция с режимом воркера: задача от сайта
+	// этих полей не несёт, и подставлять их обязаны обе точки входа одинаково.
+	injectMachineLocals(description);
 
 	const templateObj: any = {
 		processingQueue: [],
@@ -132,10 +126,13 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 			item = item[0];
 		}
 
-		const curSearchProp = structuredClone(currentAutomationProps);
-		curSearchProp.output = [item];
-
-		const fileInfo: any = unwrap(await commands.getFileInfo(item));
+		// МЕТАДАННЫЕ, а не байты: гидратировать здесь нельзя. Этот вызов идёт на
+		// КАЖДЫЙ найденный файл, и скачивание тут означало бы выкачивание всего
+		// архива при первом же обходе проекта.
+		const cloud = await pathInfo(item);
+		const fileInfo: any = cloud
+			? { size: cloud.size ?? 0, is_dir: cloud.isFolder, is_file: !cloud.isFolder }
+			: unwrap(await commands.getFileInfo(item));
 		const curItemName = basename(item);
 
 		// Rust FileInfo сериализуется как snake_case (is_dir/is_file). Раньше тут читали
@@ -163,8 +160,6 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 
 		const objForProcessing = structuredClone(templateObj);
 		objForProcessing.mainSearch.output = [item];
-		curSearchProp.output = [item];
-		objForProcessing.search = curSearchProp;
 		objForProcessing.description = structuredClone(description);
 
 		await sendFindItemToRegistrationProcessDatabase(objForProcessing);

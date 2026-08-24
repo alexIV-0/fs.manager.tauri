@@ -1,4 +1,4 @@
-import { CheckboxProperty, CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
+import { CheckboxProperty, CustomNodeData, Property, isDynamicProperty } from '@/NODE_WIN/definitions/types';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { useCascadeValidation } from '@/NODE_WIN/hooks/useCascadeValidation';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
@@ -27,7 +27,7 @@ export default function CheckboxPropertyComponent({ property, onChange }: Checkb
 
 	const editLabel = (controlProps as any)?.editLabel ?? false;
 	const tooltip = controlProps?.tooltip ?? '';
-	const isDynamic = editLabel && !tooltip;
+	const isDynamic = isDynamicProperty(property);
 
 	// Сохраняем label в node data
 	const handleSaveLabel = useCallback(

@@ -3,6 +3,7 @@
 // При использовании плагины ДОЛЖНЫ добавлять `await`.
 
 import { commands, unwrap } from '@/Utils/specta';
+import { deleteEverywhere, ensureDir } from '@/Utils/storageSeam';
 
 // ─── Stat ────────────────────────────────────────────────────────────────────
 
@@ -102,24 +103,36 @@ interface MkdirOptions {
 }
 
 export async function mkdir(p: string, _opts?: MkdirOptions): Promise<void> {
-	unwrap(await commands.testAndCreateFolder(p));
+	// Через шов — тот же выбор, что у `remove`/`rmdir` ниже: папку в зеркале надо
+	// заводить в каталоге, иначе для облака её не существует. Вне зеркала шов сам
+	// падает на обычное создание на диске.
+	await ensureDir(p);
 }
 export const mkdirSync = mkdir;
 
-export async function rmdir(p: string): Promise<void> {
+// Удаление в зеркале идёт через шов — тот же выбор, что в `host.fs.remove`: файл
+// облака надо убрать И из каталога, иначе он остаётся «только онлайн» и следующая
+// гидрация возвращает его в работу. Вне зеркала `deleteEverywhere` возвращает
+// `false`, и удаляем как раньше.
+async function removeAnywhere(p: string): Promise<void> {
+	if (await deleteEverywhere(p)) return;
 	unwrap(await commands.deleteItem(p));
+}
+
+export async function rmdir(p: string): Promise<void> {
+	await removeAnywhere(p);
 }
 export const rmdirSync = rmdir;
 
 export async function rm(p: string, _opts?: { recursive?: boolean; force?: boolean }): Promise<void> {
-	unwrap(await commands.deleteItem(p));
+	await removeAnywhere(p);
 }
 export const rmSync = rm;
 
 // ─── Unlink ──────────────────────────────────────────────────────────────────
 
 export async function unlink(p: string): Promise<void> {
-	unwrap(await commands.deleteItem(p));
+	await removeAnywhere(p);
 }
 export const unlinkSync = unlink;
 

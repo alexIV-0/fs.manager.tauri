@@ -50,7 +50,9 @@ pub async fn youtube_upload_video(
         }
     });
 
-    let client = reqwest::Client::new();
+    // Заливка видео: профиль transfer — многогигабайтный файл едет долго и законно,
+    // полный таймаут его бы обрубил. Ограничиваем простой, а не общее время.
+    let client = super::http_client::transfer();
 
     // 1) Инициировать resumable-сессию → upload URL в заголовке Location.
     let init = client
@@ -118,7 +120,7 @@ pub async fn youtube_set_thumbnail(
         "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={}",
         video_id
     );
-    let res = reqwest::Client::new()
+    let res = super::http_client::transfer()
         .post(&url)
         .bearer_auth(&access_token)
         .header("Content-Type", content_type)

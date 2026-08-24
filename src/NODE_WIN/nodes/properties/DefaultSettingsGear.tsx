@@ -1,11 +1,12 @@
-import type { ReactNode } from 'react';
 import { useCallback, useState } from 'react';
-import { Box, Checkbox, FormControlLabel, IconButton, MenuItem, Popover, Select, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { MenuItem, Select, Stack, TextField } from '@mui/material';
 import { Settings } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
 import { greyColor } from '@/Store/Color/grayColor';
+import { NUMERIC_FORMATS, numericConfigFor, secondsToTimecode, timecodeToSeconds } from '@/Utils/numericFormat';
+import { CheckRow, Dots, GearHint, GearPopover, LabeledRow, NumBox, gearBoxSx, gearSelSx } from './GearPopover';
 
 interface DefaultSettingsGearProps {
 	property: Property;
@@ -16,12 +17,19 @@ interface DefaultSettingsGearProps {
  * Открывает попап с настройками уровня pluginBuilder, но для КОНКРЕТНОГО флоу
  * (per-flow override). Меняются только значения по умолчанию — имя/label здесь
  * не редактируется. Изменения пишутся в controlProps свойства → сохраняются в
- * options.json автоматически. Пока поддерживается только controlType==='valueRange'.
+ * options.json автоматически. Поддерживаются числовые контролы: valueRange и slider.
+ *
+ * Набор полей зависит от формата (см. `Utils/numericFormat.ts`):
+ *   • timecode — границы вводятся таймкодом HH:MM:SS, шаг — в секундах;
+ *   • float    — шаг + decimals;
+ *   • integer  — шаг, значения целые;
+ *   • auto     — как есть (legacy-режим слайдера).
+ *
+ * Оболочка попапа и строки — общие (`GearPopover`), как у настроек кодирования в шапке ноды.
  */
 export default function DefaultSettingsGear({ property }: DefaultSettingsGearProps) {
 	const nodeId = useNodeContext();
 	const reactFlow = useReactFlow();
-	const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
 	const cp = property.controlProps as any;
 
@@ -38,117 +46,132 @@ export default function DefaultSettingsGear({ property }: DefaultSettingsGearPro
 		[nodeId, property.id, reactFlow],
 	);
 
-	// Пока шестерёнка осмысленна только для valueRange.
-	if (property.controlType !== 'valueRange') return null;
+	// Шестерёнка осмысленна только для числовых контролов.
+	const isSlider = property.controlType === 'slider';
+	if (property.controlType !== 'valueRange' && !isSlider) return null;
 
-	const range: [number, number] = Array.isArray(cp.range) ? cp.range : [0, 1440];
+	const config = numericConfigFor(property.controlType, cp);
+	const isTimecode = config.format === 'timecode';
+	const { min, max } = config;
+
+	// Границы у valueRange лежат в `range`, у slider — в minValue/maxValue.
+	const setBounds = (lo: number, hi: number) => (isSlider ? setCp({ minValue: lo, maxValue: hi }) : setCp({ range: [lo, hi] }));
 
 	return (
-		<>
-			<Tooltip title='Дефолтные настройки' placement='top' arrow>
-				<IconButton
-					disableRipple
+		<GearPopover
+			tooltip='Дефолтные настройки'
+			icon={<Settings size={17} strokeWidth={1.25} />}
+			iconSx={{ width: 26, padding: 0, color: greyColor(45), '&:hover': { color: greyColor(75) } }}
+			caption='// дефолтные настройки (для этого флоу)'
+		>
+			<LabeledRow label='format'>
+				<Select
 					size='small'
-					className='nodrag'
-					onClick={(e) => setAnchorEl(e.currentTarget)}
-					sx={{ width: 26, padding: 0, color: greyColor(45), '&:hover': { color: greyColor(75) } }}
+					value={config.format}
+					onChange={(e) => setCp({ format: e.target.value })}
+					sx={{ ...gearSelSx, minWidth: 130 }}
 				>
-					<Settings size={17} strokeWidth={1.25} />
-				</IconButton>
-			</Tooltip>
+					{NUMERIC_FORMATS.map((f) => (
+						<MenuItem key={f} value={f}>
+							{f}
+						</MenuItem>
+					))}
+				</Select>
+			</LabeledRow>
 
-			<Popover
-				open={Boolean(anchorEl)}
-				anchorEl={anchorEl}
-				onClose={() => setAnchorEl(null)}
-				anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-				transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-				slotProps={{ paper: { className: 'nodrag', sx: { p: 1.5, width: 240, bgcolor: greyColor(12) } } }}
-			>
-				<Stack gap={1}>
-					<Typography variant='caption' sx={{ color: greyColor(60), fontFamily: 'monospace' }}>
-						// дефолтные настройки (для этого флоу)
-					</Typography>
+			{/* Шаг — в единицах хранения (для таймкода это секунды/минуты). */}
+			<LabeledRow label='step'>
+				<NumBox value={config.step} onChange={(v) => setCp({ step: v })} />
+			</LabeledRow>
 
-					<LabeledRow label='format'>
-						<Select size='small' value={cp.format ?? 'timecode'} onChange={(e) => setCp({ format: e.target.value })} sx={selSx}>
-							<MenuItem value='timecode'>timecode</MenuItem>
-							<MenuItem value='float'>float</MenuItem>
-							<MenuItem value='integer'>integer</MenuItem>
-						</Select>
-					</LabeledRow>
-
-					<LabeledRow label='unit'>
-						<Select size='small' value={cp.unit ?? 'minutes'} onChange={(e) => setCp({ unit: e.target.value })} sx={selSx}>
-							<MenuItem value='minutes'>minutes</MenuItem>
-							<MenuItem value='seconds'>seconds</MenuItem>
-						</Select>
-					</LabeledRow>
-
-					<LabeledRow label='step'>
-						<NumBox value={cp.step ?? 5} onChange={(v) => setCp({ step: v })} />
-					</LabeledRow>
-
-					<LabeledRow label='range'>
-						<Stack direction='row' alignItems='center' gap={0.5}>
-							<NumBox value={range[0]} onChange={(v) => setCp({ range: [v, range[1]] })} w={52} />
-							<Box component='span' sx={{ color: greyColor(45), fontFamily: 'monospace' }}>
-								…
-							</Box>
-							<NumBox value={range[1]} onChange={(v) => setCp({ range: [range[0], v] })} w={52} />
-						</Stack>
-					</LabeledRow>
-
-					<LabeledRow label='decimals'>
-						<NumBox value={cp.decimals ?? 2} onChange={(v) => setCp({ decimals: v })} />
-					</LabeledRow>
-
-					<FormControlLabel
-						sx={{ ml: 0, gap: 0.5 }}
-						control={
-							<Checkbox
-								size='small'
-								checked={cp.allowManualOverride !== false}
-								onChange={(e) => setCp({ allowManualOverride: e.target.checked })}
-								sx={{ p: 0 }}
-							/>
-						}
-						label={
-							<Typography variant='caption' sx={{ color: greyColor(70), fontFamily: 'monospace' }}>
-								allowManualOverride
-							</Typography>
-						}
-					/>
+			<LabeledRow label='range'>
+				<Stack direction='row' alignItems='center' gap={0.5}>
+					{isTimecode ? (
+						<>
+							<TcBox value={min} onChange={(v) => setBounds(v, max)} />
+							<Dots />
+							<TcBox value={max} onChange={(v) => setBounds(min, v)} />
+						</>
+					) : (
+						<>
+							<NumBox value={min} onChange={(v) => setBounds(v, max)} w={64} />
+							<Dots />
+							<NumBox value={max} onChange={(v) => setBounds(min, v)} w={64} />
+						</>
+					)}
 				</Stack>
-			</Popover>
-		</>
+			</LabeledRow>
+
+			{/* Знаки после запятой имеют смысл только у float. */}
+			{config.format === 'float' && (
+				<LabeledRow label='decimals'>
+					<NumBox value={config.decimals} onChange={(v) => setCp({ decimals: v })} integer />
+				</LabeledRow>
+			)}
+
+			<CheckRow
+				label='allowManualOverride'
+				checked={config.allowManualOverride}
+				onChange={(v) => setCp({ allowManualOverride: v })}
+			/>
+
+			{/* Слайдер: чем показывать значение и нужны ли подписи границ. */}
+			{isSlider && (
+				<>
+					<CheckRow
+						label='isTextInput'
+						checked={cp.isTextInput ?? cp.useValuesAsLabels ?? false}
+						onChange={(v) => setCp({ isTextInput: v })}
+					/>
+					<CheckRow
+						label='minMaxValueVisible'
+						checked={cp.minMaxValueVisible ?? true}
+						onChange={(v) => setCp({ minMaxValueVisible: v })}
+					/>
+				</>
+			)}
+
+			{isTimecode && <GearHint>// HH:MM:SS, шаг и хранение в секундах</GearHint>}
+		</GearPopover>
 	);
 }
 
-const selSx = { fontSize: 13, fontFamily: 'monospace', '& .MuiSelect-select': { py: 0.25 } } as const;
+/** Ввод границы таймкодом HH:MM:SS (значение — секунды). Коммит на blur/Enter. */
+function TcBox({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+	const [text, setText] = useState(() => secondsToTimecode(value));
+	const [editing, setEditing] = useState(false);
 
-function LabeledRow({ label, children }: { label: string; children: ReactNode }) {
-	return (
-		<Stack direction='row' alignItems='center' justifyContent='space-between' gap={1}>
-			<Typography variant='caption' sx={{ color: greyColor(70), fontFamily: 'monospace' }}>
-				{label}
-			</Typography>
-			{children}
-		</Stack>
-	);
-}
+	const commit = () => {
+		setEditing(false);
+		const sec = text.trim() === '' ? null : text.includes(':') ? timecodeToSeconds(text) : Number(text.trim());
+		if (sec === null || !Number.isFinite(sec)) {
+			setText(secondsToTimecode(value)); // мусор на входе — откат
+			return;
+		}
+		const next = Math.max(0, Math.round(sec));
+		setText(secondsToTimecode(next));
+		onChange(next);
+	};
 
-function NumBox({ value, onChange, w = 60 }: { value: number; onChange: (v: number) => void; w?: number }) {
 	return (
 		<TextField
 			size='small'
-			type='number'
-			value={value}
-			onChange={(e) => {
-				const n = Number(e.target.value);
-				if (Number.isFinite(n)) onChange(n);
+			value={editing ? text : secondsToTimecode(value)}
+			placeholder='00:00:00'
+			onFocus={() => {
+				setText(secondsToTimecode(value));
+				setEditing(true);
 			}}
-			sx={{ width: w, '& input': { py: 0.25, fontSize: 13, fontFamily: 'monospace', textAlign: 'center' } }}
+			onChange={(e) => setText(e.target.value)}
+			onBlur={commit}
+			onKeyDown={(e) => {
+				if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+				if (e.key === 'Escape') {
+					setText(secondsToTimecode(value));
+					setEditing(false);
+				}
+			}}
+			sx={gearBoxSx(90)}
 		/>
 	);
 }

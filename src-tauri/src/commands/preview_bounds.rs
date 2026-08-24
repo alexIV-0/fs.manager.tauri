@@ -103,7 +103,7 @@ pub fn save_bounds(app: &tauri::AppHandle, file_type: &str, bounds: PreviewBound
     let mut map = read_bounds_map(app);
     map.insert(file_type.to_string(), bounds);
     let content = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    fs::write(&path, content).map_err(|e| e.to_string())
+    super::fs_commands::write_atomic(&path, content.as_bytes())
 }
 
 /// Возвращает любые сохранённые bounds для данного типа (любой ориентации).

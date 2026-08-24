@@ -14,6 +14,10 @@ export type FolderInMainStore = {
 	path: string;
 	active: boolean;
 	projectFolders: string[];
+	/** Папка клиента в облачном зеркале. Такие записи не показываются в общем
+	    списке главных папок — их место в секции «Онлайн», иначе клиент виден
+	    дважды. Во всём остальном это обычная главная папка. */
+	online?: boolean;
 };
 
 type UpdateParametersPayload = Partial<FolderInMainStore> & { id: string };
@@ -27,6 +31,12 @@ export type MainFoldersStore = {
 	mainFolderArr: FolderInMainStore[];
 	/** Добавляет главную папку. Возвращает `false`, если путь уже есть в списке (дубликат не создаётся). */
 	addFolderToMainArr: (path: string) => Promise<boolean>;
+	/** Найти или завести папку облачного клиента. Возвращает её id.
+	    Подпись брать неоткуда не нужно: имя папки в зеркале и есть имя клиента.
+	    `active` — состояние галочки у НОВОЙ записи (по умолчанию включена, как её
+	    ставит диалог «Добавить папку из облака»). Существующую запись не трогаем:
+	    галочку мог снять человек. */
+	ensureOnlineFolder: (path: string, opts?: { active?: boolean }) => string;
 	removeFolderFromMainArr: (id: string) => void;
 	moveFolderInMainArr: (dragIndex: number, hoverIndex: number) => void;
 	updateParameters: (payload: UpdateParametersPayload) => void;
@@ -55,6 +65,24 @@ export const mainFolders_stor = create<MainFoldersStore>()((set, get) => ({
 		set({ mainFolderArr: newFolder });
 		saveToLocalStorage(STORAGE_KEY, newFolder);
 		return true;
+	},
+
+	ensureOnlineFolder: (path: string, opts?: { active?: boolean }) => {
+		const norm = (p: string) => p.replace(/\/+$/, '').toLowerCase();
+		const found = get().mainFolderArr.find((f) => norm(f.path) === norm(path));
+		if (found) return found.id;
+
+		const entry: FolderInMainStore = {
+			id: `online-${nanoid(5)}`,
+			path,
+			active: opts?.active ?? true,
+			projectFolders: [],
+			online: true,
+		};
+		const next = [...get().mainFolderArr, entry];
+		set({ mainFolderArr: next });
+		saveToLocalStorage(STORAGE_KEY, next);
+		return entry.id;
 	},
 
 	removeFolderFromMainArr: (id: string) => {

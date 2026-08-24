@@ -21,6 +21,8 @@ import {
 } from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
+import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
+import { storageFolderMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
@@ -35,11 +37,14 @@ interface CurentFolderItemProps {
 	onMultiSelectToggle?: () => void;
 	onMultiSelectRange?: () => void;
 	onRenamed?: (oldName: string, newName: string) => void;
+	/** Агрегат по поддереву в облачном зеркале. У локальных папок поля нет. */
+	storage?: import('@/Store/helpers/readDirContent').FileItem['storage'];
 }
 
 export function CurentFolderItem({
 	name,
 	path,
+	storage,
 	isSelected,
 	isActiveSelection = true,
 	isMultiSelected,
@@ -103,6 +108,12 @@ export function CurentFolderItem({
 		onPaste: () => pasteFromClipboardFs(path),
 		hasClipboard,
 	});
+
+	// «Обновить» — только у облачной папки: спрашивает состояние её проекта в онлайне.
+	// Признак «облачная» берём из наличия данных каталога у строки: они появляются
+	// только у того, что пришло из зеркала.
+	const folderCloudItems = storageFolderMenuItems(path, Boolean(storage));
+	const allMenuItems = [...menuItems, ...folderCloudItems];
 
 	return (
 		<>
@@ -185,6 +196,9 @@ export function CurentFolderItem({
 							}}
 						/>
 					)}
+
+					{/* Агрегат поддерева: сразу видно, скачана папка целиком или нет. */}
+					{storage?.aggregate && <StorageBadge aggregate={storage.aggregate} />}
 				</ListItemButton>
 			</ListItem>
 
@@ -194,7 +208,7 @@ export function CurentFolderItem({
 				position={menuPosition}
 				open={isMenuOpen}
 				onClose={handleMenuClose}
-				items={menuItems}
+				items={allMenuItems}
 			/>
 		</>
 	);

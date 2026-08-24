@@ -18,12 +18,16 @@ const STORAGE_KEY = 'options_store';
 export const options_store = create<OptionsStore>()((set, get) => {
 	// При создании стора загружаем данные из localStorage
 	const savedOptions = loadFromLocalStorage(STORAGE_KEY);
-	const initialOptions = savedOptions || {
+	const DEFAULTS: OptionsObj = {
 		mainFolderWidth: 200,
 		projectFolderWidth: 200,
 		folderWidth: 200,
 		gdFolderHeight: 200,
 	};
+	// Разворачиваем поверх дефолтов, а не вместо них: у тех, кто запускал программу
+	// раньше, в localStorage лежит объект без новых ключей, и без слияния новая
+	// опция пришла бы как `undefined`.
+	const initialOptions: OptionsObj = { ...DEFAULTS, ...(savedOptions ?? {}) };
 
 	return {
 		optionsObj: initialOptions,

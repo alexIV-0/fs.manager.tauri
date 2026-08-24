@@ -12,7 +12,12 @@ export interface BgAdjustSettings {
 
 export interface FgShadowSettings {
 	enabled: boolean;
-	blur: number;      // 0–40 px
+	blur: number;      // 0–60 px (0 = жёсткий край)
+	/**
+	 * Раздувание прямоугольника тени, px в каждую сторону (0–200).
+	 * При blur=0 и нулевом смещении даёт цветную рамку вокруг кадра.
+	 */
+	spread: number;
 	offsetX: number;   // -100..100 px
 	offsetY: number;   // -100..100 px
 	opacity: number;   // 0..1
@@ -48,7 +53,7 @@ export interface VideoAdjustSettings {
 }
 
 export function defaultFgShadow(): FgShadowSettings {
-	return { enabled: false, blur: 20, offsetX: 10, offsetY: 20, opacity: 0.6, color: '#000000' };
+	return { enabled: false, blur: 20, spread: 0, offsetX: 10, offsetY: 20, opacity: 0.6, color: '#000000' };
 }
 
 export function defaultVideoAdjustSettings(): VideoAdjustSettings {

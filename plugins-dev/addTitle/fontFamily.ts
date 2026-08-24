@@ -10,7 +10,10 @@
 // Файл шрифта читаем через asset-протокол (scope = "**" в tauri.conf.json) обычным
 // fetch'ем в WebView — без новых Rust-команд.
 
-import { fs } from '../_template/tauri';
+import type { PluginContext } from '../../src/PluginAPI/host';
+
+// Сервисы приходят параметром из ctx точки входа через границу модуля —
+// у файла не остаётся собственного состояния, плагин кэшируется.
 
 const u16 = (dv: DataView, off: number) => dv.getUint16(off, false);
 const u32 = (dv: DataView, off: number) => dv.getUint32(off, false);
@@ -73,7 +76,7 @@ function parseSfnt(dv: DataView, bytes: Uint8Array, sfntOffset: number): string 
 const cache = new Map<string, string | null>();
 
 /** Имя семейства шрифта по пути к файлу, либо null если прочитать не удалось. */
-export async function resolveFontFamily(fontPath: string): Promise<string | null> {
+export async function resolveFontFamily(fontPath: string, fs: PluginContext['fs']): Promise<string | null> {
 	if (cache.has(fontPath)) return cache.get(fontPath)!;
 
 	let family: string | null = null;

@@ -1,5 +1,7 @@
 // Лог постинга: {project}/options/_post/$MM.$YYYY.jsonl (append-only).
-// Порт plugins-dev/autoPostVK/_postLog.ts на specta commands (раннер живёт в renderer).
+// ЕДИНСТВЕННАЯ реализация: её зовут и драйвер автопостинга, и ноды-постеры
+// (autoPostVK/TG/YT импортируют этот файл напрямую — esbuild бандлит src/ в плагин).
+// До 2026-08-11 у каждого постера была своя копия, и они разъехались.
 // Источник истины: последняя запись → время последнего поста (интервал) + дедуп по file.
 
 import { commands, unwrap } from '@/Utils/specta';
@@ -75,6 +77,34 @@ export async function readCooldownUntil(projectPath: string, account: string): P
 	} catch {
 		return 0;
 	}
+}
+
+/** Поставить аккаунт на паузу после жёсткой ошибки площадки (лимит/капча/флуд/квота).
+ *  Пишут ноды-постеры (VK, YouTube), читает `readCooldownUntil` выше — драйвер не
+ *  постит с этого аккаунта до `until`. Ключ = имя аккаунта. */
+export async function writeCooldown(
+	projectPath: string,
+	account: string,
+	until: number,
+	code: number,
+	msg: string,
+): Promise<void> {
+	const dir = postDir(projectPath);
+	const file = joinPath(dir, '_cooldown.json');
+
+	let obj: Record<string, any> = {};
+	try {
+		if (unwrap(await commands.checkFilePath(file, null))) {
+			obj = JSON.parse(String(unwrap(await commands.readFileSync(file)))) || {};
+		}
+	} catch {
+		// битый файл паузы — перезапишем целиком, потеря здесь безобидна
+	}
+
+	obj[account] = { until, code, msg };
+	// Атомарно: файл читают на каждом витке постинга, и обрыв записи посреди
+	// оставил бы нечитаемый JSON — то есть паузу, про которую драйвер не узнает.
+	unwrap(await commands.writeFileAtomic(file, JSON.stringify(obj, null, 2)));
 }
 
 /** Дописать запись в файл текущего месяца настоящим append'ом (O_APPEND).
