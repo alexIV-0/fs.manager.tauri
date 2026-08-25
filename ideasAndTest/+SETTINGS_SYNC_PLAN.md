@@ -167,7 +167,15 @@ hex, расширения в нижний регистр без ведущей �
 Секции `programmPathPattern` и `folderPathStore` в `TabPaths` помечаются как локальные
 явно, иначе неочевидно, почему одни настройки едут на сервер, а соседние — нет.
 
-## 6. Отдельно: снимок словаря типов в `options.json` ⬜
+## 6. Отдельно: снимок словаря типов в `options.json` ✅
+
+**СДЕЛАНО** (сверено с кодом 2026-08-24): общая сборка словаря — `buildFileTypesMap` /
+`readFileTypesSnapshot` в [`src/Utils/fileTypesSnapshot.ts`](../src/Utils/fileTypesSnapshot.ts)
+(один объект на двух потребителей: исполнение через `description.typeOfFile` и снимок),
+единая точка сохранения — [`src/NODE_WIN/utils/saveFlow.ts`](../src/NODE_WIN/utils/saveFlow.ts)
+(`payload = { ...flow, fileTypes: await readFileTypesSnapshot() }`), читается в NODE_WIN через
+`commands.fileTypesGet()`, а не из стора. Нормализация (нижний регистр, без точки, без дублей)
+включается только для снимка. Остальные пункты плана (1–5) по-прежнему ⬜.
 
 Не относится к синхронизации, но блокирует конвейер уже сейчас
 (`innovation-hub/docs/PIPELINE.md` §6): сайт пропускает проект с причиной

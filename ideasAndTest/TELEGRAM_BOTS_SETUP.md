@@ -1,7 +1,7 @@
 # Runbook: настройка Telegram-ботов под клиента/проект
 
 > Операционная инструкция «как руками настроить нового клиента» — общая для обоих плагинов:
-> [autoPostTG](+TELEGRAM_AUTOPOST_PLAN.md) (постинг) и [tgCollect](TELEGRAM_GDRIVE_BOT_PLAN.md) (сбор).
+> [autoPostTG](+TELEGRAM_AUTOPOST_PLAN.md) (постинг) и [tgCollect](+TELEGRAM_GDRIVE_BOT_PLAN.md) (сбор).
 > Пока всё делаем вручную на нашей стороне. Цель файла — **не забыть цепочку**, потому что
 > потом её автоматизируем (см. раздел «Что чем автоматизируется»).
 
@@ -112,6 +112,6 @@
 
 ## Связь с планами
 
-- [TELEGRAM_GDRIVE_BOT_PLAN.md](TELEGRAM_GDRIVE_BOT_PLAN.md) — плагин сбора (tgCollect).
+- [+TELEGRAM_GDRIVE_BOT_PLAN.md](+TELEGRAM_GDRIVE_BOT_PLAN.md) — плагин сбора (tgCollect).
 - [+TELEGRAM_AUTOPOST_PLAN.md](+TELEGRAM_AUTOPOST_PLAN.md) — плагин постинга (autoPostTG).
 - Автоматизация цепочки целиком — фаза 3 планов (MTProto user-сессия + пул ботов).

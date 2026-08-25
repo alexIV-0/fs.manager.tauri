@@ -1,7 +1,18 @@
 # Plan: Telegram → GDrive Collector Plugin (`autoTGcollect`)
 
 ## Статус
-🟡 ПРОЕКТИРОВАНИЕ (2026-06-24). Зеркало-противоположность [autoPostTG](+TELEGRAM_AUTOPOST_PLAN.md):
+🟢 **ФАЗА 1 (MVP) РАБОТАЕТ** (сверено с кодом 2026-08-24), фазы 2–4 не начаты.
+
+| пункт фазы 1 | состояние |
+|---|---|
+| [A] Rust: менеджер локального сервера + `tg_get_updates` + `tg_fetch_file` | ✅ команды в `src-tauri/src/commands/tg_commands.rs` (`tg_server_start`/`tg_server_stop`/`tg_server_status`, `tg_get_updates`, `tg_fetch_file`, `tg_base_url`, `tg_cloud_log_out`) |
+| [B] раннер `src/PROCESSING/tgCollect/` | ✅ `index.ts` — drain → routing → staging → move в IN |
+| [C] врезка в `runProcessing` | 🔧 раннер — да (`runTgCollect(getSignal())` в начале витка, параллельно обработке); **старт/стоп локального Bot API сервера — нет**: команды и настройки `tgServer` есть (UI в `TabPaths.tsx` → `DepsDownloadPanel.tsx`), вызовов из цикла нет. Значит сбор идёт через облачный Bot API с лимитом 20 МБ на скачивание. ⏸ **На паузе (решение 2026-08-24):** врезаем, когда появится свой сервер под локальный Bot API и полученные под него `api_id`/`api_hash`. См. раздел «Инфраструктура: локальный Bot API server» |
+| [D] routing map в `findAllFilesForProcess` | ✅ `clearTgRoutes` + `addTgRouteFromProject`, пересборка каждый полный скан; то же в `runProcessingForSingleFolder.ts` |
+| [E] нода `autoTGcollect` + синк `tgSearch.json` | ✅ `plugins-dev/autoTGcollect/`, свойство `TgSourceProperty.tsx`, `syncTgSearchSidecar.ts` из единой точки сохранения `saveFlow.ts` |
+| [F] живой тест | ❔ не зафиксирован; полноценный прогон (файлы >20 МБ) всё равно ждёт локального сервера — см. [C] |
+
+Зеркало-противоположность [autoPostTG](+TELEGRAM_AUTOPOST_PLAN.md):
 тот **постит** из программы в Telegram, этот **собирает** медиа из Telegram в папки проектов.
 Отдельный плагин, общий с autoPostTG модуль команд (`tg_commands.rs`).
 
