@@ -86,9 +86,21 @@ interface Props {
 	/** 0..1 — показываем проценты рядом со значком. */
 	progress?: number | null;
 	error?: string | null;
+	/**
+	 * Что делает КЛИК по значку. Есть не всегда: у синхронизированного файла делать
+	 * нечего, а у конфликта нужен выбор — там рядом стоят две стрелки.
+	 *
+	 * ── Зачем значок вообще нажимается ──────────────────────────────────────
+	 * Облачко у файла означает «здесь этого нет». Первое, что человек делает,
+	 * увидев его, — нажимает: он не читает, что это «индикатор». Значок, который
+	 * умеет только сообщать, — это лишний клик правой кнопкой на каждое действие.
+	 */
+	onAction?: () => void;
+	/** Чем клик закончится — дописывается в подсказку. Без него нажимать вслепую. */
+	actionHint?: string;
 }
 
-export function StorageBadge({ state, aggregate, pinned, progress, error }: Props) {
+export function StorageBadge({ state, aggregate, pinned, progress, error, onAction, actionHint }: Props) {
 	const look = state ? FILE_LOOK[state] : aggregate ? FOLDER_LOOK[aggregate] : null;
 	const color = useTone(look?.tone ?? 'muted');
 
@@ -131,9 +143,31 @@ export function StorageBadge({ state, aggregate, pinned, progress, error }: Prop
 		<Pin size={pinOnly ? SIZE : PIN_SIZE} strokeWidth={pinOnly ? STROKE : 2} fill={pinOnly ? 'none' : 'currentColor'} style={pinStyle} />
 	);
 
+	const состояние = pinOnly
+		? 'Оставлен оффлайн · синхронизирован'
+		: pinned
+			? `${title} · оставлен оффлайн`
+			: title;
+	const подсказка = onAction && actionHint ? `${состояние} · ${actionHint}` : состояние;
+
 	return (
-		<Tooltip title={pinOnly ? 'Оставлен оффлайн · синхронизирован' : pinned ? `${title} · оставлен оффлайн` : title} placement='left' arrow>
+		<Tooltip title={подсказка} placement='left' arrow>
 			<Box
+				onClick={
+					onAction
+						? (e) => {
+								// Строка под значком — кнопка выбора и перехода в папку.
+								// Без этого клик по облачку заодно уводил бы вглубь.
+								e.stopPropagation();
+								e.preventDefault();
+								onAction();
+							}
+						: undefined
+				}
+				// Двойной клик по строке файла открывает его во внешней программе, и
+				// это событие идёт мимо `onClick`: без гашения быстрый двойной тык по
+				// облачку заодно открывал бы файл.
+				onDoubleClick={onAction ? (e) => e.stopPropagation() : undefined}
 				sx={{
 					display: 'inline-flex',
 					alignItems: 'center',
@@ -144,6 +178,12 @@ export function StorageBadge({ state, aggregate, pinned, progress, error }: Prop
 					// Статичные стили: анимации и тени на строках списка перекрашивают
 					// весь слой и дают мерцание при наведении.
 					transition: 'none',
+					...(onAction && {
+						cursor: 'pointer',
+						// Подсветку даём цветом, а не тенью и не масштабом: тень на строке
+						// React-Flow-подобного списка перекрашивает весь слой и мерцает.
+						'&:hover': { color: 'primary.main' },
+					}),
 				}}
 			>
 				{/* Пин заменяет значок состояния — значит второй иконки в этой ветке нет. */}

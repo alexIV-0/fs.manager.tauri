@@ -7,6 +7,7 @@
 // Сервер физически не может залить файл, которого у него нет: файл лежит на
 // нашем диске. Поэтому бэкенд выдаёт подписанную ссылку, а везём мы.
 
+pub mod bulk;
 pub mod client;
 pub mod config;
 pub mod evict;
@@ -25,13 +26,14 @@ pub mod types;
 pub mod upload;
 pub mod watcher;
 
+pub use bulk::{DownloadQueueStatus, SubtreePlan, SubtreeQueued};
 pub use client::{StorageApi, StorageConfig};
 pub use evict::{EvictionPolicy, EvictionReport};
 pub use index::Index;
 pub use mock::MockApi;
 pub use paths::{classify, MirrorLocation, MirrorNode};
 pub use provider::Provider;
-pub use service::{BrowseEntry, LocalFileRow, NotUploadedRow, CopyReport, DeleteStage, DropOwnerReport, PathInfo, ProjectInfo, PurgeReport, RenameReport, EnsureResult, StorageService, UploadResult};
+pub use service::{BrowseEntry, LocalFileRow, NotUploadedRow, CopyReport, DeleteStage, DropOwnerReport, PathInfo, ProjectInfo, PurgeReport, RenameReport, EnsureResult, StorageService, SyncDetail, UploadResult};
 pub use state::{FileState, FolderAggregate, FolderBadge};
 pub use sync::Sync;
 pub use types::*;

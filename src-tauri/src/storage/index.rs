@@ -1037,6 +1037,28 @@ impl Index {
             .map_err(|e| e.to_string())
     }
 
+    /// Baseline плюс время последней синхронизации — чтобы ОБЪЯСНИТЬ расхождение.
+    ///
+    /// Отличие от `local_baseline`: тот отдаёт только то, что нужно для решения
+    /// («правили ли копию»), и молчит про время синхронизации. Человеку у значка
+    /// «в облаке новее» нужно другое — с чем именно сравнивают: `(размер, mtime,
+    /// когда синхронизировали)`. Строка есть и без локальной копии, поэтому
+    /// `local_path IS NOT NULL` здесь НЕ фильтруем.
+    pub fn local_sync_row(
+        &self,
+        file_id: &str,
+    ) -> Result<Option<(Option<i64>, Option<i64>, Option<i64>)>, String> {
+        self.conn
+            .query_row(
+                "SELECT local_size, local_mtime, hydrated_at
+                   FROM local_state WHERE file_id = ?1",
+                params![file_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
     /// Все записи, у которых есть локальная копия.
     pub fn local_file_ids(&self) -> Result<Vec<String>, String> {
         let mut st = self
@@ -1238,6 +1260,67 @@ impl Index {
                 Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
             })
             .map_err(|e| e.to_string())?;
+        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Файлы поддерева целиком: сам путь плюс всё, что под ним.
+    ///
+    /// Отличие от `subtree_ids`: тому нужны только идентификаторы локальных копий
+    /// (вытеснение), а массовой операции нужны координаты и размер — иначе ни путь
+    /// на диске не собрать, ни объём не назвать до начала скачивания.
+    ///
+    /// Записи-папки не отдаём: качать в них нечего, а на диске они появятся сами
+    /// вместе с первым файлом.
+    ///
+    /// Пустой префикс = весь проект, и это ОТДЕЛЬНАЯ ветка, а не `LIKE '' || '/%'`:
+    /// такой шаблон означает «путь начинается со слэша» и не находит ни одного файла
+    /// вложенной папки. На той же грабле стоит комментарий в `drop_owner_local`.
+    pub fn subtree_file_entries(
+        &self,
+        project_id: &str,
+        folder_prefix: &str,
+    ) -> Result<Vec<TreeEntry>, String> {
+        let (predicate, like) = if folder_prefix.is_empty() {
+            ("1 = 1", String::new())
+        } else {
+            (
+                "(folder_path = ?2 OR folder_path LIKE ?3)",
+                format!("{folder_prefix}/%"),
+            )
+        };
+        let sql = format!(
+            "SELECT file_id, project_id, folder_path, name, is_folder, s3_key,
+                    size_bytes, content_type, etag, content_hash, origin_mtime, last_seq
+               FROM remote_entries
+              WHERE project_id = ?1 AND deleted = 0 AND is_folder = 0
+                AND {predicate}
+              ORDER BY folder_path, name COLLATE NOCASE"
+        );
+        let mut st = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let map = |r: &rusqlite::Row| -> rusqlite::Result<TreeEntry> {
+            Ok(TreeEntry {
+                id: r.get(0)?,
+                project_id: r.get(1)?,
+                folder_path: r.get(2)?,
+                name: r.get(3)?,
+                is_folder: r.get::<_, i64>(4)? != 0,
+                s3_key: r.get(5)?,
+                size_bytes: r.get(6)?,
+                content_type: r.get(7)?,
+                etag: r.get(8)?,
+                content_hash: r.get(9)?,
+                origin_mtime: r.get(10)?,
+                created_at: None,
+                updated_at: None,
+                last_seq: r.get(11)?,
+            })
+        };
+        let rows = if folder_prefix.is_empty() {
+            st.query_map(params![project_id], map)
+        } else {
+            st.query_map(params![project_id, folder_prefix, like], map)
+        }
+        .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 

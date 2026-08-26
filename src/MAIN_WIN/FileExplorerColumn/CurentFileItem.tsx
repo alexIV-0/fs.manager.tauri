@@ -22,10 +22,10 @@ import {
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
-import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
-import { ConflictChoice } from '@/MAIN_WIN/Storage/ConflictChoice';
+import { SyncChoice } from '@/MAIN_WIN/Storage/SyncChoice';
+import { идётПередача, нуженВыбор, pullFromCloud, pushToCloud } from '@/MAIN_WIN/Storage/fileActions';
 import { storageMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 
 interface CurrentFileItemProps {
@@ -119,6 +119,21 @@ export function CurrentFileItem({
 		() => [...menuItems, ...storageMenuItems(path, storage)],
 		[menuItems, path, storage],
 	);
+
+	// Клик по значку — самое очевидное действие для этого состояния, и только оно.
+	// Там, где сторон две (расхождение), угадывать за человека нельзя: выбор
+	// остаётся стрелкам, которые стоят рядом.
+	const badgeAction = useMemo(() => {
+		const st = storage?.state;
+		if (!st || идётПередача(st) || нуженВыбор(st)) return null;
+		if (st === 'cloud') {
+			return { hint: 'нажмите, чтобы скачать', run: () => void pullFromCloud(path, st) };
+		}
+		if (st === 'localOnly') {
+			return { hint: 'нажмите, чтобы отправить в облако', run: () => void pushToCloud(path, st) };
+		}
+		return null;
+	}, [storage?.state, path]);
 
 	const { type: detectedType, color: iconColor } = useMemo(() => {
 		const fileTypes = typeOfFile_store.getState().patternStore;
@@ -246,24 +261,17 @@ export function CurrentFileItem({
 					    и без этого он липнет к имени. */}
 					{storage?.state && (
 						<Box sx={{ ml: 'auto', pl: 1, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-							{/* Конфликт требует выбора, а не повтора — поэтому выбор стоит прямо
-							    в строке, рядом со значком, а не спрятан в контекстном меню. */}
-							{storage.state === 'conflict' && (
-								<ConflictChoice
-									path={path}
-									onResolved={() => {
-										invalidateDirCache(dirname(path));
-										const store = useColumnView_Store.getState();
-										store.refreshAffectedColumns('gd', [dirname(path)]);
-										store.refreshAffectedColumns('local', [dirname(path)]);
-									}}
-								/>
-							)}
+							{/* Любое расхождение требует ВЫБОРА, а не повтора, — поэтому выбор
+							    стоит прямо в строке, рядом со значком, а не спрятан в
+							    контекстном меню: иначе строка остаётся уведомлением без выхода. */}
+							{нуженВыбор(storage.state) && <SyncChoice path={path} state={storage.state} />}
 							<StorageBadge
 								state={storage.state}
 								pinned={storage.pinned}
 								progress={storage.progress}
 								error={storage.error}
+								onAction={badgeAction?.run}
+								actionHint={badgeAction?.hint}
 							/>
 						</Box>
 					)}
