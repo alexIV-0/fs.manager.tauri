@@ -304,110 +304,117 @@ export default function TabStorage() {
 				)}
 			</Stack>
 
-			<Divider />
+			{/* Всё, что ниже, — политика уже подключённого хранилища. Пока подключения
+			    нет, эти настройки не на что применить, а вот с толку сбивают: человек
+			    правит маски и предел зеркала, не понимая, почему ничего не происходит.
+			    Поэтому нижняя половина вкладки существует только при подключении. */}
+			{status.connected && (
+				<>
+					<Divider />
 
-			{/* ── Кэш ───────────────────────────────────────────────────────── */}
-			<Typography variant='subtitle2'>Локальные копии</Typography>
+					{/* ── Кэш ───────────────────────────────────────────────── */}
+					<Typography variant='subtitle2'>Локальные копии</Typography>
 
-			<Stack direction='row' spacing={1}>
-				<FormControl size='small' sx={{ minWidth: 200 }}>
-					<InputLabel>Хранить копию</InputLabel>
-					<Select
-						label='Хранить копию'
-						value={cfg.keepHours ?? 4}
-						onChange={(e) => patch({ keepHours: Number(e.target.value) })}
-					>
-						{KEEP_OPTIONS.map((o) => (
-							<MenuItem key={o.v} value={o.v}>
-								{o.label}
-							</MenuItem>
-						))}
-					</Select>
-				</FormControl>
+					<Stack direction='row' spacing={1}>
+						<FormControl size='small' sx={{ minWidth: 200 }}>
+							<InputLabel>Хранить копию</InputLabel>
+							<Select
+								label='Хранить копию'
+								value={cfg.keepHours ?? 4}
+								onChange={(e) => patch({ keepHours: Number(e.target.value) })}
+							>
+								{KEEP_OPTIONS.map((o) => (
+									<MenuItem key={o.v} value={o.v}>
+										{o.label}
+									</MenuItem>
+								))}
+							</Select>
+						</FormControl>
 
-				<TextField
-					size='small'
-					type='number'
-					label='Предел зеркала, ГБ'
-					value={cfg.maxMirrorGb ?? 100}
-					onChange={(e) => patch({ maxMirrorGb: Number(e.target.value) })}
-					sx={{ width: 180 }}
-					helperText='Аварийный клапан поверх времени'
-				/>
-			</Stack>
-
-			<Alert severity='info' icon={false} sx={{ py: 0.5 }}>
-				<Typography variant='caption'>
-					Два правила не отключаются настройками: <b>незалитое</b> и <b>запиненное</b> не удаляются никогда.
-					Файл, которого ещё нет в облаке, — единственная копия.
-				</Typography>
-			</Alert>
-
-			<Stack direction='row' spacing={1} alignItems='center'>
-				<Typography variant='caption' sx={{ color: 'text.secondary' }}>
-					Занято локально: {gb === null ? '—' : `${gb} ГБ`}
-				</Typography>
-				<Button
-					size='small'
-					onClick={() => void runEviction()}
-					disabled={evicting || !status.connected}
-					startIcon={evicting ? <CircularProgress size={11} /> : undefined}
-				>
-					Освободить сейчас
-				</Button>
-			</Stack>
-
-			<Divider />
-
-			{/* ── Всегда горячие ────────────────────────────────────────────── */}
-			<Typography variant='subtitle2'>Всегда горячие файлы</Typography>
-			<Alert severity='info' icon={false} sx={{ py: 0.5 }}>
-				<Typography variant='caption' component='div'>
-					Эти файлы не удаляются по таймеру и всегда доступны мгновенно. Указывай{' '}
-					<b>мелкие файлы, которые читаются часто</b> — настройки и сайдкары. Видео сюда добавлять не нужно:
-					они займут диск и не дадут его освободить.
-					<br />
-					Маски пишутся от корня проекта: <code>options/*.json</code>, <code>IN/*.txt</code>. Маска без
-					слэша (<code>*.aep</code>) ловит файл на любой глубине.
-				</Typography>
-			</Alert>
-			<Stack spacing={0.5}>
-				{(cfg.hotPatterns ?? []).map((p, i) => (
-					<Stack key={i} direction='row' spacing={0.5} alignItems='center'>
 						<TextField
 							size='small'
-							value={p}
-							placeholder='options/*.json'
-							onChange={(e) => {
-								const next = [...(cfg.hotPatterns ?? [])];
-								next[i] = e.target.value;
-								patch({ hotPatterns: next });
-							}}
-							sx={{ flex: 1 }}
-							slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 12 } } }}
+							type='number'
+							label='Предел зеркала, ГБ'
+							value={cfg.maxMirrorGb ?? 100}
+							onChange={(e) => patch({ maxMirrorGb: Number(e.target.value) })}
+							sx={{ width: 180 }}
+							helperText='Аварийный клапан поверх времени'
 						/>
-						<IconButton
-							size='small'
-							onClick={() => patch({ hotPatterns: (cfg.hotPatterns ?? []).filter((_, j) => j !== i) })}
-						>
-							<Trash2 size={13} strokeWidth={1} />
-						</IconButton>
 					</Stack>
-				))}
-				<Button
-					size='small'
-					startIcon={<Plus size={13} strokeWidth={1} />}
-					onClick={() => patch({ hotPatterns: [...(cfg.hotPatterns ?? []), ''] })}
-					sx={{ alignSelf: 'flex-start' }}
-				>
-					маска
-				</Button>
-				<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 10 }}>
-					Пустой список означает значение по умолчанию — <code>options/*.json</code>. Сайдкары должны
-					оставаться горячими: их читает поиск по всем проектам.
-				</Typography>
-			</Stack>
 
+					<Alert severity='info' icon={false} sx={{ py: 0.5 }}>
+						<Typography variant='caption'>
+							Два правила не отключаются настройками: <b>незалитое</b> и <b>запиненное</b> не удаляются никогда.
+							Файл, которого ещё нет в облаке, — единственная копия.
+						</Typography>
+					</Alert>
+
+					<Stack direction='row' spacing={1} alignItems='center'>
+						<Typography variant='caption' sx={{ color: 'text.secondary' }}>
+							Занято локально: {gb === null ? '—' : `${gb} ГБ`}
+						</Typography>
+						<Button
+							size='small'
+							onClick={() => void runEviction()}
+							disabled={evicting}
+							startIcon={evicting ? <CircularProgress size={11} /> : undefined}
+						>
+							Освободить сейчас
+						</Button>
+					</Stack>
+
+					<Divider />
+
+					{/* ── Всегда горячие ────────────────────────────────────────────── */}
+					<Typography variant='subtitle2'>Всегда горячие файлы</Typography>
+					<Alert severity='info' icon={false} sx={{ py: 0.5 }}>
+						<Typography variant='caption' component='div'>
+							Эти файлы не удаляются по таймеру и всегда доступны мгновенно. Указывай{' '}
+							<b>мелкие файлы, которые читаются часто</b> — настройки и сайдкары. Видео сюда добавлять не нужно:
+							они займут диск и не дадут его освободить.
+							<br />
+							Маски пишутся от корня проекта: <code>options/*.json</code>, <code>IN/*.txt</code>. Маска без
+							слэша (<code>*.aep</code>) ловит файл на любой глубине.
+						</Typography>
+					</Alert>
+					<Stack spacing={0.5}>
+						{(cfg.hotPatterns ?? []).map((p, i) => (
+							<Stack key={i} direction='row' spacing={0.5} alignItems='center'>
+								<TextField
+									size='small'
+									value={p}
+									placeholder='options/*.json'
+									onChange={(e) => {
+										const next = [...(cfg.hotPatterns ?? [])];
+										next[i] = e.target.value;
+										patch({ hotPatterns: next });
+									}}
+									sx={{ flex: 1 }}
+									slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 12 } } }}
+								/>
+								<IconButton
+									size='small'
+									onClick={() => patch({ hotPatterns: (cfg.hotPatterns ?? []).filter((_, j) => j !== i) })}
+								>
+									<Trash2 size={13} strokeWidth={1} />
+								</IconButton>
+							</Stack>
+						))}
+						<Button
+							size='small'
+							startIcon={<Plus size={13} strokeWidth={1} />}
+							onClick={() => patch({ hotPatterns: [...(cfg.hotPatterns ?? []), ''] })}
+							sx={{ alignSelf: 'flex-start' }}
+						>
+							маска
+						</Button>
+						<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 10 }}>
+							Пустой список означает значение по умолчанию — <code>options/*.json</code>. Сайдкары
+							должны оставаться горячими: их читает поиск по всем проектам.
+						</Typography>
+					</Stack>
+				</>
+			)}
 		</Box>
 	);
 }

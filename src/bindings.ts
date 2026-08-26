@@ -545,6 +545,29 @@ async fileTypesSet(types: JsonValue) : Promise<Result<JsonValue, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Снимок словарей на момент последней успешной синхронизации.
+ * 
+ * `null` (первый запуск, файла нет) — база неизвестна, и слияние обязано вести
+ * себя осторожно: считать местные записи «своими правками», а не «удалёнными на
+ * сервере». Логика в `src/Utils/settingsSync.ts`.
+ */
+async settingsSyncBaseGet() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_base_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async settingsSyncBaseSet(base: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_base_set", { base }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async programPathsGet() : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("program_paths_get") };
@@ -990,6 +1013,20 @@ async depsListWhisperModels() : Promise<Result<WhisperModel[], string>> {
 async depsDownloadWhisperModel(filename: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("deps_download_whisper_model", { filename }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удаляет скачанную модель. Модель весит до 3 ГБ, а каталог показывает только
+ * «скачано/нет» — без удаления единственный способ освободить место был лезть в
+ * папку руками. Заодно подчищаем `.part` того же имени: недокачанный огрызок
+ * места занимает столько же, а в списке не виден вовсе.
+ */
+async depsDeleteWhisperModel(filename: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_delete_whisper_model", { filename }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1475,6 +1512,32 @@ async storageStatus() : Promise<Result<StorageStatus, string>> {
 async storageRefreshProjects() : Promise<Result<ProjectsResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_refresh_projects") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Прочитать общие словари с сервера. Пустой список доменов — все.
+ */
+async storageSettingsGet(domains: string[] | null) : Promise<Result<SettingsDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_settings_get", { domains }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Записать общие словари от известной ревизии.
+ * 
+ * Конфликт ревизий возвращается ПОЛЕМ `conflict`, а не ошибкой: 409 здесь —
+ * нормальный ответ протокола, и renderer обязан отличить его от сетевого сбоя,
+ * иначе слияние не запустится никогда (см. `SettingsPutResult`).
+ */
+async storageSettingsPut(baseRevision: number, domains: JsonValue) : Promise<Result<SettingsPutResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_settings_put", { baseRevision, domains }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3158,6 +3221,34 @@ kill_previous_instance: boolean | null }
 export type SearchEntry = { type?: string; ext?: string[] }
 export type SelectFilesOptions = { multiSelect?: boolean; filters?: DialogFilter[] | null }
 export type SelectFoldersOptions = { multiSelect?: boolean }
+/**
+ * Документ словарей целиком. Домен — массив, а не объект: порядок значим
+ * (`getFileTypeByExt` возвращает ПЕРВОЕ совпадение).
+ */
+export type SettingsDocument = { revision?: number; domains?: Partial<{ [key in string]: SettingsEntry[] }> }
+/**
+ * Запись словаря. Поля ровно те, что синхронизируются: `id` и `inactivePath`
+ * машинно-локальные и на сервер не уходят вовсе.
+ * 
+ * Идентичность — по `name`, не по `id`: у дефолтов id человекочитаемый (`video`),
+ * у пользовательских — nanoid, то есть на второй машине он другой. Вся система и
+ * так ссылается на тип по имени (`searchType: "video"` в графе).
+ */
+export type SettingsEntry = { name: string; 
+/**
+ * Расширения у `fileType`, сегменты маски у `pathPattern`, у остальных пуст.
+ */
+path?: string[]; color?: string | null; isDefault?: boolean }
+/**
+ * Результат записи словарей.
+ * 
+ * `conflict = true` — это НЕ ошибка транспорта, а нормальный ответ протокола
+ * (HTTP 409): ревизия на сервере уехала, в `document` лежит его текущее
+ * состояние, и клиент обязан слить три стороны и повторить. Поэтому 409 не
+ * превращается в `StorageError`: иначе renderer не отличил бы «слей и повтори»
+ * от «сеть отвалилась» и слияние не запустилось бы никогда.
+ */
+export type SettingsPutResult = { conflict: boolean; document: SettingsDocument }
 /**
  * Возвращает метаданные файла (для полифила node:fs.stat).
  */

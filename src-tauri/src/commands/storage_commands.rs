@@ -338,6 +338,36 @@ pub async fn storage_refresh_projects(
 // (`machineUuid` + `hostname`) подставляет сам сервис — renderer её не передаёт и
 // подменить не может.
 
+// ─── Общие словари ───────────────────────────────────────────────────────────
+//
+// Запросы идут из Rust, а не из renderer, по одной причине: адрес и токен живут в
+// `storage::config` и наружу не отдаются (`ConnectionConfig::redacted`).
+
+/// Прочитать общие словари с сервера. Пустой список доменов — все.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_settings_get(
+    state: State<'_, StorageService>,
+    domains: Option<Vec<String>>,
+) -> Result<crate::storage::SettingsDocument, String> {
+    state.settings_get(domains.unwrap_or_default()).await
+}
+
+/// Записать общие словари от известной ревизии.
+///
+/// Конфликт ревизий возвращается ПОЛЕМ `conflict`, а не ошибкой: 409 здесь —
+/// нормальный ответ протокола, и renderer обязан отличить его от сетевого сбоя,
+/// иначе слияние не запустится никогда (см. `SettingsPutResult`).
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_settings_put(
+    state: State<'_, StorageService>,
+    base_revision: i64,
+    domains: serde_json::Value,
+) -> Result<crate::storage::SettingsPutResult, String> {
+    state.settings_put(base_revision, domains).await
+}
+
 /// «Я на связи» без запроса задачи.
 ///
 /// Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние

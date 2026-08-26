@@ -21,7 +21,8 @@
 | `+YOUTUBE_AUTOPOST_PLAN.md` | плагин `autoPostYT`, Модель B (BYO credentials) | audit проекта у пользователя (не наша сторона) |
 | `+TELEGRAM_AUTOPOST_PLAN.md` | плагин `autoPostTG` | ⏸ живой тест на паузе до своего сервера и `api_id`/`api_hash`; платформа `tg` в `posters.ts` закомментирована |
 | `+TELEGRAM_GDRIVE_BOT_PLAN.md` | сбор медиа из Telegram (`tgCollect`), **фаза 1** | ⏸ жизненный цикл локального Bot API сервера — на паузе до своего сервера и `api_id`/`api_hash` (пока лимит 20 МБ); фазы 2 (мультифайл/сессии), 3 (MTProto), 4 (webhook) |
-| `+PROJECT_DESCRIPTION_EDITOR_PLAN.md` | редактор `options/description.md` (Tiptap + текстовый режим), проверен вживую 2026-08-24 | показ/правка на сайте, drag-n-drop файла, превью mermaid |
+| `+PROJECT_DESCRIPTION_EDITOR_PLAN.md` | редактор `options/description.md` (Tiptap + текстовый режим), проверен вживую 2026-08-24; локальный превью mermaid и тултипы на markdown — сделаны | показ/правка на сайте (их сторона — уже готова), drag-n-drop файла (нужен арбитр дропа на окно) |
+| `+SETTINGS_SYNC_PLAN.md` | синхронизация общих словарей с сайтом (трёхстороннее слияние, база-снимок, триггер по ревизии из `/delta`, UI-статус) | §5.2 — три словаря перевести из localStorage в файлы (пока закрыто защитой в слиянии) |
 
 ## В работе / частично
 
@@ -30,7 +31,7 @@
 | `R2_SYNC_PLAN.md` | 🔧 клиент сделан; **зависимости от бэкенда снялись 2026-08-24** — у него готовы multipart, `/copy`, корзина, `sharing`. Наша работа: multipart-клиент, копирование через `/copy`, корзина/восстановление, `rename`/`copy` в меню |
 | `UNIFIED_SOURCES_ENGINE.md` | 🔧 фазы 1–5 закрыты (постинг); ⏸ TG как нода-источник отложен до тестов с большими файлами, дневная уборка — низкий приоритет |
 | `DISTRIBUTED_QUEUE_PLAN.md` | 🔧 режим воркера работает (живой прогон 2026-08-18); вопрос токена закрыт (`mch_` + `machineUuid`). ⏸ постинг через очередь отменён — публикует сайт, план у них: `innovation-hub/docs/SOCIAL_POSTING_PLAN.md` |
-| `SETTINGS_SYNC_PLAN.md` | 🔧 сделан только §6 (снимок словаря типов в `options.json`); синхронизация словарей с сайтом — нет, серверная сторона готова |
+
 | `SITE_STATS_LINK_PLAN.md` | 🔧 наша сторона (A, B) сделана; пункт C — за сайтом (`task.id` в `description.dbItemId`), у них тоже ещё ⬜ (`docs/PIPELINE.md` §15) |
 | `PIPELINE_BACKEND_REQUESTS.md` | 🔧 живой список просьб к сайту по конвейеру и воркеру, статусы внутри |
 

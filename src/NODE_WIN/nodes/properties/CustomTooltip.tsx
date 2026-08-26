@@ -3,64 +3,39 @@ import { IconButton, Tooltip, ClickAwayListener, Box } from '@mui/material';
 
 import { CircleQuestionMark } from 'lucide-react';
 import type { BoxProps, TooltipProps } from '@mui/material';
-import ReactMarkdown from 'react-markdown';
 import { greyColor } from '@/Store/Color/grayColor';
+import MarkdownView from '@/components/markdown/MarkdownView';
 
 interface MyToolTipProps extends BoxProps {
 	placement?: TooltipProps['placement'];
-	tooltip: string; // HTML string (or legacy Markdown)
+	/** Markdown (новый формат) либо HTML — легаси из старого RichTextEditor. */
+	tooltip: string;
 }
 
-/** Detect if a string is HTML (starts with an HTML tag or contains HTML tags anywhere) */
+/** Строка похожа на HTML: подсказки, написанные старым RichTextEditor, приходят тегами. */
 function isHtml(s: string): boolean {
 	return /<[a-z][^>]*>/i.test(s);
 }
 
 /**
- * Отрисовка текста подсказки: HTML как есть, иначе Markdown.
- * Вынесено отдельно, чтобы редактор своей подсказки (`EditableTooltip`)
- * показывал ровно то же, что и обычный tooltip.
+ * Отрисовка текста подсказки.
+ *
+ * Формат подсказок — markdown того же контракта, что и описание проекта, но в
+ * урезанном профиле (`MarkdownView variant='tooltip'`): текст, цвет, списки,
+ * ссылки; таблицы, картинки и блок-схемы в поповере вырезаются санитайзером.
+ * Цвет размечается классами `fg-*`/`bg-*` — поэтому подсказка выглядит
+ * одинаково здесь, в редакторе подсказки и на сайте.
+ *
+ * HTML-ветка остаётся навсегда: тултипы в `ui.json` у 45 плагинов (и у уже
+ * установленных у людей бандлов) написаны тегами, и переписать их разово
+ * нельзя — конвертер не догонит чужие копии. Отсюда правило: РЕДАКТОР пишет
+ * только markdown, ПОКАЗ понимает оба формата.
+ *
+ * Вынесено отдельным экспортом, чтобы редактор своей подсказки
+ * (`EditableTooltip`) показывал ровно то же, что и обычный тултип.
  */
 export function TooltipBody({ tooltip }: { tooltip: string }) {
-	const gray15 = greyColor(15);
-	const gray70 = greyColor(70);
-
-	const markdownComponents = {
-		p: ({ node, ...props }: any) => <p style={{ margin: '0 0 6px 0' }} {...props} />,
-		ul: ({ node, ...props }: any) => <ul style={{ paddingLeft: 20, margin: '6px 0' }} {...props} />,
-		ol: ({ node, ...props }: any) => <ol style={{ paddingLeft: 20, margin: '6px 0' }} {...props} />,
-		li: ({ node, ...props }: any) => <li style={{ marginBottom: 4 }} {...props} />,
-		strong: ({ node, ...props }: any) => <strong style={{ color: '#eeeeeeff', fontWeight: 700 }} {...props} />,
-		em: ({ node, ...props }: any) => <em style={{ fontStyle: 'italic' }} {...props} />,
-		code: ({ node, ...props }: any) => (
-			<code
-				style={{
-					backgroundColor: gray15,
-					padding: '1px 4px',
-					borderRadius: 4,
-					fontFamily: 'monospace',
-					fontSize: 12,
-				}}
-				{...props}
-			/>
-		),
-		blockquote: ({ node, ...props }: any) => (
-			<blockquote
-				style={{
-					borderLeft: '3px solid #89b4fa',
-					paddingLeft: 12,
-					margin: '8px 0',
-					color: gray70,
-					fontStyle: 'italic',
-				}}
-				{...props}
-			/>
-		),
-		a: ({ node, ...props }: any) => <a style={{ color: '#89b4fa', textDecoration: 'underline' }} {...props} />,
-		h1: ({ node, ...props }: any) => <h1 style={{ fontSize: 16, fontWeight: 700, margin: '8px 0 4px 0' }} {...props} />,
-		h2: ({ node, ...props }: any) => <h2 style={{ fontSize: 15, fontWeight: 700, margin: '8px 0 4px 0' }} {...props} />,
-		h3: ({ node, ...props }: any) => <h3 style={{ fontSize: 14, fontWeight: 600, margin: '6px 0 4px 0' }} {...props} />,
-	};
+	if (!tooltip) return null;
 
 	return isHtml(tooltip) ? (
 		<div
@@ -69,7 +44,7 @@ export function TooltipBody({ tooltip }: { tooltip: string }) {
 			style={{ fontSize: 13, lineHeight: 1.6 }}
 		/>
 	) : (
-		<ReactMarkdown components={markdownComponents}>{tooltip}</ReactMarkdown>
+		<MarkdownView variant='tooltip'>{tooltip}</MarkdownView>
 	);
 }
 

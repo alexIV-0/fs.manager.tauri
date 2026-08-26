@@ -128,6 +128,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             color_types_remove,
             file_types_get,
             file_types_set,
+            settings_sync_base_get,
+            settings_sync_base_set,
             program_paths_get,
             program_paths_set,
             cleanup_auto_delete,
@@ -174,6 +176,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             deps_whisper_models_dir,
             deps_list_whisper_models,
             deps_download_whisper_model,
+            deps_delete_whisper_model,
             deps_download_tg_server,
             // preview: точный ffmpeg-рендер кадра для редакторов фильтров
             preview_render_frame,
@@ -219,6 +222,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             storage_disconnect,
             storage_status,
             storage_refresh_projects,
+            // Общие словари (типы файлов/нод/данных, маски) — синхронизация с сайтом.
+            storage_settings_get,
+            storage_settings_put,
             // Очередь задач конвейера (режим воркера).
             storage_queue_ping,
             storage_queue_claim,

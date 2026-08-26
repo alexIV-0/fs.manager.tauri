@@ -42,6 +42,12 @@ pub struct Sync {
     pub provider: Provider,
     pub index: Index,
     caps: Capabilities,
+    /// Ревизия общих словарей из последнего ответа `/delta`.
+    ///
+    /// Живёт здесь, а не в индексе: это не состояние каталога, а попутное поле
+    /// ответа. Сравнивает и решает `StorageService` — он же владеет событиями в
+    /// renderer, а этот слой про окна не знает.
+    pub settings_revision: Option<i64>,
 }
 
 impl Sync {
@@ -52,6 +58,7 @@ impl Sync {
             provider,
             index,
             caps: Capabilities::default(),
+            settings_revision: None,
         }
     }
 
@@ -119,6 +126,9 @@ impl Sync {
         for _ in 0..MAX_DELTA_PAGES {
             let page = self.provider.delta(project_id, cursor).await?;
             report.pages += 1;
+            if page.settings_revision.is_some() {
+                self.settings_revision = page.settings_revision;
+            }
 
             if page.truncated {
                 // Курсор старше окна хранения журнала: инкрементом уже не догнать.
@@ -232,6 +242,72 @@ mod tests {
             content_type: None,
             event_time: None,
         }
+    }
+
+    fn settings_entry(name: &str, path: &[&str], color: Option<&str>, is_default: bool) -> SettingsEntry {
+        SettingsEntry {
+            name: name.into(),
+            path: path.iter().map(|s| s.to_string()).collect(),
+            color: color.map(|c| c.to_string()),
+            is_default,
+        }
+    }
+
+    /// Ревизия словарей приезжает попутным полем `/delta` — без этого renderer не
+    /// узнал бы об изменении словаря вообще (отдельного поллинга нет намеренно).
+    #[tokio::test]
+    async fn дельта_приносит_ревизию_словарей() {
+        let mut settings = HashMap::new();
+        settings.insert(
+            "fileType".to_string(),
+            vec![settings_entry("video", &["mp4"], Some("#0a84fe"), true)],
+        );
+        let (mut sync, _mock) = sync_with(MockState {
+            trees: HashMap::from([("p1".to_string(), vec![entry("f1", "IN", "a.mp4")])]),
+            settings,
+            settings_revision: 7,
+            ..Default::default()
+        });
+
+        sync.bootstrap("p1").await.unwrap();
+        sync.catch_up("p1").await.unwrap();
+
+        assert_eq!(sync.settings_revision, Some(7));
+    }
+
+    /// Запись словарей проверяется по ревизии: не совпала — 409 приходит РЕЗУЛЬТАТОМ
+    /// с текущим документом, а не ошибкой. Иначе клиент не отличил бы «слей и
+    /// повтори» от «сеть отвалилась», и слияние не запустилось бы никогда.
+    #[tokio::test]
+    async fn запись_словарей_конфликтует_по_ревизии() {
+        let (sync, _mock) = sync_with(MockState {
+            settings_revision: 3,
+            ..Default::default()
+        });
+
+        let body = serde_json::json!({
+            "fileType": [{ "name": "video", "path": ["mp4"], "color": "#0a84fe", "isDefault": true }]
+        });
+
+        // Устаревшая ревизия — конфликт, документ сервера в ответе.
+        let stale = sync.provider.settings_put(2, body.clone()).await.unwrap();
+        assert!(stale.conflict);
+        assert_eq!(stale.document.revision, 3);
+
+        // Актуальная — запись и рост ревизии.
+        let saved = sync.provider.settings_put(3, body).await.unwrap();
+        assert!(!saved.conflict);
+        assert_eq!(saved.document.revision, 4);
+        assert_eq!(saved.document.domains["fileType"].len(), 1);
+
+        // Чтение отдаёт то же, что записали.
+        let read = sync
+            .provider
+            .settings_get(&["fileType".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(read.revision, 4);
+        assert_eq!(read.domains["fileType"][0].name, "video");
     }
 
     fn sync_with(state: MockState) -> (Sync, MockApi) {

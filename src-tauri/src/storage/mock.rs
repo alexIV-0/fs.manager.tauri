@@ -52,6 +52,11 @@ pub struct MockState {
     /// ни строки в каталоге, ни ключа — только содержимое по фиксированному адресу,
     /// поэтому и в моке это просто карта строк.
     pub sidecars: HashMap<String, String>,
+    /// Общие словари: домен → записи, плюс глобальная ревизия. Ведёт себя как
+    /// бэкенд: ревизия растёт на КАЖДУЮ запись, даже если содержимое то же —
+    /// это счётчик версии для оптимистической блокировки, а не хеш состояния.
+    pub settings: HashMap<String, Vec<SettingsEntry>>,
+    pub settings_revision: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -243,6 +248,7 @@ impl MockApi {
                     changes: vec![],
                     cursor: since,
                     truncated: true,
+                    settings_revision: Some(s.settings_revision),
                 });
             }
 
@@ -262,6 +268,69 @@ impl MockApi {
                 changes,
                 cursor,
                 truncated: false,
+                settings_revision: Some(s.settings_revision),
+            })
+        })
+    }
+
+    /// Общие словари. Пустой список доменов — все.
+    pub async fn settings_get(&self, domains: &[String]) -> StorageResult<SettingsDocument> {
+        if let Some(e) = self.take_failure() {
+            return Err(e);
+        }
+        self.with(|s| {
+            let out: HashMap<String, Vec<SettingsEntry>> = if domains.is_empty() {
+                s.settings.clone()
+            } else {
+                domains
+                    .iter()
+                    .filter_map(|d| s.settings.get(d).map(|v| (d.clone(), v.clone())))
+                    .collect()
+            };
+            Ok(SettingsDocument {
+                revision: s.settings_revision,
+                domains: out,
+            })
+        })
+    }
+
+    /// Запись словарей. Мок повторяет главное свойство бэкенда — проверку ревизии:
+    /// не совпала, значит между чтением и записью кто-то успел записать, и клиент
+    /// обязан слить три стороны. Без этого 409-ветку клиента нечем проверить.
+    pub async fn settings_put(
+        &self,
+        base_revision: i64,
+        domains: serde_json::Value,
+    ) -> StorageResult<SettingsPutResult> {
+        if let Some(e) = self.take_failure() {
+            return Err(e);
+        }
+        self.with(|s| {
+            if base_revision != s.settings_revision {
+                return Ok(SettingsPutResult {
+                    conflict: true,
+                    document: SettingsDocument {
+                        revision: s.settings_revision,
+                        domains: s.settings.clone(),
+                    },
+                });
+            }
+
+            let parsed: HashMap<String, Vec<SettingsEntry>> =
+                serde_json::from_value(domains).map_err(|e| {
+                    StorageError::Other(format!("мок: не разобраны домены настроек: {e}"))
+                })?;
+            for (domain, entries) in parsed {
+                s.settings.insert(domain, entries);
+            }
+            s.settings_revision += 1;
+
+            Ok(SettingsPutResult {
+                conflict: false,
+                document: SettingsDocument {
+                    revision: s.settings_revision,
+                    domains: s.settings.clone(),
+                },
             })
         })
     }

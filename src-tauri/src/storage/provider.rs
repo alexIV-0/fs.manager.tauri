@@ -36,6 +36,20 @@ impl Provider {
         dispatch!(self, projects())
     }
 
+    // ─── Общие словари ───────────────────────────────────────────────────────
+
+    pub async fn settings_get(&self, domains: &[String]) -> StorageResult<SettingsDocument> {
+        dispatch!(self, settings_get(domains))
+    }
+
+    pub async fn settings_put(
+        &self,
+        base_revision: i64,
+        domains: serde_json::Value,
+    ) -> StorageResult<SettingsPutResult> {
+        dispatch!(self, settings_put(base_revision, domains.clone()))
+    }
+
     // ─── Очередь задач ───────────────────────────────────────────────────────
 
     pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<()> {

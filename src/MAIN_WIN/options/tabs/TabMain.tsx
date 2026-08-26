@@ -428,61 +428,6 @@ export default function TabMain({ draft, setDraft }: TabMainProps) {
 					<MyTooltip text='Динамический список локальных архивов. Каждый архив имеет чекбокс (включить/выключить), маску пути и шаблон сохранения. Нажмите «+ Добавить архив» для новой записи.' />
 				</Box>
 			</Section>
-
-			{/* ============ ОНЛАЙН-БД ============ */}
-			<Section title='Онлайн-БД'>
-				<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-					<Checkbox
-						size='small'
-						checked={settings.storage.onlineDb.enabled}
-						onChange={(e) =>
-							patch({
-								storage: {
-									onlineDb: { ...settings.storage.onlineDb, enabled: e.target.checked },
-								},
-							})
-						}
-						sx={{ p: 0.5 }}
-					/>
-					<TextField
-						size='small'
-						variant='standard'
-						placeholder='https://...'
-						value={settings.storage.onlineDb.url}
-						onChange={(e) =>
-							patch({
-								storage: {
-									onlineDb: { ...settings.storage.onlineDb, url: e.target.value },
-								},
-							})
-						}
-						sx={{ flex: 1, minWidth: 260, '& input': { fontSize: '0.9rem' } }}
-					/>
-					<Select
-						size='small'
-						variant='standard'
-						value={templates.some((t) => t.id === settings.storage.onlineDb.templateId) ? settings.storage.onlineDb.templateId : ''}
-						onChange={(e) =>
-							patch({
-								storage: {
-									onlineDb: {
-										...settings.storage.onlineDb,
-										templateId: e.target.value,
-									},
-								},
-							})
-						}
-						sx={{ width: 200, fontSize: '0.9rem' }}
-					>
-						{templates.map((t) => (
-							<MenuItem key={t.id} value={t.id}>
-								{t.label}
-							</MenuItem>
-						))}
-					</Select>
-					<MyTooltip text='Чекбокс включает отправку, URL — адрес БД, Шаблон — форма записи. Механизм отправки пока не реализован, поле сохраняется для будущей интеграции.' />
-				</Box>
-			</Section>
 		</Box>
 	);
 }

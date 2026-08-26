@@ -485,6 +485,12 @@ pub struct StorageService {
     /// фоновая передача (префетч, заливка демоном, вытеснение) оставляла на экране
     /// прежнюю картинку — файл уже на диске, а нарисовано «только в облаке».
     app: StdMutex<Option<tauri::AppHandle>>,
+    /// Последняя известная ревизия ОБЩИХ СЛОВАРЕЙ. `-1` — ещё не знаем.
+    ///
+    /// Нужна, чтобы событие «словари изменились» летело в renderer только на
+    /// изменение: ревизия приезжает попутным полем каждого `/delta`, то есть раз
+    /// в три секунды, и без сравнения интерфейс перечитывал бы словари постоянно.
+    known_settings_revision: std::sync::atomic::AtomicI64,
     http: reqwest::Client,
 }
 
@@ -508,6 +514,7 @@ impl StorageService {
             watcher: StdMutex::new(None),
             warm: StdMutex::new(HashMap::new()),
             app: StdMutex::new(None),
+            known_settings_revision: std::sync::atomic::AtomicI64::new(-1),
             http: reqwest::Client::new(),
         }
     }
@@ -888,6 +895,60 @@ impl StorageService {
     fn machine(&self) -> (&'static str, &'static str) {
         let id = crate::machine::identity();
         (id.uuid.as_str(), id.label.as_str())
+    }
+
+    // ─── Общие словари ───────────────────────────────────────────────────────
+
+    /// Прочитать словари с сервера. Пустой список доменов — все.
+    pub async fn settings_get(&self, domains: Vec<String>) -> Result<SettingsDocument, String> {
+        let p = self.require_provider()?;
+        p.settings_get(&domains).await.map_err(|e| e.to_string())
+    }
+
+    /// Записать словари от известной ревизии. 409 доезжает результатом
+    /// (`conflict = true`), а не ошибкой — см. `SettingsPutResult`.
+    pub async fn settings_put(
+        &self,
+        base_revision: i64,
+        domains: serde_json::Value,
+    ) -> Result<SettingsPutResult, String> {
+        let p = self.require_provider()?;
+        let out = p
+            .settings_put(base_revision, domains)
+            .await
+            .map_err(|e| e.to_string())?;
+        // Свою же запись запоминаем как известную: иначе первый же `/delta` после
+        // записи сообщил бы «ревизия изменилась» и renderer пошёл бы тянуть то, что
+        // только что сам и отправил.
+        if !out.conflict {
+            self.known_settings_revision
+                .store(out.document.revision, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(out)
+    }
+
+    /// Сообщить интерфейсу, что общие словари на сервере изменились.
+    ///
+    /// Зовётся после догона проекта: ревизия приезжает попутным полем `/delta`,
+    /// поэтому отдельного поллинга нет. Событие эмитится ТОЛЬКО на изменение —
+    /// иначе renderer тянул бы словари каждые три секунды.
+    fn emit_settings_revision(&self, revision: i64) {
+        use std::sync::atomic::Ordering;
+        let known = self.known_settings_revision.load(Ordering::Relaxed);
+        if known == revision {
+            return;
+        }
+        self.known_settings_revision.store(revision, Ordering::Relaxed);
+        // Первое известное значение — не «изменилось»: при подключении словари
+        // читаются безусловно, и лишнее событие только удвоило бы запрос.
+        if known < 0 {
+            return;
+        }
+        let guard = self.app.lock().unwrap();
+        if let Some(app) = guard.as_ref() {
+            use tauri::Emitter;
+            let _ = app.emit("settings-revision-changed", revision);
+        }
     }
 
     pub async fn queue_ping(&self) -> Result<(), String> {
@@ -2363,9 +2424,16 @@ impl StorageService {
             .as_mut()
             .ok_or_else(|| "Хранилище не подключено".to_string())?;
         let report = s.catch_up(project_id).await.map_err(|e| e.to_string())?;
+        // Ревизия словарей приезжает попутным полем `/delta` — забираем до того, как
+        // отпустим лок, а сравниваем и эмитим уже без него.
+        let settings_revision = s.settings_revision;
         // Лок каталога отпускаем ДО сетевых запросов за сайдкарами: держать его на
         // время трёх GET значит подвесить листинг колонок на всё это время.
         drop(g);
+
+        if let Some(rev) = settings_revision {
+            self.emit_settings_revision(rev);
+        }
 
         for which in super::types::Sidecar::from_mask(report.sidecars_dirty) {
             // Ошибка одного сайдкара не должна ронять догон: дельты уже применены,

@@ -9,9 +9,9 @@
 import { greenColor, greyColor, redColor, cyanColor, yellowColor } from '@/Store/Color/grayColor';
 import { folderPath_store, programPathPattern_store } from '@/Store/MainWin/pathPattern_store';
 import { commands, unwrap } from '@/Utils/specta';
-import { Box, Button, CircularProgress, FormControlLabel, LinearProgress, Switch, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, FormControlLabel, IconButton, LinearProgress, Switch, TextField, Tooltip, Typography } from '@mui/material';
 import { listen } from '@tauri-apps/api/event';
-import { CheckCircle2, Download, FolderInput } from 'lucide-react';
+import { CheckCircle2, Download, FolderInput, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { FfmpegInstallResult, FfmpegStatus, WhisperModel } from '@/bindings';
 
@@ -156,6 +156,11 @@ export function WhisperModelsSection() {
 	const [downloading, setDownloading] = useState<Set<string>>(new Set());
 	const [progressByFile, setProgressByFile] = useState<Record<string, DepsProgress>>({});
 	const [errorByFile, setErrorByFile] = useState<Record<string, string>>({});
+	// Модель, у которой нажали корзину: вместо блокирующего confirm() строка сама
+	// просит подтверждения. Модель качается десятки минут, случайный клик по
+	// корзине стоит дорого, а confirm() в WKWebView вешает окно целиком.
+	const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+	const [deleting, setDeleting] = useState<Set<string>>(new Set());
 
 	// Реактивно следим за подключённой папкой whisper.
 	const folderEntries = folderPath_store((s) => s.patternStore);
@@ -218,6 +223,28 @@ export function WhisperModelsSection() {
 		}
 	};
 
+	const deleteOne = async (m: WhisperModel) => {
+		setConfirmDelete(null);
+		setDeleting((s) => new Set(s).add(m.filename));
+		setErrorByFile((e) => {
+			const n = { ...e };
+			delete n[m.filename];
+			return n;
+		});
+		try {
+			unwrap(await commands.depsDeleteWhisperModel(m.filename));
+			await refreshList();
+		} catch (e) {
+			setErrorByFile((er) => ({ ...er, [m.filename]: e instanceof Error ? e.message : String(e) }));
+		} finally {
+			setDeleting((s) => {
+				const n = new Set(s);
+				n.delete(m.filename);
+				return n;
+			});
+		}
+	};
+
 	// «Скачать всё недостающее» — пул из ALL_CONCURRENCY воркеров, чтобы не открывать
 	// десяток многогигабайтных стримов разом.
 	const handleDownloadAll = async () => {
@@ -270,6 +297,8 @@ export function WhisperModelsSection() {
 			<Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
 				{models.map((m) => {
 					const isActive = downloading.has(m.filename);
+					const isDeleting = deleting.has(m.filename);
+					const isConfirming = confirmDelete === m.filename;
 					const prog = progressByFile[m.filename];
 					const err = errorByFile[m.filename];
 					return (
@@ -296,9 +325,44 @@ export function WhisperModelsSection() {
 								</Typography>
 
 								{m.downloaded ? (
-									<Tooltip title='скачано'>
-										<CheckCircle2 size={18} color={greenColor(70)} />
-									</Tooltip>
+									<>
+										<Tooltip title='скачано'>
+											<CheckCircle2 size={18} color={greenColor(70)} />
+										</Tooltip>
+										{/* Подтверждение прямо в строке: два шага защищают от случайного
+										    клика, но не блокируют окно, как это делает confirm(). */}
+										{isConfirming ? (
+											<>
+												<Button
+													size='small'
+													variant='text'
+													onClick={() => deleteOne(m)}
+													sx={{ minWidth: 0, px: 0.5, py: 0, fontSize: 11, textTransform: 'none', color: redColor(75) }}
+												>
+													удалить?
+												</Button>
+												<Button
+													size='small'
+													variant='text'
+													onClick={() => setConfirmDelete(null)}
+													sx={{ minWidth: 0, px: 0.5, py: 0, fontSize: 11, textTransform: 'none', color: greyColor(60) }}
+												>
+													нет
+												</Button>
+											</>
+										) : (
+											<Tooltip title={`Удалить с диска (${m.sizeLabel})`}>
+												<IconButton
+													size='small'
+													disabled={isDeleting}
+													onClick={() => setConfirmDelete(m.filename)}
+													sx={{ p: 0.25 }}
+												>
+													{isDeleting ? <CircularProgress size={14} /> : <Trash2 size={15} color={greyColor(70)} />}
+												</IconButton>
+											</Tooltip>
+										)}
+									</>
 								) : (
 									<Button
 										size='small'

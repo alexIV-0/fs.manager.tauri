@@ -32,15 +32,8 @@ export interface LocalArchiveEntry {
 	templateId: string;
 }
 
-export interface OnlineDbSettings {
-	enabled: boolean;
-	url: string;
-	templateId: string;
-}
-
 export interface StorageSettings {
 	localArchives: LocalArchiveEntry[]; // массив для поддержки нескольких архивов
-	onlineDb: OnlineDbSettings;
 }
 
 export interface CleanupSettings {
@@ -175,7 +168,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 		// Здесь живут только ДОПОЛНИТЕЛЬНЫЕ архивы, заведённые человеком.
 		// Держать синхронно с default_app_settings() в src-tauri/.../settings_commands.rs.
 		localArchives: [],
-		onlineDb: { enabled: false, url: '', templateId: 'database-sync' },
 	},
 	cleanup: {
 		retentionDays: null,

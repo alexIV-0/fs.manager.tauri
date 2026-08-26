@@ -304,28 +304,30 @@ export function MainFolderColumn() {
 
 			{/* Две кнопки добавления одинаковой ширины. Отдельной кнопки обновления
 			    здесь нет намеренно: у каждой папки своя, на строке при наведении, и
-			    для облачной она заодно обновляет каталог. */}
+			    для облачной она заодно обновляет каталог.
+
+			    Без подключённого хранилища облачной кнопки нет совсем (раньше висела
+			    погашенной): тому, кто облаком не пользуется, она не объясняет ничего,
+			    а «+ папка» при этом занимает всю ширину. */}
 			<Box sx={{ ...bottomBoxStyle, ...bottomShadowStyle, display: 'flex', alignItems: 'center' }}>
 				<Button onClick={addNewFolder} sx={{ p: 0, flex: 1, minWidth: 0 }} disabled={isScanning}>
 					+ папка
 				</Button>
 
-				<Tooltip
-					title={storageStatus.connected ? 'Добавить папку из облака' : 'Хранилище не подключено'}
-					placement='top'
-					arrow
-				>
-					<span style={{ flex: 1, display: 'flex' }}>
-						<Button
-							onClick={() => setAddOnlineOpen(true)}
-							sx={{ p: 0, flex: 1, minWidth: 0 }}
-							disabled={isScanning || !storageStatus.connected}
-							startIcon={<Cloud size={13} strokeWidth={1} />}
-						>
-							+ из облака
-						</Button>
-					</span>
-				</Tooltip>
+				{storageStatus.connected && (
+					<Tooltip title='Добавить папку из облака' placement='top' arrow>
+						<span style={{ flex: 1, display: 'flex' }}>
+							<Button
+								onClick={() => setAddOnlineOpen(true)}
+								sx={{ p: 0, flex: 1, minWidth: 0 }}
+								disabled={isScanning}
+								startIcon={<Cloud size={13} strokeWidth={1} />}
+							>
+								+ из облака
+							</Button>
+						</span>
+					</Tooltip>
+				)}
 			</Box>
 
 			<AddOnlineFolderDialog open={addOnlineOpen} onClose={() => setAddOnlineOpen(false)} />

@@ -1,9 +1,9 @@
 // Кнопка синхронизации в верхней панели + модалка с двумя закладками.
 //
 // Кнопка сделана в том же виде, что счётчик итераций рядом: рамка, тёмный фон,
-// монospace. Две стрелки — скачивание и заливка, рядом процент. В покое кнопка
-// приглушена, но не исчезает: пропадающий элемент в панели сбивает раскладку и
-// заставляет искать его заново.
+// монospace. Две стрелки — скачивание и заливка, рядом процент. В покое приглушена,
+// но не исчезает: пропадающий элемент в панели сбивает раскладку. Совсем её нет
+// только без подключённого хранилища — там управлять нечем.
 
 import {
 	Box,
@@ -20,7 +20,7 @@ import {
 	Tooltip,
 	Typography,
 } from '@mui/material';
-import { ArrowDown, ArrowUp, CloudOff, CloudUpload, HardDriveDownload, OctagonPause, Pin, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CloudUpload, HardDriveDownload, OctagonPause, Pin, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { LocalFileRow, NotUploadedRow, TransferRow } from '@/bindings';
@@ -79,9 +79,6 @@ function summarize(rows: TransferRow[]): Summary {
 
 export function SyncStatusButton() {
 	const connected = storage_store((s) => s.status.connected);
-	// Показываем кнопку и когда хранилище заведено, но ещё не подключено: иначе
-	// «не подключено» и «кнопки нет» выглядят одинаково, и непонятно, что сломалось.
-	const configured = storage_store((s) => s.status.configured);
 	const [rows, setRows] = useState<TransferRow[]>([]);
 	const [open, setOpen] = useState(false);
 	const timer = useRef<number | null>(null);
@@ -113,7 +110,11 @@ export function SyncStatusButton() {
 		};
 	}, [connected]);
 
-	if (!connected && !configured) return null;
+	// Без подключения кнопки нет вовсе. Раньше она оставалась в виде «off» — на
+	// случай «хранилище заведено, но не поднялось», — но у того, кто облаком не
+	// пользуется, это вечно висящий мёртвый элемент. Состояние подключения видно
+	// на вкладке Настройки → Хранилище, туда же ведёт и всё остальное.
+	if (!connected) return null;
 
 	const s = summarize(rows);
 	const pct = s.progress === null ? null : Math.round(s.progress * 100);
@@ -123,13 +124,11 @@ export function SyncStatusButton() {
 		<>
 			<Tooltip
 				title={
-					!connected
-						? 'Хранилище не подключено. Настройки → Хранилище'
-						: busy
-							? `Скачивается: ${s.down}, заливается: ${s.up}`
-							: s.failed > 0
-								? `Ошибок передачи: ${s.failed}`
-								: 'Синхронизация: очередь пуста'
+					busy
+						? `Скачивается: ${s.down}, заливается: ${s.up}`
+						: s.failed > 0
+							? `Ошибок передачи: ${s.failed}`
+							: 'Синхронизация: очередь пуста'
 				}
 			>
 				<Box
@@ -154,17 +153,11 @@ export function SyncStatusButton() {
 						'&:hover': { opacity: 0.8 },
 					}}
 				>
-					{connected ? (
-						<>
-							<ArrowDown size={15} strokeWidth={1.5} style={{ color: s.down > 0 ? '#58a6ff' : undefined }} />
-							<ArrowUp size={15} strokeWidth={1.5} style={{ color: s.up > 0 ? '#3fb950' : undefined }} />
-							{s.failed > 0 && <TriangleAlert size={15} strokeWidth={1.5} style={{ color: '#f85149' }} />}
-						</>
-					) : (
-						<CloudOff size={15} strokeWidth={1.5} />
-					)}
+					<ArrowDown size={15} strokeWidth={1.5} style={{ color: s.down > 0 ? '#58a6ff' : undefined }} />
+					<ArrowUp size={15} strokeWidth={1.5} style={{ color: s.up > 0 ? '#3fb950' : undefined }} />
+					{s.failed > 0 && <TriangleAlert size={15} strokeWidth={1.5} style={{ color: '#f85149' }} />}
 					<Box component='span' sx={{ minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-						{!connected ? 'off' : pct !== null ? `${pct}%` : busy ? '…' : '—'}
+						{pct !== null ? `${pct}%` : busy ? '…' : '—'}
 					</Box>
 				</Box>
 			</Tooltip>
