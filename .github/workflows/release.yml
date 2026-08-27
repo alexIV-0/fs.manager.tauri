@@ -71,9 +71,13 @@ jobs:
 
           sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
 
+          # Cargo.lock держим в синхроне: при бампе меняется только версия
+          # самого крейта fs-manager-tauri (зависимости не трогаются)
+          sed -i "/^name = \"fs-manager-tauri\"/{n;s/^version = \".*\"/version = \"$NEW_VERSION\"/}" src-tauri/Cargo.lock
+
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
           git commit -m "chore: bump version to $NEW_VERSION [skip ci]" || echo "Nothing to commit"
           git push
 
