@@ -46,8 +46,7 @@ fn default_app_settings() -> Value {
             // см. `PROJECT_STATS_SEGMENTS` в `db_analytics.rs`. Здесь живут только
             // ДОПОЛНИТЕЛЬНЫЕ архивы, которые человек завёл себе сам.
             // Держать синхронно с DEFAULT_APP_SETTINGS в src/types/appSettings.ts.
-            "localArchives": [],
-            "onlineDb": { "enabled": false, "url": "", "templateId": "database-sync" }
+            "localArchives": []
         },
         "cleanup": { "retentionDays": null, "autoDisableDays": null },
         "logs": { "retentionDays": 2 },
@@ -103,6 +102,21 @@ fn file_types_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("app_data_dir: {}", e))?;
     fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {}", e))?;
     Ok(dir.join("fileTypes.json"))
+}
+
+/// База трёхстороннего слияния словарей: снимок серверного документа на момент
+/// последней успешной синхронизации.
+///
+/// Файлом, а не в localStorage: у webview localStorage чистится вместе с кэшем, а
+/// без базы слияние теряет способность различать «я поменял» и «сервер поменял» —
+/// и правки начинают молча затираться в одну из сторон.
+fn settings_sync_base_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {}", e))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all: {}", e))?;
+    Ok(dir.join("settingsSyncBase.json"))
 }
 
 fn program_paths_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -749,6 +763,27 @@ pub fn color_types_remove(
         st.color_types = current.clone();
     }
     Ok(current)
+}
+
+// ==================== Settings sync base ====================
+
+/// Снимок словарей на момент последней успешной синхронизации.
+///
+/// `null` (первый запуск, файла нет) — база неизвестна, и слияние обязано вести
+/// себя осторожно: считать местные записи «своими правками», а не «удалёнными на
+/// сервере». Логика в `src/Utils/settingsSync.ts`.
+#[tauri::command]
+#[specta::specta]
+pub fn settings_sync_base_get(app: tauri::AppHandle) -> Result<Value, String> {
+    let path = settings_sync_base_path(&app)?;
+    Ok(read_json(&path, Value::Null))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn settings_sync_base_set(app: tauri::AppHandle, base: Value) -> Result<(), String> {
+    let path = settings_sync_base_path(&app)?;
+    write_json(&path, &base)
 }
 
 // ==================== File Types ====================

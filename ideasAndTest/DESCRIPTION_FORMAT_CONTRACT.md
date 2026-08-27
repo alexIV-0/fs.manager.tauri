@@ -8,7 +8,7 @@
 > правится там же. Стеки разные, поэтому формат, набор разрешённой разметки, схема санитайза и
 > правила вёрстки фиксируются здесь один раз, а обе стороны реализуют их своими средствами.
 >
-> Наша сторона: план [`PROJECT_DESCRIPTION_EDITOR_PLAN.md`](./PROJECT_DESCRIPTION_EDITOR_PLAN.md).
+> Наша сторона: план [`+PROJECT_DESCRIPTION_EDITOR_PLAN.md`](./+PROJECT_DESCRIPTION_EDITOR_PLAN.md).
 > Транспорт: [`R2_SYNC_PLAN.md`](./R2_SYNC_PLAN.md), сайдкары.
 > **Копия для сайта положена:** `innovation-hub/docs/DESCRIPTION_FORMAT.md` (та же
 > договорённость, но с маппингом палитры на их токены и их CSP/next-нюансами), рядом —
@@ -290,7 +290,7 @@ export const descriptionSchema = {
 
 - на выходе — **только** подмножество §2. Ни одного тега и атрибута сверх списка;
 - набор кнопок имеет смысл повторить: он зафиксирован в
-  [`PROJECT_DESCRIPTION_EDITOR_PLAN.md`](./PROJECT_DESCRIPTION_EDITOR_PLAN.md) §2 вместе с тем,
+  [`+PROJECT_DESCRIPTION_EDITOR_PLAN.md`](./+PROJECT_DESCRIPTION_EDITOR_PLAN.md) §2 вместе с тем,
   что каждая кнопка пишет в файл;
 - блочные обёртки — с пустыми строками вокруг содержимого (§2);
 - цвет — только классами из §3, не hex;

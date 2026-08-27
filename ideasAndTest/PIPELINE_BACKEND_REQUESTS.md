@@ -9,7 +9,7 @@
 > Здесь только конвейер: сборка задач, выдача, режим воркера.
 >
 > Связанные документы: `innovation-hub/docs/PIPELINE.md`, `innovation-hub/docs/SETTINGS_SYNC.md`,
-> у нас — [`SETTINGS_SYNC_PLAN.md`](./SETTINGS_SYNC_PLAN.md) §6,
+> у нас — [`+SETTINGS_SYNC_PLAN.md`](./+SETTINGS_SYNC_PLAN.md) §6,
 > [`DISTRIBUTED_QUEUE_PLAN.md`](./DISTRIBUTED_QUEUE_PLAN.md).
 
 **Статусы:** ✅ работает · 🔧 частично · ⬜ не сделано
@@ -200,7 +200,7 @@ Hostname при этом остаётся как **подпись**: он чел
 ## 5. Что делаем со своей стороны
 
 - Снимок `fileTypes` в `options.json` при каждом сохранении графа + кнопка «применить типы
-  ко всем проектам» (см. [`SETTINGS_SYNC_PLAN.md`](./SETTINGS_SYNC_PLAN.md) §6).
+  ко всем проектам» (см. [`+SETTINGS_SYNC_PLAN.md`](./+SETTINGS_SYNC_PLAN.md) §6).
 - Клиент синхронизации словарей: три состояния связи, трёхстороннее слияние, `409` как
   штатный ответ.
 - Режим воркера: цикл `claim → материализация в scratch → подстановка машинно-локального →

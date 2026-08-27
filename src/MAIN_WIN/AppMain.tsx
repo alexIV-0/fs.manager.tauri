@@ -22,6 +22,7 @@ import { listen } from '@tauri-apps/api/event';
 import { CurentProjectFolder } from './ProjectFolderColumn/CurentProjectFolder';
 import { storage_store } from '@/Store/MainWin/storage_store';
 import { useStorageChanged } from './Storage/useStorageChanged';
+import { useSettingsSync } from './Storage/useSettingsSync';
 
 import { MainTopPanel } from './MainTopPanel';
 import { ProjectFolderColumn } from './ProjectFolderColumn/ProjectFolderColumn';
@@ -115,6 +116,10 @@ export default function AppMain() {
 	// Значки зеркала после фоновой передачи: скачали префетчем, залил демон,
 	// вытеснили по таймеру — интерфейс об этом иначе не узнаёт.
 	useStorageChanged();
+
+	// Общие словари: читаем при подключении и на изменение ревизии (её приносит
+	// `/delta`, отдельного поллинга нет).
+	useSettingsSync();
 
 	// Живое обновление списка плагинов после сборки/загрузки из PluginBuilder.
 	useEffect(() => {

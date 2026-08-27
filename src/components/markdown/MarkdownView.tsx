@@ -17,19 +17,31 @@
 
 import { Box } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material';
+import type { Element } from 'hast';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { greyColor } from '@/Store/Color/grayColor';
 import { commands } from '@/Utils/specta';
-import { descriptionSanitizeSchema, paletteCss } from './markdownFormat';
+import { descriptionSanitizeSchema, tooltipSanitizeSchema, paletteCss } from './markdownFormat';
+import { MermaidBlock } from './MermaidBlock';
+
+/**
+ * Два профиля показа:
+ *   full    — описание проекта: всё, включая таблицы, картинки и блок-схемы;
+ *   tooltip — подсказка свойства: только текст, цвет и списки (схема
+ *             `tooltipSanitizeSchema`), блочное вырезано, mermaid не рисуется.
+ */
+export type MarkdownVariant = 'full' | 'tooltip';
 
 interface MarkdownViewProps {
 	children: string;
 	/** Ограничение ширины колонки текста; контейнер при этом тянется. */
 	maxWidth?: number | string;
 	fontSize?: number | string;
+	variant?: MarkdownVariant;
 	sx?: SxProps<Theme>;
 }
 
@@ -39,7 +51,23 @@ const openExternal = (href?: string) => {
 	commands.shellOpenPath(href).catch(() => {});
 };
 
-const components: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+/** Язык и текст фенса — из hast-узла `pre`, иначе фенс не отличить от обычного `code`. */
+function fenceInfo(node: Element | undefined): { lang: string; text: string } | null {
+	const code = node?.children?.find((child): child is Element => child.type === 'element' && child.tagName === 'code');
+	if (!code) return null;
+
+	const raw = code.properties?.className;
+	const classes = Array.isArray(raw) ? raw.map(String) : [];
+	const lang = classes.find((c) => c.startsWith('language-'))?.slice('language-'.length) ?? '';
+	const text = code.children
+		.map((child) => (child.type === 'text' ? child.value : ''))
+		.join('')
+		.replace(/\n$/, '');
+
+	return { lang, text };
+}
+
+const components: Components = {
 	table: ({ node, ...props }) => (
 		<div className='md-table-wrap'>
 			<table {...props} />
@@ -59,7 +87,26 @@ const components: React.ComponentProps<typeof ReactMarkdown>['components'] = {
 			{children}
 		</a>
 	),
+
+	// Диаграмма перехватывается на `pre`, а не на `code`: контейнер схемы —
+	// блочный элемент, внутри <pre> ему делать нечего. Незнакомый язык фенса
+	// остаётся обычным блоком кода.
+	pre: ({ node, children, ...props }) => {
+		const fence = fenceInfo(node);
+		if (fence && fence.lang === 'mermaid' && fence.text.trim()) return <MermaidBlock chart={fence.text} />;
+		return <pre {...props}>{children}</pre>;
+	},
 };
+
+/**
+ * Карта для подсказок — без перехвата `pre`: блок-схема в поповере не нужна, а
+ * `MermaidBlock` тянул бы туда несколько мегабайт зависимости.
+ *
+ * Объявлена на уровне модуля рядом с основной: карта, собранная внутри
+ * компонента, каждый рендер даёт новые типы, и react-markdown размонтирует
+ * поддерево целиком.
+ */
+const tooltipComponents: Components = { a: components.a };
 
 /**
  * Оформление отрисованного markdown. Используется и просмотрщиком, и полотном
@@ -132,13 +179,37 @@ export function markdownProseSx(maxWidth: number | string = 820, fontSize: numbe
 	};
 }
 
-export function MarkdownView({ children, maxWidth = 820, fontSize = 14, sx }: MarkdownViewProps) {
+/**
+ * Компактная типографика подсказки: те же правила, но с маленькими отступами —
+ * поповер узкий, и воздух описания в нём выглядит дырами.
+ */
+export function tooltipProseSx(fontSize: number | string = 13): Record<string, unknown> {
+	return {
+		...markdownProseSx('100%', fontSize),
+		'& > *': { maxWidth: '100%' },
+		'& > *:first-of-type': { marginTop: 0 },
+		'& > *:last-child': { marginBottom: 0 },
+		'& p': { margin: '0 0 6px' },
+		'& ul, & ol': { paddingLeft: '18px', margin: '4px 0' },
+		'& li': { marginBottom: '2px' },
+		'& blockquote': { margin: '6px 0', padding: '1px 0 1px 10px' },
+		'& h1': { fontSize: '1.25em', fontWeight: 700, margin: '6px 0 3px' },
+		'& h2': { fontSize: '1.15em', fontWeight: 700, margin: '6px 0 3px' },
+		'& h3, & h4': { fontSize: '1.05em', fontWeight: 600, margin: '5px 0 3px' },
+		'& pre': { margin: '6px 0', padding: '6px 8px' },
+	};
+}
+
+export function MarkdownView({ children, maxWidth = 820, fontSize, variant = 'full', sx }: MarkdownViewProps) {
+	const tooltip = variant === 'tooltip';
+	const base = tooltip ? tooltipProseSx(fontSize ?? 13) : markdownProseSx(maxWidth, fontSize ?? 14);
+
 	return (
-		<Box sx={{ ...markdownProseSx(maxWidth, fontSize), ...sx } as SxProps<Theme>}>
+		<Box sx={{ ...base, ...sx } as SxProps<Theme>}>
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
-				rehypePlugins={[rehypeRaw, [rehypeSanitize, descriptionSanitizeSchema]]}
-				components={components}
+				rehypePlugins={[rehypeRaw, [rehypeSanitize, tooltip ? tooltipSanitizeSchema : descriptionSanitizeSchema]]}
+				components={tooltip ? tooltipComponents : components}
 			>
 				{children}
 			</ReactMarkdown>

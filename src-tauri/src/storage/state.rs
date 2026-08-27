@@ -108,6 +108,37 @@ pub struct FolderBadge {
     pub local_bytes: i64,
 }
 
+// ─── Поддерево пофайлово ─────────────────────────────────────────────────────
+
+/// Один файл поддерева со своим состоянием. Наружу не уходит: это вход массовой
+/// операции, а не строка списка.
+#[derive(Debug, Clone)]
+pub struct SubtreeFileState {
+    pub file_id: String,
+    pub folder_path: String,
+    pub name: String,
+    /// Каталог размера может не знать — тогда 0, и объём операции будет занижен.
+    /// Это лучше, чем не пускать файл в скачивание из-за отсутствующего числа.
+    pub size_bytes: i64,
+    pub state: FileState,
+    /// Есть ли ключ в бакете. Без него скачивать нечего — байтов у записи нет.
+    pub has_key: bool,
+}
+
+/// Чем объясняется расхождение файла: обе стороны и baseline между ними.
+#[derive(Debug, Clone)]
+pub struct SyncFacts {
+    pub state: FileState,
+    pub remote_size: Option<i64>,
+    /// Время файла в облаке. Обычно `None`: бэкенд его не отдаёт, и выдумывать
+    /// здесь нельзя — «неизвестно» обязано остаться «неизвестно».
+    pub remote_mtime: Option<i64>,
+    pub base_size: Option<i64>,
+    pub base_mtime: Option<i64>,
+    /// Unix-секунды последней успешной синхронизации.
+    pub synced_at: Option<i64>,
+}
+
 // ─── Счётчики поддерева ──────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -297,6 +328,64 @@ impl Index {
             st.query_row(params![project_id, folder_path, like], map)
         }
         .map_err(|e| e.to_string())
+    }
+
+    /// Состояния всех файлов поддерева — исходные данные массовой операции.
+    ///
+    /// Живёт здесь, а не в `index.rs`, по тому же правилу, что и весь модуль:
+    /// состояние файла считается в ОДНОМ месте. Массовая операция обязана видеть
+    /// ровно то, что человек видит значком, — иначе «скачать папку» однажды
+    /// потянет файл, у которого на экране галочка, и объяснить это будет нечем.
+    ///
+    /// Цена — запрос значка на файл. Это осознанно: выборка идёт под одним локом
+    /// каталога, по индексу, и только по явной команде человека (не на рендер).
+    pub fn subtree_states(
+        &self,
+        project_id: &str,
+        folder_path: &str,
+    ) -> Result<Vec<SubtreeFileState>, String> {
+        let entries = self.subtree_file_entries(project_id, folder_path)?;
+        let mut out = Vec::with_capacity(entries.len());
+        for e in entries {
+            // `None` — записи нет вовсе; для файла из выборки это невозможно, но
+            // подставляем тот же дефолт, что и листинг колонок: «только в облаке».
+            let state = self
+                .badge_state(&e.id)?
+                .map(|b| b.state)
+                .unwrap_or(FileState::Cloud);
+            out.push(SubtreeFileState {
+                file_id: e.id,
+                folder_path: e.folder_path,
+                name: e.name,
+                size_bytes: e.size_bytes.unwrap_or(0),
+                state,
+                has_key: e.s3_key.is_some(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Чем объясняется расхождение: обе стороны и baseline между ними.
+    ///
+    /// Диска здесь нет (правило модуля), поэтому текущий `mtime` копии добирает
+    /// вызывающий — `service::sync_detail`. Здесь только то, что знает каталог.
+    pub fn sync_facts(&self, file_id: &str) -> Result<Option<SyncFacts>, String> {
+        let Some(entry) = self.entry(file_id)? else {
+            return Ok(None);
+        };
+        let (base_size, base_mtime, synced_at) =
+            self.local_sync_row(file_id)?.unwrap_or((None, None, None));
+        Ok(Some(SyncFacts {
+            state: self
+                .badge_state(file_id)?
+                .map(|b| b.state)
+                .unwrap_or(FileState::Cloud),
+            remote_size: entry.size_bytes,
+            remote_mtime: entry.origin_mtime,
+            base_size,
+            base_mtime,
+            synced_at,
+        }))
     }
 
     /// Значки для всего содержимого папки — одним проходом, чтобы UI не дёргал

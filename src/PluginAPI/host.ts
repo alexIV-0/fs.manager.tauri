@@ -629,6 +629,51 @@ export function parseSceneTimestamps(stdout: string): number[] {
 
 // ─── ffmpeg / ffprobe ────────────────────────────────────────────────────────
 
+/** Контейнеры, чей muxer знает `-movflags`. Остальным этот флаг — ошибка запуска. */
+const FASTSTART_EXTS = ['.mp4', '.m4v', '.mov', '.m4a'];
+const FASTSTART_MUXERS = ['mp4', 'mov', 'ipod', 'm4v', 'mov,mp4,m4a,3gp,3g2,mj2'];
+
+/**
+ * Дописывает `-movflags +faststart` всем выходам в mp4/mov.
+ *
+ * Зачем в хосте, а не в каждой ноде: без этого флага `moov` (индекс файла) лежит
+ * В КОНЦЕ, и браузер не начинает играть файл, пока не скачает его целиком. Для
+ * локальной папки это не важно, а для облака важно всегда: превью на сайте, наши
+ * характеристики по Range (`ffprobe` читает только `moov`) и любой веб-плеер
+ * упираются в это. Ставить флаг руками в 45 плагинах — значит забыть его в
+ * сорок шестом; хост же одна живая копия и действует на все бандлы без пересборки.
+ *
+ * Правила безопасности (иначе флаг сломает чужую команду):
+ *   • есть явный `-movflags` — не трогаем, автор знает лучше;
+ *   • `-f <muxer>` не из семейства mov/mp4 — не трогаем (`-movflags` для чужого
+ *     muxer'а это «Option movflags not found» и падение);
+ *   • выход не файл (`-`, `/dev/null`, `NUL`) или расширение не наше — не трогаем;
+ *   • вставляем ПЕРЕД последним аргументом: `-movflags` — опция выхода, после имени
+ *     файла ffmpeg её не примет.
+ *
+ * Цена флага — второй проход по готовому файлу при закрытии (перенос `moov`),
+ * качество и содержимое не меняются.
+ */
+export function withFaststart(args: string[]): string[] {
+	if (!Array.isArray(args) || args.length < 2) return args;
+	if (args.some((a) => a === '-movflags')) return args;
+
+	const fIndex = args.lastIndexOf('-f');
+	if (fIndex >= 0 && fIndex + 1 < args.length) {
+		const muxer = String(args[fIndex + 1]).toLowerCase();
+		if (!FASTSTART_MUXERS.includes(muxer)) return args;
+	}
+
+	const out = String(args[args.length - 1]);
+	if (out === '-' || out === '/dev/null' || out.toUpperCase() === 'NUL') return args;
+
+	const dot = out.lastIndexOf('.');
+	if (dot < 0 || !FASTSTART_EXTS.includes(out.slice(dot).toLowerCase())) return args;
+
+	return [...args.slice(0, -1), '-movflags', '+faststart', out];
+}
+
+
 export const ffmpeg = {
 	/** Запускает ffprobe и возвращает массив streams. */
 	async probe(filePath: string): Promise<FfprobeStream[]> {
@@ -707,7 +752,7 @@ export const ffmpeg = {
 	/** Запускает ffmpeg с переданными аргументами. Прогресс эмитится в лог-окно. */
 	exec(args: string[], opts: FfmpegExecOptions = {}): Promise<FfmpegExecResult> {
 		return invokeHost('ffmpeg_exec_with_progress', {
-			args,
+			args: withFaststart(args),
 			durationSec: opts.durationSec,
 			nodeId: opts.nodeId,
 			statusText: opts.statusText,

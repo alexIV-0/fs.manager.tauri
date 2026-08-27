@@ -59,13 +59,18 @@ impl StorageApi {
         )
     }
 
-    async fn send<T: serde::de::DeserializeOwned>(
+    /// Сырой запрос: статус и тело без разбора.
+    ///
+    /// Отдельно от `send`, потому что у одного эндпоинта неуспешный статус — часть
+    /// протокола, а не сбой: `PUT /settings` отвечает 409 с ТЕЛОМ (текущий документ),
+    /// и это тело нужно для слияния. Всем остальным достаточно `send`.
+    async fn request_text(
         &self,
         method: Method,
         path: &str,
         query: &[(&str, String)],
         body: Option<serde_json::Value>,
-    ) -> StorageResult<T> {
+    ) -> StorageResult<(StatusCode, String)> {
         if !self.cfg.is_configured() {
             return Err(StorageError::NotConfigured(
                 "Не задан адрес сайта или machine token".into(),
@@ -94,6 +99,18 @@ impl StorageApi {
             .text()
             .await
             .map_err(|e| StorageError::Network(e.to_string()))?;
+
+        Ok((status, text))
+    }
+
+    async fn send<T: serde::de::DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<serde_json::Value>,
+    ) -> StorageResult<T> {
+        let (status, text) = self.request_text(method, path, query, body).await?;
 
         if !status.is_success() {
             return Err(map_status(status, &text));
@@ -192,6 +209,62 @@ impl StorageApi {
             ("since", since.to_string()),
         ];
         self.send(Method::GET, "delta", &q, None).await
+    }
+
+    // ─── Общие словари ───────────────────────────────────────────────────────
+
+    /// Прочитать словари. Пустой список доменов — все.
+    pub async fn settings_get(&self, domains: &[String]) -> StorageResult<SettingsDocument> {
+        let q: Vec<(&str, String)> = if domains.is_empty() {
+            vec![]
+        } else {
+            vec![("domains", domains.join(","))]
+        };
+        self.send(Method::GET, "settings", &q, None).await
+    }
+
+    /// Записать словари от известной ревизии.
+    ///
+    /// 409 сюда доезжает результатом, а не ошибкой: в теле лежит текущий документ
+    /// сервера, и без него клиенту пришлось бы делать ещё один запрос — и сливать
+    /// уже с третьей, снова успевшей устареть версией.
+    pub async fn settings_put(
+        &self,
+        base_revision: i64,
+        domains: serde_json::Value,
+    ) -> StorageResult<SettingsPutResult> {
+        let body = json!({ "baseRevision": base_revision, "domains": domains });
+        let (status, text) = self
+            .request_text(Method::PUT, "settings", &[], Some(body))
+            .await?;
+
+        if status == StatusCode::CONFLICT {
+            let document: SettingsDocument = serde_json::from_str(&text).map_err(|e| {
+                StorageError::Other(format!(
+                    "Не разобран 409 settings: {e}. Тело: {}",
+                    truncate(&text, 300)
+                ))
+            })?;
+            return Ok(SettingsPutResult {
+                conflict: true,
+                document,
+            });
+        }
+
+        if !status.is_success() {
+            return Err(map_status(status, &text));
+        }
+
+        let document: SettingsDocument = serde_json::from_str(&text).map_err(|e| {
+            StorageError::Other(format!(
+                "Не разобран ответ settings: {e}. Тело: {}",
+                truncate(&text, 300)
+            ))
+        })?;
+        Ok(SettingsPutResult {
+            conflict: false,
+            document,
+        })
     }
 
     // ─── Очередь задач ───────────────────────────────────────────────────────

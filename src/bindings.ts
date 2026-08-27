@@ -545,6 +545,29 @@ async fileTypesSet(types: JsonValue) : Promise<Result<JsonValue, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Снимок словарей на момент последней успешной синхронизации.
+ * 
+ * `null` (первый запуск, файла нет) — база неизвестна, и слияние обязано вести
+ * себя осторожно: считать местные записи «своими правками», а не «удалёнными на
+ * сервере». Логика в `src/Utils/settingsSync.ts`.
+ */
+async settingsSyncBaseGet() : Promise<Result<JsonValue, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_base_get") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async settingsSyncBaseSet(base: JsonValue) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_sync_base_set", { base }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async programPathsGet() : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("program_paths_get") };
@@ -990,6 +1013,20 @@ async depsListWhisperModels() : Promise<Result<WhisperModel[], string>> {
 async depsDownloadWhisperModel(filename: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("deps_download_whisper_model", { filename }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удаляет скачанную модель. Модель весит до 3 ГБ, а каталог показывает только
+ * «скачано/нет» — без удаления единственный способ освободить место был лезть в
+ * папку руками. Заодно подчищаем `.part` того же имени: недокачанный огрызок
+ * места занимает столько же, а в списке не виден вовсе.
+ */
+async depsDeleteWhisperModel(filename: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("deps_delete_whisper_model", { filename }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1481,6 +1518,32 @@ async storageRefreshProjects() : Promise<Result<ProjectsResponse, string>> {
 }
 },
 /**
+ * Прочитать общие словари с сервера. Пустой список доменов — все.
+ */
+async storageSettingsGet(domains: string[] | null) : Promise<Result<SettingsDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_settings_get", { domains }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Записать общие словари от известной ревизии.
+ * 
+ * Конфликт ревизий возвращается ПОЛЕМ `conflict`, а не ошибкой: 409 здесь —
+ * нормальный ответ протокола, и renderer обязан отличить его от сетевого сбоя,
+ * иначе слияние не запустится никогда (см. `SettingsPutResult`).
+ */
+async storageSettingsPut(baseRevision: number, domains: JsonValue) : Promise<Result<SettingsPutResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_settings_put", { baseRevision, domains }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * «Я на связи» без запроса задачи.
  * 
  * Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние
@@ -1876,6 +1939,91 @@ async storageClearFinishedTransfers() : Promise<Result<number, string>> {
 async storageSubtreeStats(projectId: string, folderPath: string) : Promise<Result<SubtreeStats, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_subtree_stats", { projectId, folderPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Что предстоит массовой операции по папке: числа для вопроса человеку.
+ * 
+ * Ни одного запроса в сеть (кроме первого `/tree` по проекту, если его ещё не
+ * делали): всё уже в индексе. `None` — путь не папка проекта в зеркале.
+ */
+async storageSubtreePlan(path: string) : Promise<Result<SubtreePlan | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_subtree_plan", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Скачать папку целиком: поставить в очередь всё, чего здесь нет.
+ * 
+ * Команда НЕ ждёт байтов — она отвечает числами, а везут файлы фоновые задачи.
+ * Папка на 50 ГБ иначе держала бы вызов часами, и отменить его было бы нечем.
+ * 
+ * `pin` — заодно «оставить оффлайн». Без него скачанную папку через несколько
+ * часов уносит вытеснение по TTL, и человек, скачавший её ради работы, остаётся
+ * ни с чем.
+ */
+async storageDownloadSubtree(path: string, pin: boolean | null) : Promise<Result<SubtreeQueued | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_download_subtree", { path, pin }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Отправить папку целиком: поставить в очередь заливки всё, что есть только здесь.
+ * 
+ * Явная команда человека, поэтому затишья не ждём и прошлую ручную остановку
+ * снимаем — иначе «отправить папку» молча пропускало бы ровно те файлы, из-за
+ * которых её и нажали.
+ */
+async storageUploadSubtree(path: string) : Promise<Result<SubtreeQueued | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_upload_subtree", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Состояние очереди массового скачивания — «12 из 47».
+ */
+async storageDownloadQueue() : Promise<Result<DownloadQueueStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_download_queue") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Снять из очереди всё, что ещё не начали. Идущие передачи не трогаются — их
+ * обрывают поимённо в списке передач, где видно, что именно прерываешь.
+ */
+async storageCancelDownloadQueue() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_cancel_download_queue") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Чем объясняется расхождение файла: обе стороны и baseline между ними.
+ * 
+ * Для подсказки у стрелок «скачать/залить»: значок говорит вывод, а человек хочет
+ * видеть, что с чем сравнили. Заодно сверяет копию с baseline — `LocalModified`
+ * иначе появляется только от фонового прохода.
+ */
+async storageSyncDetail(path: string) : Promise<Result<SyncDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("storage_sync_detail", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2675,6 +2823,26 @@ export type DialogFilter = { name: string; extensions: string[] }
 export type DocFile = { name: string; fileName: string }
 export type DocSection = { name: string; files: DocFile[] }
 /**
+ * Состояние очереди для интерфейса.
+ */
+export type DownloadQueueStatus = { 
+/**
+ * Ждут своей очереди.
+ */
+pending: number; 
+/**
+ * Качаются прямо сейчас.
+ */
+active: number; done: number; failed: number; 
+/**
+ * Всего в текущей серии.
+ */
+total: number; 
+/**
+ * Объём серии по каталогу.
+ */
+bytes: number }
+/**
  * Итог освобождения диска от копий одного владельца.
  */
 export type DropOwnerReport = { removed: number; freedBytes: number; 
@@ -3159,6 +3327,34 @@ export type SearchEntry = { type?: string; ext?: string[] }
 export type SelectFilesOptions = { multiSelect?: boolean; filters?: DialogFilter[] | null }
 export type SelectFoldersOptions = { multiSelect?: boolean }
 /**
+ * Документ словарей целиком. Домен — массив, а не объект: порядок значим
+ * (`getFileTypeByExt` возвращает ПЕРВОЕ совпадение).
+ */
+export type SettingsDocument = { revision?: number; domains?: Partial<{ [key in string]: SettingsEntry[] }> }
+/**
+ * Запись словаря. Поля ровно те, что синхронизируются: `id` и `inactivePath`
+ * машинно-локальные и на сервер не уходят вовсе.
+ * 
+ * Идентичность — по `name`, не по `id`: у дефолтов id человекочитаемый (`video`),
+ * у пользовательских — nanoid, то есть на второй машине он другой. Вся система и
+ * так ссылается на тип по имени (`searchType: "video"` в графе).
+ */
+export type SettingsEntry = { name: string; 
+/**
+ * Расширения у `fileType`, сегменты маски у `pathPattern`, у остальных пуст.
+ */
+path?: string[]; color?: string | null; isDefault?: boolean }
+/**
+ * Результат записи словарей.
+ * 
+ * `conflict = true` — это НЕ ошибка транспорта, а нормальный ответ протокола
+ * (HTTP 409): ревизия на сервере уехала, в `document` лежит его текущее
+ * состояние, и клиент обязан слить три стороны и повторить. Поэтому 409 не
+ * превращается в `StorageError`: иначе renderer не отличил бы «слей и повтори»
+ * от «сеть отвалилась» и слияние не запустилось бы никогда.
+ */
+export type SettingsPutResult = { conflict: boolean; document: SettingsDocument }
+/**
  * Возвращает метаданные файла (для полифила node:fs.stat).
  */
 export type StatInfo = { size: number; mtimeMs: number; atimeMs: number; ctimeMs: number; birthtimeMs: number; isFile: boolean; isDir: boolean; isSymlink: boolean }
@@ -3237,6 +3433,57 @@ name: string; isFolder: boolean; files: number; bytes: number; localFiles: numbe
  * «проект 52 ГБ» включает логи, и это надо отличать от контента.
  */
 internal: boolean }
+/**
+ * План массовой операции: числа, которыми спрашивают человека до её начала.
+ * 
+ * Цифры бесплатны — всё уже лежит в индексе, ни одного запроса в сеть.
+ */
+export type SubtreePlan = { 
+/**
+ * `false` — полного обхода проекта ещё не делали, и числа неизвестны. Это НЕ
+ * то же самое, что «пусто», и интерфейс обязан их различать.
+ */
+known: boolean; files: number; bytes: number; 
+/**
+ * Уже на диске.
+ */
+localFiles: number; localBytes: number; 
+/**
+ * Нет копии или в облаке новее — это и скачается.
+ */
+missingFiles: number; missingBytes: number; 
+/**
+ * Есть только здесь или правлено здесь — это и уедет.
+ */
+uploadFiles: number; uploadBytes: number; 
+/**
+ * Конфликты и ошибки: массовая операция их не трогает, разбираются по одному.
+ */
+unresolved: number }
+/**
+ * Итог постановки в очередь.
+ */
+export type SubtreeQueued = { 
+/**
+ * Сколько файлов встало в очередь.
+ */
+queued: number; bytes: number; 
+/**
+ * Пропущено как уже сделанное.
+ */
+skippedDone: number; 
+/**
+ * Пропущено как требующее разбора (конфликт, ошибка).
+ */
+skippedUnresolved: number; 
+/**
+ * Оставлено оффлайн заодно со скачиванием.
+ */
+pinned: number; 
+/**
+ * Упёрлись в предохранитель — остаток доберётся повторным вызовом.
+ */
+capped: boolean }
 export type SubtreeStats = { projectId: string; folderPath: string; 
 /**
  * `false` — полного `/tree` по проекту ещё не делали. Это НЕ то же самое,
@@ -3244,6 +3491,41 @@ export type SubtreeStats = { projectId: string; folderPath: string;
  * худший вид вранья в интерфейсе.
  */
 known: boolean; files: number; bytes: number; localFiles: number; localBytes: number; children: SubtreeChild[] }
+/**
+ * Чем объясняется расхождение файла — обе стороны и baseline между ними.
+ * 
+ * Зачем отдельно от `PathInfo`: тот отвечает на «существует ли и какой размер», а
+ * здесь вопрос человека у значка «в облаке новее»: **что с чем сравнили**. Значок
+ * говорит вывод, а сравнить числа глазами до этого было нельзя — и любое действие
+ * приходилось выбирать вслепую.
+ * 
+ * Всё, кроме `local_size`/`local_mtime`, приходит из каталога. Эти два — один
+ * `stat`, и он здесь уместен: спрашивают про ОДИН файл и по явному наведению, а не
+ * на каждую строку листинга.
+ */
+export type SyncDetail = { inMirror: boolean; 
+/**
+ * `None` — каталог про этот путь ничего не знает (файл только на диске).
+ */
+state: FileState | null; localExists: boolean; localSize: number | null; 
+/**
+ * Unix-секунды: время копии на диске СЕЙЧАС.
+ */
+localMtime: number | null; 
+/**
+ * Каким файл был на момент последней синхронизации.
+ */
+baseSize: number | null; baseMtime: number | null; 
+/**
+ * Когда синхронизировали последний раз (unix-секунды).
+ */
+syncedAt: number | null; remoteSize: number | null; 
+/**
+ * Время файла в облаке. Обычно `null`: бэкенд его не отдаёт, а выдумывать
+ * нельзя — «неизвестно» обязано остаться «неизвестно». Поэтому «что новее»
+ * интерфейс говорит состоянием, а числами — только тем, что знает точно.
+ */
+remoteMtime: number | null }
 /**
  * Строка панели передач.
  */

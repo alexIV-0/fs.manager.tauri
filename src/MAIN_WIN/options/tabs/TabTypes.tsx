@@ -1,5 +1,6 @@
 import { typeOfdata_store, typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { CustomUserSettings } from '../CustomUserSettings';
+import { SettingsSyncRow } from '../SettingsSyncRow';
 import { steelColor } from '@/Store/Color/grayColor';
 
 export default function TabTypes() {
@@ -12,6 +13,7 @@ export default function TabTypes() {
 
 	return (
 		<>
+			<SettingsSyncRow />
 			<CustomUserSettings title={fileTypeText} store={typeOfFile} color={color} restoreButtom={true} options={[]} optionsOnly={false} />
 			<CustomUserSettings
 				title={TypeOfDataText}

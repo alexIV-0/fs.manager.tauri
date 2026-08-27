@@ -8,7 +8,7 @@
 |---|---|---|
 | **`ARCHITECTURE.md`** (этот) | из чего состоит, кто чем владеет, где границы | **сейчас** |
 | `CLAUDE.md` (корневой + зональные) | как не сломать: команды проверки, грабли, запреты | сейчас |
-| `ideasAndTest/*.md` | как должно стать: планы, спеки, runbook'и | **будущее** |
+| `ideasAndTest/*.md` | как должно стать: планы, спеки, runbook'и (указатель со статусами — `ideasAndTest/README.md`) | **будущее** |
 
 ⚠️ Читая `ideasAndTest/`, помни: там описаны в том числе абстракции, которых в коде **нет**. Раздел «Спроектировано, но не существует» в конце этого файла перечисляет их явно.
 
@@ -166,9 +166,9 @@ runProcessing
 
 **Границы.** Два отдельных раннера, **сознательно отвязанных** от обработки: у каждого свой триггер, но движок общий с обработкой.
 
-**Где код.** `src/PROCESSING/autoPost/` (9 файлов: `scheduler`, `posters`, `postLog`, `logWin`, `adapters/vk`, `usePostingAvailable`), `src/PROCESSING/tgCollect/`. Плагины-гейты: `autoPostVK`, `autoPostTG`, `autoPostYT`, `autoTGcollect`, `tgSend`. Rust-сторона Telegram — `src-tauri/src/commands/tg_commands.rs`.
+**Где код.** `src/PROCESSING/autoPost/` (`scheduler`, `index`, `posters`, `postLog`, `usePostingAvailable`; `logWin.ts` и `adapters/vk.ts` — орфаны фазы A, 0 импортов после перехода на `processItem`), `src/PROCESSING/tgCollect/`. Плагины-гейты: `autoPostVK`, `autoPostTG`, `autoPostYT`, `autoTGcollect`, `tgSend`. Rust-сторона Telegram — `src-tauri/src/commands/tg_commands.rs`.
 
-**Где план.** `+AUTOPOST_DECOUPLED_PLAN.md`, `+VK_AUTOPOST_PLAN.md`, `+YOUTUBE_AUTOPOST_PLAN.md`, `+TELEGRAM_AUTOPOST_PLAN.md`, `INSTAGRAM_AUTOPOST_PLAN.md` (⏸ отложен), `TELEGRAM_GDRIVE_BOT_PLAN.md`, `TELEGRAM_BOTS_SETUP.md`.
+**Где план.** `+AUTOPOST_DECOUPLED_PLAN.md`, `+VK_AUTOPOST_PLAN.md`, `+YOUTUBE_AUTOPOST_PLAN.md`, `+TELEGRAM_AUTOPOST_PLAN.md`, `INSTAGRAM_AUTOPOST_PLAN.md` (⏸ отложен), `+TELEGRAM_GDRIVE_BOT_PLAN.md`, `TELEGRAM_BOTS_SETUP.md`.
 
 **Связи.** Триггер — сайдкар `options/postSources.json` (для сбора — `tgSearch.json`): наличие файла работает как тумблер. Платформа выводится не из сайдкара, а из Poster-ноды в графе (`posters.ts`). Дедуп и тайминг platform-aware, ключ `файл + платформа`.
 
@@ -194,7 +194,7 @@ runProcessing
 
 **Границы.** Локальный клиент облачного хранилища. Решения о хранилище принимает бэкенд коллеги (`innovation-hub`, `/api/storage/v1`), **байты везём мы** — сервер физически не может залить файл, которого у него нет.
 
-**Где код.** `src-tauri/src/storage/` (16 модулей, ~8 600 строк) — самая покрытая тестами зона проекта. Роли модулей заданы в их шапках:
+**Где код.** `src-tauri/src/storage/` (17 модулей, ~9 000 строк) — самая покрытая тестами зона проекта. Роли модулей заданы в их шапках:
 
 | модуль | роль |
 |---|---|
@@ -208,9 +208,12 @@ runProcessing
 | `state` | единственное место, где считается, какой значок показать |
 | `upload` | presign PUT → байты напрямую в R2 → notify |
 | `evict` | вытеснение локальных копий: политика на один файл |
+| `bulk` | массовые операции по папке: очередь «скачать/отправить поддерево» |
 | `mock` / `mock_server` | локальная имитация бэкенда для разработки без сети |
 
-Команды — `commands/storage_commands.rs` (31 команда). UI — `src/MAIN_WIN/Storage/` + `TabStorage.tsx`. Шов для остального кода — `src/Utils/storageSeam.ts` (`ensureLocal`).
+Команды — `commands/storage_commands.rs` (37 команд). UI — `src/MAIN_WIN/Storage/` + `TabStorage.tsx`. Шов для остального кода — `src/Utils/storageSeam.ts` (`ensureLocal`).
+
+Действия человека над облачными файлами живут **не в компонентах**: пофайловые — `Storage/fileActions.ts`, по папке целиком — `Storage/bulkActions.ts`. Их зовут три точки входа (контекстное меню, клик по значку, стрелки в строке), и разведи их по компонентам — получишь три разных поведения у одного действия.
 
 **Где план.** `R2_SYNC_PLAN.md` (ревизия 2026-08-06, есть раздел «Что умерло в ревизии»), `R2_SHARING_PLAN.md`, `STORAGE_BACKEND_REQUESTS.md` (чего на бэкенде нет: multipart, rename под v1, copy, расшаривание → закрыто capability-флагами).
 
@@ -322,6 +325,8 @@ runProcessing
 
 **Где код.** `commands/docs_commands.rs` (`docs_list`, `docs_read`), `src/NODE_WIN/layout/DocModal.tsx`, `src/MAIN_WIN/options/MarkdownText.tsx`. Источник текстов — markdown-файлы плагинов (`plugin.md`, `ui.md`).
 
+**Отдельно — описание проекта ✅ (2026-08-20).** Человеческое описание каждого проекта живёт в `options/description.md`: markdown с закрытым списком HTML-островков (разметка **классами** `fg-*`/`align-*`/`indent`, никаких `style`). Редактор — `src/components/markdown/` (WYSIWYG на Tiptap 3 + текстовый режим, один тулбар на оба, санитайз через `rehype-sanitize`, картинки уменьшаются в `data:`-URI), модалка — `src/components/ProjectDescriptionModal.tsx`, входы: главное окно, окно нод, меню проекта. Новых IPC-команд не потребовалось — файл пишется обычной записью, наружу уходит сайдкаром (см. §9). Контракт для обеих сторон — `ideasAndTest/DESCRIPTION_FORMAT_CONTRACT.md` + эталон `description.example.md`, план — `+PROJECT_DESCRIPTION_EDITOR_PLAN.md`. Не сделано: показ и правка на сайте, перетаскивание файла, превью mermaid.
+
 ## 23. Обновление приложения и релиз ✅
 
 **Границы.** Публичный релиз собирается CI, версия — не в файлах, а в релизах.
@@ -347,7 +352,7 @@ runProcessing
 | `app_data/plugins/` | установленные плагины (только прод) | `plugin_commands.rs` |
 | **localStorage окна** | `mainFolders` (главные папки), `localFolder`, `options_store`, `plugins-data` (вкл/выкл плагинов), `typeOfNodes`, `<mainFolderId>` (список выключенных проектов), `<mainFolderId>::activity` (даты активности), `doc-sidebar-groups`, `sidebar-accordion-groups`, плюс два persist-стора (`userInputHistory`, `nodeQuickAdd`) | разные сторы; ключи частью литеральные, частью из констант и шаблонов — единого перечня в коде нет |
 | **папка проекта** | `options.json` — граф нод и настройки папки; `options/folderState.json` — вкл/выкл и активность (новый SSOT, файл = источник истины под будущий сайт) | `src/Store/MainWin/options_store.ts`, `src/Utils/folderState.ts`, Rust `read_folder_states` |
-| **сайдкары в папке** | `options/postSources.json` (автопостинг), `options/tgSearch.json` (сбор) — наличие файла работает как тумблер | `syncPostSourcesSidecar.ts` и аналог для сбора |
+| **сайдкары в папке** | `options/postSources.json` (автопостинг), `options/tgSearch.json` (сбор) — наличие файла работает как тумблер; `options/description.md` — описание проекта (пишется обычной записью файла, уезжает как `Sidecar::Description`) | `syncPostSourcesSidecar.ts`, `syncTgSearchSidecar.ts`, `ProjectDescriptionModal.tsx` |
 
 **Направление движения.** Из localStorage в файлы папки проекта: `+FOLDER_STATE_SSOT_PLAN.md` (гибрид D) уже перевёл вкл/выкл и активность. Причина: файл в папке синхронизируется и виден сайту, localStorage — нет.
 
@@ -388,7 +393,7 @@ runProcessing
 | Единый event-stream engine→shell | `VISION.md` §C.4 | 🎯 нет; логи и прогресс — раздельные механизмы |
 | `folderConfig` с версиями, историей и правами | `VISION.md` §D | 🔧 частично: `options.json` + `folderState.json`, без версий и истории |
 | Host-API плагинов: contribution points | `PLUGIN_HOST_API_PLAN.md` | ⏸ отложено; **транспорт через `ctx` уже сделан** (см. §8б) |
-| Распределённая очередь, оркестратор, воркеры | `DISTRIBUTED_QUEUE_PLAN.md`, `ARCHITECTURE_DISTRIBUTED.md` | 🎯 |
+| Распределённая очередь, оркестратор, воркеры | `DISTRIBUTED_QUEUE_PLAN.md`, `ARCHITECTURE_DISTRIBUTED.md` | 🔧 **режим воркера работает** (`src/PROCESSING/remoteWorker/`, полоса `worker`, живой прогон 2026-08-18); оркестратор — на стороне сайта, у нас цель только «оболочка без папок» |
 | Сейф секретов на сайте | `SECRETS_VAULT_SITE_PLAN.md` | 🎯 шов готов, бэкенда нет |
 | Расшаривание файлов из хранилища | `R2_SHARING_PLAN.md` | 🎯 на бэкенде нет |
 | Единый источнико-ориентированный движок целиком | `UNIFIED_SOURCES_ENGINE.md` | 🔧 движок общий, но источники ещё не приведены к одной форме |

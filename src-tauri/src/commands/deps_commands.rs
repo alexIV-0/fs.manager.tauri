@@ -773,6 +773,21 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+/// Защита от path-traversal: имя модели — только `ggml-*.bin` без разделителей.
+/// Одна на скачивание и на удаление: удаление по имени с фронта опаснее, и
+/// собственная копия проверки рано или поздно разошлась бы с этой.
+fn check_model_filename(filename: &str) -> Result<(), String> {
+    if !filename.starts_with("ggml-")
+        || !filename.ends_with(".bin")
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+    {
+        return Err(format!("недопустимое имя модели: {}", filename));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn deps_whisper_models_dir(app: tauri::AppHandle) -> Result<String, String> {
@@ -815,15 +830,7 @@ pub async fn deps_download_whisper_model(
     app: tauri::AppHandle,
     filename: String,
 ) -> Result<String, String> {
-    // Защита от path-traversal: только ggml-*.bin без разделителей.
-    if !filename.starts_with("ggml-")
-        || !filename.ends_with(".bin")
-        || filename.contains('/')
-        || filename.contains('\\')
-        || filename.contains("..")
-    {
-        return Err(format!("недопустимое имя модели: {}", filename));
-    }
+    check_model_filename(&filename)?;
 
     let dir = models_dir(&app)?;
     let dest = dir.join(&filename);
@@ -857,6 +864,24 @@ pub async fn deps_download_whisper_model(
     }
     let _ = std::fs::remove_file(&part);
     Err(format!("не удалось скачать {}: {}", filename, last_err))
+}
+
+/// Удаляет скачанную модель. Модель весит до 3 ГБ, а каталог показывает только
+/// «скачано/нет» — без удаления единственный способ освободить место был лезть в
+/// папку руками. Заодно подчищаем `.part` того же имени: недокачанный огрызок
+/// места занимает столько же, а в списке не виден вовсе.
+#[tauri::command]
+#[specta::specta]
+pub fn deps_delete_whisper_model(app: tauri::AppHandle, filename: String) -> Result<(), String> {
+    check_model_filename(&filename)?;
+
+    let dir = models_dir(&app)?;
+    let path = dir.join(&filename);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("удаление {}: {}", filename, e))?;
+    }
+    let _ = std::fs::remove_file(dir.join(format!("{}.part", filename)));
+    Ok(())
 }
 
 // ==================== Локальный telegram-bot-api server ====================

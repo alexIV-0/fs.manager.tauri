@@ -46,6 +46,19 @@ const PULSE: Duration = Duration::from_secs(3);
 const QUIET_PULSES: u32 = 2;
 /// Сколько файлов заливаем за один пульс.
 const UPLOADS_PER_PULSE: usize = 4;
+/// Сколько файлов массового скачивания везём одновременно.
+///
+/// Двух достаточно, и больше вредно: канал вниз один файл целиком не занимает
+/// (задержка на подпись и открытие соединения), а с четырёх начинается спор за
+/// диск и за лок каталога. Заливка остаётся строго по одному — уплинк уже, и
+/// делить его между файлами обычно только замедляет.
+const DOWNLOAD_WORKERS: usize = 2;
+/// Как часто пустая очередь скачивания смотрит, не появилась ли работа.
+///
+/// Не пульс: человек нажал «скачать папку» и обязан увидеть движение сразу, а
+/// три секунды тишины после нажатия читаются как «не сработало». Проверка стоит
+/// один захват мьютекса, поэтому частота здесь бесплатна.
+const DOWNLOAD_IDLE: Duration = Duration::from_millis(400);
 /// Сверка локальных правок — раз в минуту (20 × 3 с).
 const DETECT_EVERY: u32 = 20;
 /// Обновление списка проектов — раз в 2 минуты (40 × 3 с).
@@ -99,6 +112,7 @@ pub fn start(app: tauri::AppHandle) {
 
     // Байты — отдельной задачей: пульс обязан продолжать биться, пока они едут.
     start_uploads(app.clone());
+    start_downloads(app.clone());
 
     tauri::async_runtime::spawn(async move {
         let mut tick: u32 = 0;
@@ -216,6 +230,41 @@ fn start_uploads(app: tauri::AppHandle) {
             }
         }
     });
+}
+
+/// Разгрузка очереди массового скачивания — своими задачами, не пульсом.
+///
+/// Причина та же, что у заливки: `ensure_local` ждёт файл целиком, и в общем цикле
+/// один пятигиговый мастер остановил бы всю синхронизацию. Плюс здесь их несколько:
+/// папка — это очередь, и пока один файл едет, второй может ехать тоже.
+fn start_downloads(app: tauri::AppHandle) {
+    for _ in 0..DOWNLOAD_WORKERS {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let svc: tauri::State<'_, StorageService> = app.state();
+                if !svc.is_attached().await {
+                    tokio::time::sleep(PULSE).await;
+                    continue;
+                }
+                let Some(path) = svc.take_download() else {
+                    tokio::time::sleep(DOWNLOAD_IDLE).await;
+                    continue;
+                };
+                // Ошибка одного файла очередь не останавливает: недоступный файл,
+                // протухшая подпись, обрыв — обычное дело, а остальные должны уехать.
+                // Счётчик неудач видно в интерфейсе, поэтому молчания здесь нет.
+                let ok = match svc.ensure_local(&path).await {
+                    Ok(_) => true,
+                    Err(e) => {
+                        eprintln!("[storage] папкой не скачан {}: {e}", path.display());
+                        false
+                    }
+                };
+                svc.finish_download(ok);
+            }
+        });
+    }
 }
 
 async fn upload_round(svc: &StorageService) -> Result<(), String> {

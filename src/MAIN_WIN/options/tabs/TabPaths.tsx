@@ -5,6 +5,7 @@ import { cyanColor, greyColor } from '@/Store/Color/grayColor';
 import { Box, Button } from '@mui/material';
 import { FolderOpen } from 'lucide-react';
 import { CustomUserSettings } from '../CustomUserSettings';
+import { LocalOnlyNote, SettingsSyncRow } from '../SettingsSyncRow';
 import { FfmpegDownloadSection, WhisperModelsSection, TgServerSection } from './DepsDownloadPanel';
 
 export default function TabPaths() {
@@ -35,7 +36,9 @@ export default function TabPaths() {
 
 	return (
 		<>
+			<SettingsSyncRow />
 			<CustomUserSettings title={pathText} store={pathPattern} options={[...filePathNamePattern]} />
+			<LocalOnlyNote why='пути к ffmpeg / After Effects у каждой машины свои' />
 			<CustomUserSettings
 				title={programmText}
 				store={programmPathPattern}
@@ -44,6 +47,7 @@ export default function TabPaths() {
 				options={['Custom File...']}
 			/>
 			<FfmpegDownloadSection />
+			<LocalOnlyNote why='локальные папки доп-материалов' />
 			<CustomUserSettings
 				title={dopMatFolderText}
 				store={folderPathStore}

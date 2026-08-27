@@ -468,6 +468,9 @@ pub struct StorageService {
     /// Живой вотчер зеркала. `None` — хранилище не подключено либо слежка не
     /// поднялась (тогда работает редкий полный обход).
     watcher: StdMutex<Option<super::watcher::MirrorWatcher>>,
+    /// Очередь массового скачивания: что человек попросил притащить папками.
+    /// Разгружают её фоновые задачи демона — см. `bulk.rs`.
+    pub(super) downloads: StdMutex<super::bulk::DownloadQueue>,
     /// До каких проектов дотрагивались и когда. **Это и есть охват синхронизации.**
     ///
     /// Режимов («ленивый»/«активный») нет и не нужно: правило одно — синхронизируется
@@ -485,6 +488,12 @@ pub struct StorageService {
     /// фоновая передача (префетч, заливка демоном, вытеснение) оставляла на экране
     /// прежнюю картинку — файл уже на диске, а нарисовано «только в облаке».
     app: StdMutex<Option<tauri::AppHandle>>,
+    /// Последняя известная ревизия ОБЩИХ СЛОВАРЕЙ. `-1` — ещё не знаем.
+    ///
+    /// Нужна, чтобы событие «словари изменились» летело в renderer только на
+    /// изменение: ревизия приезжает попутным полем каждого `/delta`, то есть раз
+    /// в три секунды, и без сравнения интерфейс перечитывал бы словари постоянно.
+    known_settings_revision: std::sync::atomic::AtomicI64,
     http: reqwest::Client,
 }
 
@@ -506,8 +515,10 @@ impl StorageService {
             dirs: StdMutex::new(Default::default()),
             pending: Arc::new(StdMutex::new(super::pending::Pending::new())),
             watcher: StdMutex::new(None),
+            downloads: StdMutex::new(Default::default()),
             warm: StdMutex::new(HashMap::new()),
             app: StdMutex::new(None),
+            known_settings_revision: std::sync::atomic::AtomicI64::new(-1),
             http: reqwest::Client::new(),
         }
     }
@@ -741,6 +752,9 @@ impl StorageService {
         // зеркала уже может быть другим.
         *self.watcher.lock().unwrap() = None;
         self.pending.lock().unwrap().clear();
+        // То же и у массового скачивания: пути без подключения качать некуда, а к
+        // следующему подключению корень зеркала может быть уже другим.
+        self.downloads.lock().unwrap().clear();
         paths::set_global_mirror_root(None);
     }
 
@@ -863,7 +877,7 @@ impl StorageService {
         self.mirror_root.lock().unwrap().to_string_lossy().to_string()
     }
 
-    fn mirror_root(&self) -> PathBuf {
+    pub(super) fn mirror_root(&self) -> PathBuf {
         self.mirror_root.lock().unwrap().clone()
     }
 
@@ -888,6 +902,60 @@ impl StorageService {
     fn machine(&self) -> (&'static str, &'static str) {
         let id = crate::machine::identity();
         (id.uuid.as_str(), id.label.as_str())
+    }
+
+    // ─── Общие словари ───────────────────────────────────────────────────────
+
+    /// Прочитать словари с сервера. Пустой список доменов — все.
+    pub async fn settings_get(&self, domains: Vec<String>) -> Result<SettingsDocument, String> {
+        let p = self.require_provider()?;
+        p.settings_get(&domains).await.map_err(|e| e.to_string())
+    }
+
+    /// Записать словари от известной ревизии. 409 доезжает результатом
+    /// (`conflict = true`), а не ошибкой — см. `SettingsPutResult`.
+    pub async fn settings_put(
+        &self,
+        base_revision: i64,
+        domains: serde_json::Value,
+    ) -> Result<SettingsPutResult, String> {
+        let p = self.require_provider()?;
+        let out = p
+            .settings_put(base_revision, domains)
+            .await
+            .map_err(|e| e.to_string())?;
+        // Свою же запись запоминаем как известную: иначе первый же `/delta` после
+        // записи сообщил бы «ревизия изменилась» и renderer пошёл бы тянуть то, что
+        // только что сам и отправил.
+        if !out.conflict {
+            self.known_settings_revision
+                .store(out.document.revision, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(out)
+    }
+
+    /// Сообщить интерфейсу, что общие словари на сервере изменились.
+    ///
+    /// Зовётся после догона проекта: ревизия приезжает попутным полем `/delta`,
+    /// поэтому отдельного поллинга нет. Событие эмитится ТОЛЬКО на изменение —
+    /// иначе renderer тянул бы словари каждые три секунды.
+    fn emit_settings_revision(&self, revision: i64) {
+        use std::sync::atomic::Ordering;
+        let known = self.known_settings_revision.load(Ordering::Relaxed);
+        if known == revision {
+            return;
+        }
+        self.known_settings_revision.store(revision, Ordering::Relaxed);
+        // Первое известное значение — не «изменилось»: при подключении словари
+        // читаются безусловно, и лишнее событие только удвоило бы запрос.
+        if known < 0 {
+            return;
+        }
+        let guard = self.app.lock().unwrap();
+        if let Some(app) = guard.as_ref() {
+            use tauri::Emitter;
+            let _ = app.emit("settings-revision-changed", revision);
+        }
     }
 
     pub async fn queue_ping(&self) -> Result<(), String> {
@@ -2228,6 +2296,38 @@ pub struct PathInfo {
     pub file_id: Option<String>,
 }
 
+/// Чем объясняется расхождение файла — обе стороны и baseline между ними.
+///
+/// Зачем отдельно от `PathInfo`: тот отвечает на «существует ли и какой размер», а
+/// здесь вопрос человека у значка «в облаке новее»: **что с чем сравнили**. Значок
+/// говорит вывод, а сравнить числа глазами до этого было нельзя — и любое действие
+/// приходилось выбирать вслепую.
+///
+/// Всё, кроме `local_size`/`local_mtime`, приходит из каталога. Эти два — один
+/// `stat`, и он здесь уместен: спрашивают про ОДИН файл и по явному наведению, а не
+/// на каждую строку листинга.
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDetail {
+    pub in_mirror: bool,
+    /// `None` — каталог про этот путь ничего не знает (файл только на диске).
+    pub state: Option<FileState>,
+    pub local_exists: bool,
+    pub local_size: Option<i64>,
+    /// Unix-секунды: время копии на диске СЕЙЧАС.
+    pub local_mtime: Option<i64>,
+    /// Каким файл был на момент последней синхронизации.
+    pub base_size: Option<i64>,
+    pub base_mtime: Option<i64>,
+    /// Когда синхронизировали последний раз (unix-секунды).
+    pub synced_at: Option<i64>,
+    pub remote_size: Option<i64>,
+    /// Время файла в облаке. Обычно `null`: бэкенд его не отдаёт, а выдумывать
+    /// нельзя — «неизвестно» обязано остаться «неизвестно». Поэтому «что новее»
+    /// интерфейс говорит состоянием, а числами — только тем, что знает точно.
+    pub remote_mtime: Option<i64>,
+}
+
 impl StorageService {
     /// Убедиться, что каталог проекта хоть раз загружен с бэкенда.
     ///
@@ -2363,9 +2463,16 @@ impl StorageService {
             .as_mut()
             .ok_or_else(|| "Хранилище не подключено".to_string())?;
         let report = s.catch_up(project_id).await.map_err(|e| e.to_string())?;
+        // Ревизия словарей приезжает попутным полем `/delta` — забираем до того, как
+        // отпустим лок, а сравниваем и эмитим уже без него.
+        let settings_revision = s.settings_revision;
         // Лок каталога отпускаем ДО сетевых запросов за сайдкарами: держать его на
         // время трёх GET значит подвесить листинг колонок на всё это время.
         drop(g);
+
+        if let Some(rev) = settings_revision {
+            self.emit_settings_revision(rev);
+        }
 
         for which in super::types::Sidecar::from_mask(report.sidecars_dirty) {
             // Ошибка одного сайдкара не должна ронять догон: дельты уже применены,
@@ -3426,6 +3533,59 @@ impl StorageService {
                 mtime: file_mtime(path),
                 file_id: None,
             },
+        })
+    }
+
+    /// Чем объясняется расхождение по этому пути — для подсказки у стрелок.
+    ///
+    /// Сверку локальной правки делаем ЗДЕСЬ же: `LocalModified` появляется только от
+    /// явного вызова (движок значков диска не касается), а человек открыл подсказку
+    /// ровно затем, чтобы понять, что с файлом. Показать ему галочку, когда файл на
+    /// диске уже другой, значит соврать в том самом месте, куда он пришёл за правдой.
+    pub async fn sync_detail(&self, path: &Path) -> Result<SyncDetail, String> {
+        let root = self.mirror_root();
+        let md = std::fs::metadata(path).ok();
+        let base = SyncDetail {
+            in_mirror: under_mirror(&root, path),
+            local_exists: md.is_some(),
+            local_size: md.as_ref().map(|m| m.len() as i64),
+            local_mtime: file_mtime(path),
+            ..Default::default()
+        };
+        if !base.in_mirror {
+            return Ok(base);
+        }
+
+        let Some(loc) = parse_mirror_path(&root, &self.dirs(), path) else {
+            // Папка проекта или корень зеркала: расхождению тут неоткуда взяться.
+            return Ok(base);
+        };
+        let Some(entry) = self
+            .with_sync({
+                let loc = loc.clone();
+                move |s| s.index.entry_by_path(&loc.project_id, &loc.folder_path, &loc.name)
+            })
+            .await?
+        else {
+            // Каталог про файл не знает — он только здесь, сравнивать не с чем.
+            return Ok(base);
+        };
+
+        self.detect_local_change(&entry.id).await?;
+        let id = entry.id.clone();
+        let facts = self.with_sync(move |s| s.index.sync_facts(&id)).await?;
+
+        Ok(match facts {
+            Some(f) => SyncDetail {
+                state: Some(f.state),
+                base_size: f.base_size,
+                base_mtime: f.base_mtime,
+                synced_at: f.synced_at,
+                remote_size: f.remote_size,
+                remote_mtime: f.remote_mtime,
+                ..base
+            },
+            None => base,
         })
     }
 }
@@ -6247,4 +6407,296 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
+    // ─── Массовые операции по папке (bulk.rs) ────────────────────────────────
+    //
+    // Тесты живут здесь, а не рядом с кодом, из-за харнесса: `service`/`mpath`/
+    // `entry` поднимают мок, зеркало и раскладку сразу, и дублировать эту фикстуру
+    // в соседнем модуле значило бы держать две её копии. В самом `bulk.rs`
+    // остались тесты очереди — им харнесс не нужен.
+
+    /// Завести в каталоге файл, которого нет в дереве мока.
+    async fn add_file(svc: &StorageService, id: &str, folder: &str, name: &str, size: i64) {
+        let e = entry(id, folder, name, size);
+        svc.with_sync(move |s| {
+            s.index.upsert_from_file(&ProjectFile {
+                id: e.id.clone(),
+                project_id: e.project_id.clone(),
+                folder_path: e.folder_path.clone(),
+                name: e.name.clone(),
+                is_folder: false,
+                s3_key: e.s3_key.clone(),
+                size_bytes: e.size_bytes,
+                content_type: None,
+                created_at: None,
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    fn put(path: &Path, bytes: &[u8]) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// Папка со всеми шестью случаями сразу: каждый обязан попасть в свою графу.
+    ///
+    /// Это главный тест массовой операции: «скачать папку» отличается от «скачать
+    /// файл» именно тем, что решение принимается за человека по каждому файлу
+    /// сразу — и ошибка в одной графе стоит либо потерянной работы (скачали поверх
+    /// незалитого), либо тишины («нажал, и ничего не произошло»).
+    async fn папка_со_всеми_состояниями(tmp: &Path) -> StorageService {
+        let svc = service(None, tmp).await;
+
+        // f1 из фикстуры: копия есть, но baseline указывает на другую версию —
+        // в облаке новее.
+        let stale = mpath(tmp, "IN", "a.mov");
+        put(&stale, b"stale!");
+        // Baseline обязан совпадать с тем, что лежит на диске: иначе сверка честно
+        // объявит копию правленой, и файл окажется в конфликте, а не в «в облаке
+        // новее». Ровно так и должно быть — фикстура не имеет права это подменять.
+        let mtime = file_mtime(&stale).unwrap_or(0);
+        svc.with_sync(|s| {
+            s.index.mark_synced(
+                "f1",
+                "Fresh",
+                &stale.to_string_lossy(),
+                6,
+                mtime,
+                Some("старый-etag"),
+            )
+        })
+        .await
+        .unwrap();
+
+        // Только в облаке — и во вложенной папке, чтобы проверить рекурсию.
+        add_file(&svc, "f2", "IN/sub", "b.mov", 20).await;
+
+        // Копия совпадает с облаком: качать нечего.
+        add_file(&svc, "f3", "IN", "c.mov", 30).await;
+        let fresh = mpath(tmp, "IN", "c.mov");
+        put(&fresh, b"fresh!");
+        let mtime = file_mtime(&fresh).unwrap_or(0);
+        svc.with_sync(|s| {
+            s.index
+                .mark_synced("f3", "Fresh", &fresh.to_string_lossy(), 6, mtime, None)
+        })
+        .await
+        .unwrap();
+
+        // Правили здесь — это заливка, и скачивание её обязано обойти.
+        add_file(&svc, "f4", "IN", "d.mov", 40).await;
+        put(&mpath(tmp, "IN", "d.mov"), b"mine");
+        svc.with_sync(|s| s.index.set_state("f4", "LocalModified", None))
+            .await
+            .unwrap();
+
+        // Конфликт: массовая операция не трогает ни в одну сторону.
+        add_file(&svc, "f5", "IN", "e.mov", 50).await;
+        put(&mpath(tmp, "IN", "e.mov"), b"conflict");
+        svc.with_sync(|s| s.index.set_state("f5", "Conflict", None))
+            .await
+            .unwrap();
+
+        // Каталог о нём не знает вовсе — так выглядит результат обработки в OUT.
+        put(&mpath(tmp, "IN", "manual.mov"), b"abc");
+
+        svc
+    }
+
+    #[tokio::test]
+    async fn план_папки_раскладывает_файлы_по_графам() {
+        let tmp = tmpdir("bulk-plan");
+        let svc = папка_со_всеми_состояниями(&tmp).await;
+
+        let plan = svc
+            .subtree_plan(&mpath(&tmp, "", "IN"))
+            .await
+            .unwrap()
+            .expect("IN — папка проекта в зеркале");
+
+        assert!(plan.known, "дерево проекта загружено при подключении");
+        // Пять записей каталога плюс один файл, который есть только на диске.
+        assert_eq!(plan.files, 6);
+        // Скачать: «только в облаке» и «в облаке новее».
+        assert_eq!((plan.missing_files, plan.missing_bytes), (2, 31));
+        // Залить: «правили здесь» и «каталог не знает». Размер второго — с диска.
+        assert_eq!((plan.upload_files, plan.upload_bytes), (2, 43));
+        // Конфликт считается отдельно и ни в одну из граф не входит.
+        assert_eq!(plan.unresolved, 1);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Очередь берёт только отсутствующее — и не берёт то, что затрёт работу.
+    #[tokio::test]
+    async fn скачивание_папки_не_трогает_незалитое_и_конфликты() {
+        let tmp = tmpdir("bulk-down");
+        let svc = папка_со_всеми_состояниями(&tmp).await;
+
+        let r = svc
+            .queue_subtree_download(&mpath(&tmp, "", "IN"), false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((r.queued, r.bytes), (2, 31));
+        assert_eq!(r.skipped_done, 1, "актуальную копию не качаем заново");
+        assert_eq!(r.skipped_unresolved, 1, "конфликт разбирают по одному");
+        assert!(!r.capped);
+
+        let q = svc.download_queue_status();
+        assert_eq!((q.pending, q.total, q.bytes), (2, 2, 31));
+
+        // Второе нажатие не должно удваивать очередь.
+        let again = svc
+            .queue_subtree_download(&mpath(&tmp, "", "IN"), false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(again.queued, 0);
+        assert_eq!(svc.download_queue_status().pending, 2);
+
+        // Файл, который правили здесь, в очереди скачивания быть не может: иначе
+        // «скачать папку» затёрло бы единственную копию работы.
+        let mut взято = Vec::new();
+        while let Some(p) = svc.take_download() {
+            взято.push(p);
+        }
+        assert!(!взято.contains(&mpath(&tmp, "IN", "d.mov")));
+        assert!(взято.contains(&mpath(&tmp, "IN/sub", "b.mov")));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Файл правили руками, а в индексе он ещё «синхронизирован» — скачивание папки
+    /// обязано это увидеть и НЕ затирать работу.
+    ///
+    /// Метку `LocalModified` ставит только явная сверка, а фоновая идёт раз в минуту.
+    /// Без сверки перед решением массовое скачивание в эту минуту считало бы копию
+    /// актуальной — и молча заменило бы её облачной. Это самая дорогая ошибка из
+    /// возможных здесь, поэтому проверяется отдельным тестом.
+    #[tokio::test]
+    async fn скачивание_папки_замечает_свежую_ручную_правку() {
+        let tmp = tmpdir("bulk-verify");
+        let svc = папка_со_всеми_состояниями(&tmp).await;
+
+        // c.mov числится совпадающим с облаком — и прямо сейчас его меняют руками.
+        let правленый = mpath(&tmp, "IN", "c.mov");
+        put(&правленый, b"just-edited-by-hand");
+
+        let r = svc
+            .queue_subtree_download(&mpath(&tmp, "", "IN"), false)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let mut взято = Vec::new();
+        while let Some(p) = svc.take_download() {
+            взято.push(p);
+        }
+        assert!(
+            !взято.contains(&правленый),
+            "правленую копию скачивание обязано обойти, иначе работа потеряна"
+        );
+        // И «уже сделано» его тоже не считает: файл больше не синхронизирован.
+        assert_eq!(r.skipped_done, 0);
+
+        // Зато отправка его подхватывает — правка обязана уехать в облако.
+        let up = svc
+            .queue_subtree_upload(&mpath(&tmp, "", "IN"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(up.queued, 3, "d.mov, manual.mov и только что правленый c.mov");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// «Оставить оффлайн» вместе со скачиванием: без пина папку уносит вытеснение
+    /// через несколько часов, и человек, скачавший её ради работы, остаётся ни с чем.
+    #[tokio::test]
+    async fn скачивание_с_пином_защищает_папку_от_вытеснения() {
+        let tmp = tmpdir("bulk-pin");
+        let svc = папка_со_всеми_состояниями(&tmp).await;
+
+        let r = svc
+            .queue_subtree_download(&mpath(&tmp, "", "IN"), true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.pinned, 2, "пин ставится ровно на то, что качаем");
+
+        let pinned = svc
+            .with_sync(|s| Ok(s.index.badge_state("f2")?.map(|b| b.pinned)))
+            .await
+            .unwrap();
+        assert_eq!(pinned, Some(true));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Отправка папки ставит в очередь заливки и незалитое, и правленое здесь.
+    #[tokio::test]
+    async fn отправка_папки_берёт_всё_чего_нет_в_облаке() {
+        let tmp = tmpdir("bulk-up");
+        let svc = папка_со_всеми_состояниями(&tmp).await;
+
+        let r = svc
+            .queue_subtree_upload(&mpath(&tmp, "", "IN"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.queued, 2);
+        assert_eq!(r.skipped_unresolved, 1);
+
+        // В очереди заливки они должны быть помечены готовыми — то есть уходить
+        // НЕ дожидаясь затишья: это прямая команда человека. Вотчер к этому моменту
+        // мог набросать в очередь и свои находки, поэтому проверяем состав, а не размер.
+        let ready = svc.take_upload_candidates(2, 20);
+        assert!(ready.contains(&mpath(&tmp, "IN", "d.mov")), "правленое здесь");
+        assert!(
+            ready.contains(&mpath(&tmp, "IN", "manual.mov")),
+            "файл, которого каталог не знает"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Локальная папка — не зеркало: массовые операции обязаны честно сказать «не мой
+    /// путь», а не сделать вид, что скачали ноль файлов.
+    #[tokio::test]
+    async fn вне_зеркала_массовой_операции_нет() {
+        let tmp = tmpdir("bulk-outside");
+        let svc = service(None, &tmp).await;
+        let чужая = std::env::temp_dir().join("совсем-другая-папка");
+
+        assert!(svc.subtree_plan(&чужая).await.unwrap().is_none());
+        assert!(svc
+            .queue_subtree_download(&чужая, false)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(svc.queue_subtree_upload(&чужая).await.unwrap().is_none());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Подсказка у стрелок обязана показывать, ЧТО с чем сравнили: значок говорит
+    /// вывод, а выбирать действие по одному выводу — вслепую.
+    #[tokio::test]
+    async fn расхождение_объясняется_числами_обеих_сторон() {
+        let tmp = tmpdir("bulk-detail");
+        let svc = папка_со_всеми_состояниями(&tmp).await;
+
+        let d = svc.sync_detail(&mpath(&tmp, "IN", "a.mov")).await.unwrap();
+        assert!(d.in_mirror);
+        assert_eq!(d.state, Some(FileState::Stale), "baseline указывает на другую версию");
+        assert!(d.local_exists && d.local_size == Some(6));
+        assert!(d.local_mtime.is_some(), "время копии на диске — из stat");
+        assert_eq!(d.remote_size, Some(11), "размер облачной версии — из каталога");
+        assert!(d.synced_at.is_some(), "когда синхронизировали — из baseline");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
+

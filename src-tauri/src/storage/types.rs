@@ -237,6 +237,57 @@ pub struct DeltaResponse {
     pub cursor: i64,
     #[serde(default)]
     pub truncated: bool,
+    /// Ревизия ОБЩИХ СЛОВАРЕЙ (типы файлов, цвета, маски). Счётчик глобальный, к
+    /// проекту не относится — едет здесь, чтобы не заводить второй поллинг: демон
+    /// и так дёргает `/delta` каждые 3 секунды.
+    #[serde(default)]
+    pub settings_revision: Option<i64>,
+}
+
+// ─── Общие словари (settings) ────────────────────────────────────────────────
+
+/// Запись словаря. Поля ровно те, что синхронизируются: `id` и `inactivePath`
+/// машинно-локальные и на сервер не уходят вовсе.
+///
+/// Идентичность — по `name`, не по `id`: у дефолтов id человекочитаемый (`video`),
+/// у пользовательских — nanoid, то есть на второй машине он другой. Вся система и
+/// так ссылается на тип по имени (`searchType: "video"` в графе).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsEntry {
+    pub name: String,
+    /// Расширения у `fileType`, сегменты маски у `pathPattern`, у остальных пуст.
+    #[serde(default)]
+    pub path: Vec<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+/// Документ словарей целиком. Домен — массив, а не объект: порядок значим
+/// (`getFileTypeByExt` возвращает ПЕРВОЕ совпадение).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDocument {
+    #[serde(default)]
+    pub revision: i64,
+    #[serde(default)]
+    pub domains: std::collections::HashMap<String, Vec<SettingsEntry>>,
+}
+
+/// Результат записи словарей.
+///
+/// `conflict = true` — это НЕ ошибка транспорта, а нормальный ответ протокола
+/// (HTTP 409): ревизия на сервере уехала, в `document` лежит его текущее
+/// состояние, и клиент обязан слить три стороны и повторить. Поэтому 409 не
+/// превращается в `StorageError`: иначе renderer не отличил бы «слей и повтори»
+/// от «сеть отвалилась» и слияние не запустилось бы никогда.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsPutResult {
+    pub conflict: bool,
+    pub document: SettingsDocument,
 }
 
 // ─── Очередь задач ───────────────────────────────────────────────────────────

@@ -1,48 +1,71 @@
-// Пункты контекстного меню, специфичные для облачного файла.
+// Пункты контекстного меню, специфичные для облака: файл, папка, проект.
 //
 // Добавляются к обычному меню, а не заменяют его: облачный файл — тот же файл,
-// у него так же есть «Открыть», «Переименовать», «Удалить». Отличие ровно в
-// трёх действиях, которых у локального файла быть не может.
+// у него так же есть «Открыть», «Переименовать», «Удалить». Отличие только в
+// действиях, которых у локального файла быть не может — скачать, отправить,
+// держать оффлайн; у папки те же действия, но по всему поддереву.
+//
+// Сами действия здесь НЕ живут: массовые — в `bulkActions.ts` (их зовёт ещё и клик
+// по значку папки), пофайловые — в командах. Здесь только пункты меню.
 
-import { CloudDownload, CloudUpload, Pin, PinOff, RotateCw, Trash2 } from 'lucide-react';
+import { CloudDownload, CloudUpload, HardDriveDownload, Pin, PinOff, RotateCw, Trash2 } from 'lucide-react';
 
 import type { ContextMenuItem } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
 import type { FileItem } from '@/Store/helpers/readDirContent';
-import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
-import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { commands } from '@/Utils/specta';
 import { refreshFolder } from '@/Utils/storageSeam';
-import { dirname } from '@/Utils/path';
+import { downloadFolder, refreshFolderRows, uploadFolder } from './bulkActions';
+import { естьВОблаке, естьНаДиске, идётПередача, pullFromCloud, pushToCloud } from './fileActions';
 
 type Storage = FileItem['storage'];
 
 /**
- * Пункт «Обновить» для облачной ПАПКИ (и папки проекта).
+ * Пункты облачной ПАПКИ (и папки проекта): массовые действия плюс «Обновить».
  *
- * Спрашивает состояние только этой папки: дельты её проекта плюс сверка локальных
- * путей. Незачем трогать чужие проекты — охват синхронизации и так строится по тому,
- * с чем работают.
+ * ── Зачем массовые ──────────────────────────────────────────────────────────
+ * Без них папку скачивали пофайлово: зайти, выделить, «Скачать», и так по каждой
+ * вложенной папке. Папка — естественная единица работы («забери мне этот проект»),
+ * и рекурсия здесь не удобство, а сам смысл действия.
  *
- * Файлам это не нужно: у файла есть «Скачать»/«Обновить копию», а состояние папки —
- * это состояние её содержимого.
+ * Два пункта скачивания, а не один с вопросом: выбор «оставить оффлайн» нельзя
+ * задать в `confirm` (там всего две кнопки), а он важен — без пина скачанное
+ * вытесняется по таймеру через несколько часов.
+ *
+ * «Обновить» спрашивает состояние только этой папки: дельты её проекта плюс сверка
+ * локальных путей. Незачем трогать чужие проекты — охват синхронизации и так
+ * строится по тому, с чем работают.
+ *
+ * Файлам этот набор не нужен: у файла свои три пункта (`storageMenuItems`), а
+ * состояние папки — это состояние её содержимого.
  */
 export function storageFolderMenuItems(path: string, isMirror: boolean): ContextMenuItem[] {
 	if (!isMirror) return [];
 	return [
 		{
+			id: 'storage-download-folder',
+			label: 'Скачать папку из облака…',
+			icon: CloudDownload,
+			dividerBefore: true,
+			onClick: () => void downloadFolder(path),
+		},
+		{
+			id: 'storage-download-folder-pin',
+			label: 'Скачать и оставить оффлайн…',
+			icon: HardDriveDownload,
+			onClick: () => void downloadFolder(path, true),
+		},
+		{
+			id: 'storage-upload-folder',
+			label: 'Отправить папку в облако…',
+			icon: CloudUpload,
+			onClick: () => void uploadFolder(path),
+		},
+		{
 			id: 'storage-refresh-folder',
 			label: 'Обновить',
 			icon: RotateCw,
-			dividerBefore: true,
 			onClick: () => {
-				void refreshFolder(path).then(() => {
-					invalidateDirCache(path);
-					const parent = dirname(path);
-					invalidateDirCache(parent);
-					const store = useColumnView_Store.getState();
-					store.refreshAffectedColumns('gd', [path, parent]);
-					store.refreshAffectedColumns('local', [path, parent]);
-				});
+				void refreshFolder(path).then(() => refreshFolderRows(path));
 			},
 		},
 	];
@@ -75,65 +98,37 @@ export function storageProjectMenuItems(isMirror: boolean, onPurge: () => void):
 export function storageMenuItems(path: string, storage: Storage): ContextMenuItem[] {
 	if (!storage?.state) return [];
 
-	// После любого действия перечитываем папку: значок обязан измениться сразу,
-	// иначе человек не понимает, сработало ли.
-	const refresh = () => {
-		const parent = dirname(path);
-		invalidateDirCache(parent);
-		const store = useColumnView_Store.getState();
-		store.refreshAffectedColumns('gd', [parent]);
-		store.refreshAffectedColumns('local', [parent]);
-	};
-
+	const state = storage.state;
 	const items: ContextMenuItem[] = [];
 
-	// Пока передача идёт, ручные действия бессмысленны: «скачать» во время
-	// скачивания возвращало ошибку, а выглядело как «кнопка не работает».
-	const busy = storage.state === 'downloading' || storage.state === 'uploading';
-
-	// Ошибку показываем словами. Раньше результат команды не смотрели вовсе
-	// (`.then(refresh)`), а specta ошибку не бросает — возвращает `{status:'error'}`.
-	// Поэтому отказ выглядел как «нажал, и ничего не произошло».
-	const run = (
-		action: Promise<{ status: 'ok' } | { status: 'error'; error: string }>,
-		failed: string,
-	) => {
-		void action.then((r) => {
-			if (r.status === 'error') window.alert(`${failed}\n\n${r.error}`);
-			refresh();
-		});
-	};
-
-	// Пункт показываем, только если в облаке ЕСТЬ что брать. Раньше условие было
-	// «состояние не fresh», и у файла, который лежит только на диске, в меню висело
-	// «скачать» — предложение скачать то, чего в облаке нет. `conflict` тоже сюда не
-	// входит: расхождение разбирается двумя стрелками у значка, а не молчаливым
-	// перетиранием локальной правки.
-	//
-	// `error` — единственный случай, где пункт даём в обе стороны: какая половина
-	// отвалилась, по состоянию не видно, и выбор честнее догадки.
-	const вОблаке = storage.state === 'cloud' || storage.state === 'stale' || storage.state === 'error';
-	const наДиске =
-		storage.state === 'localOnly' || storage.state === 'localModified' || storage.state === 'error';
-
-	if (!busy && вОблаке) {
+	// Направления — те же предикаты, что у значка и у стрелок (`fileActions`).
+	// Раньше условия жили прямо здесь, и меню могло предлагать то, чего стрелки не
+	// умеют (и наоборот). Пока передача идёт, ручные действия бессмысленны:
+	// «скачать» во время скачивания возвращало ошибку, а выглядело как «кнопка не
+	// работает».
+	if (!идётПередача(state) && естьВОблаке(state)) {
 		items.push({
 			id: 'storage-download',
-			label: storage.state === 'stale' ? 'Обновить копию из облака' : 'Скачать из облака',
+			label:
+				state === 'stale'
+					? 'Обновить копию из облака'
+					: state === 'conflict'
+						? 'Взять версию из облака'
+						: 'Скачать из облака',
 			icon: CloudDownload,
 			dividerBefore: true,
-			onClick: () => run(commands.storageEnsureLocal(path), 'Не удалось скачать файл'),
+			onClick: () => void pullFromCloud(path, state),
 		});
 	}
 
 	// Залить вручную, не дожидаясь фонового прохода.
-	if (!busy && наДиске) {
+	if (!идётПередача(state) && естьНаДиске(state)) {
 		items.push({
 			id: 'storage-upload',
-			label: 'Отправить в облако',
+			label: state === 'conflict' || state === 'stale' ? 'Залить мою версию' : 'Отправить в облако',
 			icon: CloudUpload,
 			dividerBefore: items.length === 0,
-			onClick: () => run(commands.storageUpload(path), 'Не удалось отправить файл в облако'),
+			onClick: () => void pushToCloud(path, state),
 		});
 	}
 
@@ -145,7 +140,10 @@ export function storageMenuItems(path: string, storage: Storage): ContextMenuIte
 			icon: storage.pinned ? PinOff : Pin,
 			dividerBefore: items.length === 0,
 			onClick: () => {
-				void commands.storageSetPinned(storage.fileId!, !storage.pinned).then(refresh);
+				// Значок обязан измениться сразу, иначе непонятно, сработало ли.
+				void commands
+					.storageSetPinned(storage.fileId!, !storage.pinned)
+					.then(() => refreshFolderRows(path));
 			},
 		});
 	}

@@ -338,6 +338,36 @@ pub async fn storage_refresh_projects(
 // (`machineUuid` + `hostname`) подставляет сам сервис — renderer её не передаёт и
 // подменить не может.
 
+// ─── Общие словари ───────────────────────────────────────────────────────────
+//
+// Запросы идут из Rust, а не из renderer, по одной причине: адрес и токен живут в
+// `storage::config` и наружу не отдаются (`ConnectionConfig::redacted`).
+
+/// Прочитать общие словари с сервера. Пустой список доменов — все.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_settings_get(
+    state: State<'_, StorageService>,
+    domains: Option<Vec<String>>,
+) -> Result<crate::storage::SettingsDocument, String> {
+    state.settings_get(domains.unwrap_or_default()).await
+}
+
+/// Записать общие словари от известной ревизии.
+///
+/// Конфликт ревизий возвращается ПОЛЕМ `conflict`, а не ошибкой: 409 здесь —
+/// нормальный ответ протокола, и renderer обязан отличить его от сетевого сбоя,
+/// иначе слияние не запустится никогда (см. `SettingsPutResult`).
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_settings_put(
+    state: State<'_, StorageService>,
+    base_revision: i64,
+    domains: serde_json::Value,
+) -> Result<crate::storage::SettingsPutResult, String> {
+    state.settings_put(base_revision, domains).await
+}
+
 /// «Я на связи» без запроса задачи.
 ///
 /// Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние
@@ -803,6 +833,88 @@ pub async fn storage_subtree_stats(
     state
         .with_sync(|s| s.index.subtree_stats(&project_id, &folder_path))
         .await
+}
+
+/// Что предстоит массовой операции по папке: числа для вопроса человеку.
+///
+/// Ни одного запроса в сеть (кроме первого `/tree` по проекту, если его ещё не
+/// делали): всё уже в индексе. `None` — путь не папка проекта в зеркале.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_subtree_plan(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<Option<crate::storage::SubtreePlan>, String> {
+    state.subtree_plan(std::path::Path::new(&path)).await
+}
+
+/// Скачать папку целиком: поставить в очередь всё, чего здесь нет.
+///
+/// Команда НЕ ждёт байтов — она отвечает числами, а везут файлы фоновые задачи.
+/// Папка на 50 ГБ иначе держала бы вызов часами, и отменить его было бы нечем.
+///
+/// `pin` — заодно «оставить оффлайн». Без него скачанную папку через несколько
+/// часов уносит вытеснение по TTL, и человек, скачавший её ради работы, остаётся
+/// ни с чем.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_download_subtree(
+    state: State<'_, StorageService>,
+    path: String,
+    pin: Option<bool>,
+) -> Result<Option<crate::storage::SubtreeQueued>, String> {
+    state
+        .queue_subtree_download(std::path::Path::new(&path), pin.unwrap_or(false))
+        .await
+}
+
+/// Отправить папку целиком: поставить в очередь заливки всё, что есть только здесь.
+///
+/// Явная команда человека, поэтому затишья не ждём и прошлую ручную остановку
+/// снимаем — иначе «отправить папку» молча пропускало бы ровно те файлы, из-за
+/// которых её и нажали.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_upload_subtree(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<Option<crate::storage::SubtreeQueued>, String> {
+    state
+        .queue_subtree_upload(std::path::Path::new(&path))
+        .await
+}
+
+/// Состояние очереди массового скачивания — «12 из 47».
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_download_queue(
+    state: State<'_, StorageService>,
+) -> Result<crate::storage::DownloadQueueStatus, String> {
+    Ok(state.download_queue_status())
+}
+
+/// Снять из очереди всё, что ещё не начали. Идущие передачи не трогаются — их
+/// обрывают поимённо в списке передач, где видно, что именно прерываешь.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_cancel_download_queue(
+    state: State<'_, StorageService>,
+) -> Result<i64, String> {
+    Ok(state.cancel_download_queue())
+}
+
+/// Чем объясняется расхождение файла: обе стороны и baseline между ними.
+///
+/// Для подсказки у стрелок «скачать/залить»: значок говорит вывод, а человек хочет
+/// видеть, что с чем сравнили. Заодно сверяет копию с baseline — `LocalModified`
+/// иначе появляется только от фонового прохода.
+#[tauri::command]
+#[specta::specta]
+pub async fn storage_sync_detail(
+    state: State<'_, StorageService>,
+    path: String,
+) -> Result<crate::storage::SyncDetail, String> {
+    state.sync_detail(std::path::Path::new(&path)).await
 }
 
 /// Сведения о пути БЕЗ скачивания: существует ли, размер, время, есть ли копия.

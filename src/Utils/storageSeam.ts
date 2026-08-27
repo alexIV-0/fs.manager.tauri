@@ -350,6 +350,69 @@ export async function projectCloudStats(path: string): Promise<{ files: number; 
 }
 
 /**
+ * Что предстоит массовой операции по папке. `null` — путь не папка зеркала.
+ *
+ * Числами спрашивают человека ДО начала: «скачать 47 файлов, 52 ГБ?». Они
+ * бесплатны — всё уже в индексе.
+ */
+export async function subtreePlan(
+	path: string,
+): Promise<import('@/bindings').SubtreePlan | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storageSubtreePlan(path);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data;
+}
+
+/**
+ * Скачать папку целиком — поставить в очередь всё, чего здесь нет. `null` — не наш путь.
+ *
+ * Вызов НЕ ждёт байтов: папка на 50 ГБ иначе держала бы его часами. Числа
+ * возвращаются сразу, файлы везут фоновые задачи, прогресс виден значками и
+ * кнопкой синхронизации.
+ *
+ * `pin` — заодно «оставить оффлайн»: без него скачанную папку через несколько
+ * часов уносит вытеснение, и человек, скачавший её ради работы, остаётся ни с чем.
+ */
+export async function downloadSubtree(
+	path: string,
+	pin = false,
+): Promise<import('@/bindings').SubtreeQueued | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storageDownloadSubtree(path, pin);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data;
+}
+
+/** Отправить папку целиком: в очередь заливки всё, чего нет в облаке. */
+export async function uploadSubtree(
+	path: string,
+): Promise<import('@/bindings').SubtreeQueued | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storageUploadSubtree(path);
+	if (r.status !== 'ok') throw new Error(String(r.error));
+	return r.data;
+}
+
+/**
+ * Чем объясняется расхождение файла: обе стороны и baseline между ними.
+ *
+ * Значок говорит вывод («в облаке новее»), а человеку у стрелок нужно видеть, ЧТО
+ * с чем сравнили. `null` — путь не в зеркале.
+ */
+export async function syncDetail(
+	path: string,
+): Promise<import('@/bindings').SyncDetail | null> {
+	await ensureProbed();
+	if (!maybeMirror(path)) return null;
+	const r = await commands.storageSyncDetail(path);
+	return r.status === 'ok' ? r.data : null;
+}
+
+/**
  * Обновить состояние ОДНОЙ папки: дельты её проекта + сверка путей.
  *
  * Пункт меню «Обновить» у облачной папки. Спрашивает только её проект — незачем

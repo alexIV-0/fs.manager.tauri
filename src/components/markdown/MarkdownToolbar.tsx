@@ -1,7 +1,7 @@
 /**
  * Панель кнопок редактора описания — по образцу формы ответа на форуме.
  *
- * Набор зафиксирован в `ideasAndTest/PROJECT_DESCRIPTION_EDITOR_PLAN.md` §2.
+ * Набор зафиксирован в `ideasAndTest/+PROJECT_DESCRIPTION_EDITOR_PLAN.md` §2.
  * Панель одна на два режима (WYSIWYG и правка текстом) и не знает, какой из них
  * активен: она дёргает `EditorApi`, реализаций две.
  *
@@ -107,7 +107,7 @@ interface ColorPaletteProps {
 }
 
 /** Сетка: строка на ступень насыщенности, отдельная строка — серая шкала. */
-function ColorPalette({ kind, onPick }: ColorPaletteProps) {
+export function ColorPalette({ kind, onPick }: ColorPaletteProps) {
 	const swatch = (key: string, label: string) => (
 		<Tooltip key={key} title={label} arrow disableInteractive>
 			<Box

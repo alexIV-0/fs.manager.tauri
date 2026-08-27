@@ -384,6 +384,18 @@ export const tauriAPI = {
 		return () => tauriOff('storage-projects-changed', wrapper);
 	},
 
+	/// Ревизия ОБЩИХ СЛОВАРЕЙ на сервере изменилась (типы файлов/нод/данных, маски).
+	///
+	/// Своего поллинга у словарей нет и не нужно: ревизия приезжает попутным полем
+	/// каждого `GET /delta`, то есть раз в три секунды. Rust сравнивает её с
+	/// последней известной и эмитит это событие ТОЛЬКО на изменение — иначе
+	/// renderer перечитывал бы словари постоянно.
+	onSettingsRevisionChanged: (callback: (revision: number) => void) => {
+		const wrapper = (_event: any, revision: number) => callback(Number(revision ?? 0));
+		tauriOn('settings-revision-changed', wrapper);
+		return () => tauriOff('settings-revision-changed', wrapper);
+	},
+
 	onFsChanged: (callback: (changedPath: string) => void) => {
 		// ВАЖНО: храним ссылку на обёртку и снимаем именно её. tauriOff('fs-changed')
 		// без listener удалил бы ВЕСЬ Set слушателей канала — а на 'fs-changed' подписаны

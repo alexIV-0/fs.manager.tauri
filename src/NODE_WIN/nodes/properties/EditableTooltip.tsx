@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Box, Button, IconButton, Popover, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, IconButton, Popover, Stack, Tooltip, Typography } from '@mui/material';
 import { CircleQuestionMark, Pencil } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
 import { greyColor } from '@/Store/Color/grayColor';
+import { MarkdownMiniEditor } from '@/components/markdown/MarkdownMiniEditor';
 import { TooltipBody } from './CustomTooltip';
 
 interface EditableTooltipProps {
@@ -24,6 +25,10 @@ interface EditableTooltipProps {
  * фиксируем `isDynamic: true`: в старых флоу флага нет, а «динамическость» там
  * выводилась из пустого tooltip — без этой пометки свойство с подсказкой
  * потеряло бы корзину (см. `isDynamicProperty`).
+ *
+ * Редактор — общий `MarkdownMiniEditor` (он же в конструкторе плагинов): формат
+ * подсказки один, значит и набор кнопок должен быть один. Раньше здесь было
+ * голое текстовое поле, и цвет приходилось писать тегом руками.
  */
 export default function EditableTooltip({ property }: EditableTooltipProps) {
 	const nodeId = useNodeContext();
@@ -83,26 +88,21 @@ export default function EditableTooltip({ property }: EditableTooltipProps) {
 				onClose={close}
 				anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
 				transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-				slotProps={{ paper: { className: 'nodrag', sx: { p: 1.5, width: 340, bgcolor: greyColor(12) } } }}
+				slotProps={{ paper: { className: 'nodrag', sx: { p: 1.5, width: 420, bgcolor: greyColor(12) } } }}
 			>
 				{editing ? (
 					<Stack gap={1}>
 						<Typography variant='caption' sx={{ color: greyColor(60), fontFamily: 'monospace' }}>
-							// своя подсказка (Markdown или HTML)
+							// своя подсказка (Markdown)
 						</Typography>
-						<TextField
+						<MarkdownMiniEditor
 							autoFocus
-							multiline
-							minRows={5}
-							maxRows={14}
 							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save();
-								if (e.key === 'Escape') close();
-							}}
-							placeholder={'Что делает это поле.\n\n**жирный**, `код`, - список'}
-							sx={{ '& .MuiInputBase-input': { fontSize: 13, lineHeight: 1.5, color: greyColor(80) } }}
+							onChange={setDraft}
+							minRows={4}
+							maxRows={12}
+							onSubmit={save}
+							onCancel={close}
 						/>
 						<Stack direction='row' alignItems='center' gap={1}>
 							<Button size='small' variant='contained' onClick={save} sx={{ textTransform: 'none' }}>

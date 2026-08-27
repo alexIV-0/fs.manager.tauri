@@ -46,6 +46,7 @@
 		"@xyflow/react": "^12.11.1",
 		"hast-util-to-html": "^9.0.5",
 		"lucide-react": "^0.525.0",
+		"mermaid": "^11.17.0",
 		"monaco-editor": "^0.55.1",
 		"nanoid": "^5.1.5",
 		"plyr": "^3.8.4",

@@ -61,6 +61,9 @@ export type PatternStore = {
 	removePatternElement: (id: string) => void;
 	restoreDefault: () => void;
 
+	/** Принять состояние, пришедшее ИЗВНЕ (слияние с сайтом) — см. applyRemote ниже. */
+	applyRemote: (elements: PatternElement[]) => void;
+
 	// Методы синхронизации с плагинами
 	movePluginToInactive: (pluginName: string) => void;
 	restorePluginFromInactive: (pluginName: string) => void;
@@ -234,6 +237,24 @@ export const createPathPatternStore = (storageKey: string, defaultTypes: Pattern
 			},
 
 			// Плагин выключили - переносим во все паттерны, где он используется
+			/**
+			 * Состояние пришло с сервера (слияние словарей) — кладём в стор и в
+			 * локальное хранилище, но НЕ трогаем ничего сверх этого.
+			 *
+			 * Отдельный путь, а не цепочка обычных сеттеров, по двум причинам:
+			 * сеттеры вызывали бы доменные хуки (`patternDomainRegistry`) и считали
+			 * бы входящую правку локальной, а вторая — «локальных правок N» считается
+			 * как расхождение с базой, и база обновляется той же операцией
+			 * (`settingsSync_store`). Иначе первая же входящая правка улетела бы
+			 * обратно как исходящая.
+			 */
+			applyRemote: (elements: PatternElement[]) => {
+				set(() => {
+					saveToLocalStorage(storageKey, elements);
+					return { patternStore: elements };
+				});
+			},
+
 			movePluginToInactive: (pluginName: string) => {
 				console.log(`[PatternStore:${storageKey}] Moving to inactive: ${pluginName}`);
 				set((state) => {
@@ -348,13 +369,27 @@ const defaultNodeType: PatternElement[] = [
 	// { color: '#7d51a3ff', id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
 ];
 
+// ffplay здесь нет намеренно: программа его не запускает нигде (превью рисует
+// ffmpeg покадрово), в Rust-дефолте `default_program_paths()` его уже нет, и в
+// списке типов нод он тоже закомментирован. Осталась только строка в старых
+// programPaths.json — её снимает `dropLegacyFfplay` ниже.
 const programmsPathDefault: PatternElement[] = [
 	{ color: null, id: 'ffmpeg', name: 'ffmpeg', path: [], inactivePath: [] },
 	{ color: null, id: 'ffprobe', name: 'ffprobe', path: [], inactivePath: [] },
-	{ color: null, id: 'ffplay', name: 'ffplay', path: [], inactivePath: [] },
 	{ color: null, id: 'afterEffect', name: 'afterEffect', path: [], inactivePath: [] },
 	{ color: null, id: 'moho', name: 'moho', path: [], inactivePath: [] },
 ];
+
+/**
+ * Убрать пустую строку `ffplay` из сохранённых путей к программам.
+ *
+ * Пока имя было в дефолтах, запись помечалась `isDefault` и корзины у неё не было
+ * — руками такую не удалить. Путь при этом не трогаем: если человек его когда-то
+ * задал, строка остаётся, но уже обычной (с корзиной), и решает он сам.
+ */
+function dropLegacyFfplay(items: PatternElement[]): PatternElement[] {
+	return items.filter((el) => !(el.name === 'ffplay' && (el.path?.length ?? 0) === 0));
+}
 const folderPathDefault: PatternElement[] = [{ color: null, id: 'whisper', name: 'whisper', path: [], inactivePath: [] }];
 
 // ========================
@@ -375,6 +410,8 @@ const createTauriPatternStore = (
 	saveFn: (els: PatternElement[]) => Promise<unknown>,
 	defaultTypes: PatternElement[] = [],
 	domain?: PatternDomain,
+	/** Разовая чистка унаследованных записей. Применяется и к LS-кэшу, и к файлу. */
+	migrate?: (els: PatternElement[]) => PatternElement[],
 ) => {
 	const defaultNamesSet = new Set(defaultTypes.map((d) => d.name));
 	const markDefaults = (items: PatternElement[]): PatternElement[] =>
@@ -395,7 +432,7 @@ const createTauriPatternStore = (
 		} catch {}
 	} else {
 		// миграция: поднимаем флаг isDefault на записях с именем из defaults
-		initialState = markDefaults(initialState);
+		initialState = markDefaults(migrate ? migrate(initialState) : initialState);
 	}
 
 	const tauriSave = (elements: PatternElement[]) => {
@@ -411,9 +448,15 @@ const createTauriPatternStore = (
 				const data = await loadFn();
 				if (Array.isArray(data) && data.length > 0) {
 					const withInactive = data.map((item: PatternElement) => ({ ...item, inactivePath: item.inactivePath || [] }));
-					const tagged = markDefaults(withInactive);
+					const cleaned = migrate ? migrate(withInactive) : withInactive;
+					const tagged = markDefaults(cleaned);
 					set({ patternStore: tagged });
 					saveToLocalStorage(localKey, tagged);
+					// Миграция что-то сняла — сразу переписываем и файл, иначе запись
+					// осталась бы в нём навсегда и вычищалась при каждом старте заново.
+					if (cleaned.length !== withInactive.length) {
+						saveFn(tagged as any).catch((e: unknown) => console.warn(`[TauriStore:${localKey}] migrate save failed:`, e));
+					}
 				}
 			} catch (e) {
 				console.warn(`[TauriStore:${localKey}] loadFromTauri failed:`, e);
@@ -499,6 +542,14 @@ const createTauriPatternStore = (
 			tauriSave(defaults);
 		},
 
+		/** См. `applyRemote` в LS-сторе: то же, но состояние уезжает и в JSON-файл. */
+		applyRemote: (elements: PatternElement[]) => {
+			set(() => {
+				tauriSave(elements);
+				return { patternStore: elements };
+			});
+		},
+
 		movePluginToInactive: (pluginName) => {
 			set((state) => {
 				const updated = state.patternStore.map((el) => {
@@ -551,6 +602,8 @@ export const programPathPattern_store = createTauriPatternStore(
 	async () => unwrap(await commands.programPathsGet()) as PatternElement[],
 	(els) => commands.programPathsSet(els as any),
 	programmsPathDefault,
+	undefined,
+	dropLegacyFfplay,
 );
 
 // Функции для прямого вызова из plugin_store

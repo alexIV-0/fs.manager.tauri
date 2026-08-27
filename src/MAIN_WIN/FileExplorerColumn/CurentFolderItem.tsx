@@ -3,7 +3,7 @@ import { prefetchDir } from '@/Store/helpers/readDirContent';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { ListItem, ListItemButton, ListItemText, TextField } from '@mui/material';
 import { Folder } from 'lucide-react';
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
 import { useMenuItems } from '../hooks/useMenuItems';
@@ -22,6 +22,7 @@ import {
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
 import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
+import { downloadFolder, uploadFolder } from '@/MAIN_WIN/Storage/bulkActions';
 import { storageFolderMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
@@ -109,11 +110,30 @@ export function CurentFolderItem({
 		hasClipboard,
 	});
 
-	// «Обновить» — только у облачной папки: спрашивает состояние её проекта в онлайне.
-	// Признак «облачная» берём из наличия данных каталога у строки: они появляются
-	// только у того, что пришло из зеркала.
+	// Облачные пункты — только у папки зеркала. Признак «облачная» берём из наличия
+	// данных каталога у строки: они появляются только у того, что пришло из зеркала.
 	const folderCloudItems = storageFolderMenuItems(path, Boolean(storage));
 	const allMenuItems = [...menuItems, ...folderCloudItems];
+
+	// Клик по значку папки = рекурсивное действие над всем поддеревом, поэтому оно
+	// всегда спрашивает подтверждение с числами (`bulkActions`). Там, где внутри
+	// конфликт или ошибка, клика нет: массово это не решается, надо зайти внутрь.
+	const aggregate = storage?.aggregate;
+	const badgeAction = useMemo(() => {
+		if (aggregate === 'allCloud' || aggregate === 'mixed') {
+			return {
+				hint: 'нажмите, чтобы скачать папку целиком',
+				run: () => void downloadFolder(path),
+			};
+		}
+		if (aggregate === 'needsUpload') {
+			return {
+				hint: 'нажмите, чтобы отправить незалитое в облако',
+				run: () => void uploadFolder(path),
+			};
+		}
+		return null;
+	}, [aggregate, path]);
 
 	return (
 		<>
@@ -197,8 +217,16 @@ export function CurentFolderItem({
 						/>
 					)}
 
-					{/* Агрегат поддерева: сразу видно, скачана папка целиком или нет. */}
-					{storage?.aggregate && <StorageBadge aggregate={storage.aggregate} />}
+					{/* Агрегат поддерева: сразу видно, скачана папка целиком или нет.
+					    Значок ещё и нажимается — это самый короткий путь «забери мне
+					    эту папку», ради которого раньше приходилось обходить каждый файл. */}
+					{storage?.aggregate && (
+						<StorageBadge
+							aggregate={storage.aggregate}
+							onAction={badgeAction?.run}
+							actionHint={badgeAction?.hint}
+						/>
+					)}
 				</ListItemButton>
 			</ListItem>
 

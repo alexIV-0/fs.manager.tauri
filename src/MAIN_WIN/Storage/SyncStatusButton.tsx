@@ -1,9 +1,9 @@
 // Кнопка синхронизации в верхней панели + модалка с двумя закладками.
 //
 // Кнопка сделана в том же виде, что счётчик итераций рядом: рамка, тёмный фон,
-// монospace. Две стрелки — скачивание и заливка, рядом процент. В покое кнопка
-// приглушена, но не исчезает: пропадающий элемент в панели сбивает раскладку и
-// заставляет искать его заново.
+// монospace. Две стрелки — скачивание и заливка, рядом процент. В покое приглушена,
+// но не исчезает: пропадающий элемент в панели сбивает раскладку. Совсем её нет
+// только без подключённого хранилища — там управлять нечем.
 
 import {
 	Box,
@@ -20,40 +20,18 @@ import {
 	Tooltip,
 	Typography,
 } from '@mui/material';
-import { ArrowDown, ArrowUp, CloudOff, CloudUpload, HardDriveDownload, OctagonPause, Pin, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CloudUpload, HardDriveDownload, OctagonPause, Pin, RotateCcw, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { LocalFileRow, NotUploadedRow, TransferRow } from '@/bindings';
+import type { DownloadQueueStatus, LocalFileRow, NotUploadedRow, TransferRow } from '@/bindings';
 import { storage_store } from '@/Store/MainWin/storage_store';
 import { commands } from '@/Utils/specta';
 import { applyListView, ListControls, type SortKey } from './ListControls';
+import { humanSize, sinceText } from './syncText';
 
 /** Пока что-то едет — опрашиваем часто, в покое почти не трогаем. */
 const TICK_ACTIVE = 500;
 const TICK_IDLE = 3000;
-
-function humanSize(bytes: number | null | undefined): string {
-	if (!bytes) return '—';
-	if (bytes < 1024) return `${bytes} Б`;
-	const units = ['КБ', 'МБ', 'ГБ', 'ТБ'];
-	let v = bytes / 1024;
-	let i = 0;
-	while (v >= 1024 && i + 1 < units.length) {
-		v /= 1024;
-		i += 1;
-	}
-	return `${v.toFixed(1)} ${units[i]}`;
-}
-
-/** «2 часа назад» — по этому времени считается вытеснение, и его надо понимать. */
-function sinceText(unixSec: number): string {
-	if (!unixSec) return '—';
-	const mins = Math.max(0, Math.round((Date.now() / 1000 - unixSec) / 60));
-	if (mins < 60) return `${mins} мин назад`;
-	const hours = Math.round(mins / 60);
-	if (hours < 24) return `${hours} ч назад`;
-	return `${Math.round(hours / 24)} дн назад`;
-}
 
 interface Summary {
 	down: number;
@@ -79,10 +57,12 @@ function summarize(rows: TransferRow[]): Summary {
 
 export function SyncStatusButton() {
 	const connected = storage_store((s) => s.status.connected);
-	// Показываем кнопку и когда хранилище заведено, но ещё не подключено: иначе
-	// «не подключено» и «кнопки нет» выглядят одинаково, и непонятно, что сломалось.
-	const configured = storage_store((s) => s.status.configured);
 	const [rows, setRows] = useState<TransferRow[]>([]);
+	// Очередь массового скачивания живёт в памяти Rust и в список передач не
+	// попадает: строка передачи появляется только когда файл поехал. Без этого
+	// счётчика «скачать папку» выглядело бы как «один файл качается, остальное
+	// куда-то делось» — и остановить серию было бы нечем.
+	const [queue, setQueue] = useState<DownloadQueueStatus | null>(null);
 	const [open, setOpen] = useState(false);
 	const timer = useRef<number | null>(null);
 
@@ -95,15 +75,23 @@ export function SyncStatusButton() {
 	useEffect(() => {
 		if (!connected) {
 			setRows([]);
+			setQueue(null);
 			return;
 		}
 		let alive = true;
 		const poll = async () => {
-			const r = await commands.storageTransfers(100);
+			const [r, q] = await Promise.all([
+				commands.storageTransfers(100),
+				commands.storageDownloadQueue(),
+			]);
 			if (!alive) return;
 			const list = r.status === 'ok' ? r.data : [];
+			const queueNow = q.status === 'ok' ? q.data : null;
 			setRows(list);
-			const busy = list.some((t) => t.state === 'active' || t.state === 'queued');
+			setQueue(queueNow);
+			const busy =
+				list.some((t) => t.state === 'active' || t.state === 'queued') ||
+				(queueNow?.pending ?? 0) > 0;
 			timer.current = window.setTimeout(poll, busy ? TICK_ACTIVE : TICK_IDLE);
 		};
 		void poll();
@@ -113,23 +101,27 @@ export function SyncStatusButton() {
 		};
 	}, [connected]);
 
-	if (!connected && !configured) return null;
+	// Без подключения кнопки нет вовсе. Раньше она оставалась в виде «off» — на
+	// случай «хранилище заведено, но не поднялось», — но у того, кто облаком не
+	// пользуется, это вечно висящий мёртвый элемент. Состояние подключения видно
+	// на вкладке Настройки → Хранилище, туда же ведёт и всё остальное.
+	if (!connected) return null;
 
 	const s = summarize(rows);
 	const pct = s.progress === null ? null : Math.round(s.progress * 100);
-	const busy = s.down + s.up > 0;
+	const pending = queue?.pending ?? 0;
+	const busy = s.down + s.up + pending > 0;
 
 	return (
 		<>
 			<Tooltip
 				title={
-					!connected
-						? 'Хранилище не подключено. Настройки → Хранилище'
-						: busy
-							? `Скачивается: ${s.down}, заливается: ${s.up}`
-							: s.failed > 0
-								? `Ошибок передачи: ${s.failed}`
-								: 'Синхронизация: очередь пуста'
+					busy
+						? `Скачивается: ${s.down}, заливается: ${s.up}` +
+							(pending > 0 ? `, в очереди папками: ${pending}` : '')
+						: s.failed > 0
+							? `Ошибок передачи: ${s.failed}`
+							: 'Синхронизация: очередь пуста'
 				}
 			>
 				<Box
@@ -154,29 +146,36 @@ export function SyncStatusButton() {
 						'&:hover': { opacity: 0.8 },
 					}}
 				>
-					{connected ? (
-						<>
-							<ArrowDown size={15} strokeWidth={1.5} style={{ color: s.down > 0 ? '#58a6ff' : undefined }} />
-							<ArrowUp size={15} strokeWidth={1.5} style={{ color: s.up > 0 ? '#3fb950' : undefined }} />
-							{s.failed > 0 && <TriangleAlert size={15} strokeWidth={1.5} style={{ color: '#f85149' }} />}
-						</>
-					) : (
-						<CloudOff size={15} strokeWidth={1.5} />
-					)}
+					{/* Очередь папками — тоже скачивание, просто байты ещё не поехали:
+					    красить стрелку только по активной передаче значило бы показывать
+					    покой сразу после нажатия «скачать папку». */}
+					<ArrowDown size={15} strokeWidth={1.5} style={{ color: s.down + pending > 0 ? '#58a6ff' : undefined }} />
+					<ArrowUp size={15} strokeWidth={1.5} style={{ color: s.up > 0 ? '#3fb950' : undefined }} />
+					{s.failed > 0 && <TriangleAlert size={15} strokeWidth={1.5} style={{ color: '#f85149' }} />}
 					<Box component='span' sx={{ minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-						{!connected ? 'off' : pct !== null ? `${pct}%` : busy ? '…' : '—'}
+						{pct !== null ? `${pct}%` : busy ? '…' : '—'}
 					</Box>
 				</Box>
 			</Tooltip>
 
-			<SyncModal open={open} onClose={() => setOpen(false)} rows={rows} />
+			<SyncModal open={open} onClose={() => setOpen(false)} rows={rows} queue={queue} />
 		</>
 	);
 }
 
 // ─── Модалка ────────────────────────────────────────────────────────────────
 
-function SyncModal({ open, onClose, rows }: { open: boolean; onClose: () => void; rows: TransferRow[] }) {
+function SyncModal({
+	open,
+	onClose,
+	rows,
+	queue,
+}: {
+	open: boolean;
+	onClose: () => void;
+	rows: TransferRow[];
+	queue: DownloadQueueStatus | null;
+}) {
 	const [tab, setTab] = useState(0);
 	// Итог действия над задачей. Нужен потому, что «Повторить» может закончиться
 	// БЕЗ видимых последствий — файл уже синхронизирован или исчез с диска, задача
@@ -206,7 +205,7 @@ function SyncModal({ open, onClose, rows }: { open: boolean; onClose: () => void
 			)}
 
 			<DialogContent dividers sx={{ p: 0, minHeight: 300, maxHeight: '80%' }}>
-				{tab === 0 && <TransfersTab rows={rows} onNotice={setNotice} />}
+				{tab === 0 && <TransfersTab rows={rows} queue={queue} onNotice={setNotice} />}
 				{tab === 1 && <LocalCopiesTab open={open} />}
 				{tab === 2 && <NotUploadedTab open={open} onNotice={setNotice} />}
 			</DialogContent>
@@ -214,90 +213,134 @@ function SyncModal({ open, onClose, rows }: { open: boolean; onClose: () => void
 	);
 }
 
-function TransfersTab({ rows, onNotice }: { rows: TransferRow[]; onNotice: (text: string) => void }) {
+function TransfersTab({
+	rows,
+	queue,
+	onNotice,
+}: {
+	rows: TransferRow[];
+	queue: DownloadQueueStatus | null;
+	onNotice: (text: string) => void;
+}) {
+	// Серия «скачать папку»: сколько сделано из сколького и кнопка остановить всё.
+	// Отменять по одной строке серию из сорока файлов невозможно физически.
+	const серия =
+		queue && queue.total > 0 && (queue.pending > 0 || queue.active > 0) ? (
+			<Stack direction='row' spacing={1} sx={{ px: 2, py: '6px', alignItems: 'center' }}>
+				<ArrowDown size={13} strokeWidth={1.5} opacity={0.7} />
+				<Typography variant='caption' sx={{ flex: 1, fontSize: 11 }}>
+					Скачивание папками: {queue.done} из {queue.total} ({humanSize(queue.bytes)})
+					{queue.failed > 0 && `, не удалось ${queue.failed}`}
+				</Typography>
+				<Tooltip title='Снять из очереди то, что ещё не началось' arrow>
+					<IconButton
+						size='small'
+						sx={{ p: '2px' }}
+						onClick={() => {
+							void commands.storageCancelDownloadQueue().then((r) => {
+								onNotice(
+									r.status === 'ok'
+										? `Из очереди снято файлов: ${r.data}. Идущие передачи можно оборвать по одной.`
+										: `Не удалось снять очередь: ${r.error}`,
+								);
+							});
+						}}
+					>
+						<OctagonPause size={13} strokeWidth={1.5} />
+					</IconButton>
+				</Tooltip>
+			</Stack>
+		) : null;
+
 	if (rows.length === 0) {
 		return (
-			<Typography variant='caption' sx={{ display: 'block', p: 2, color: 'text.disabled' }}>
-				Сейчас ничего не передаётся
-			</Typography>
+			<>
+				{серия}
+				<Typography variant='caption' sx={{ display: 'block', p: 2, color: 'text.disabled' }}>
+					{серия ? 'Байты ещё не поехали — очередь только что поставлена' : 'Сейчас ничего не передаётся'}
+				</Typography>
+			</>
 		);
 	}
 
 	return (
-		<List disablePadding>
-			{rows.map((t) => {
-				const running = t.state === 'active' || t.state === 'queued';
-				const pct = t.bytesTotal && t.bytesTotal > 0 ? Math.min(100, Math.round((t.bytesDone / t.bytesTotal) * 100)) : null;
+		<>
+			{серия}
+			<List disablePadding>
+				{rows.map((t) => {
+					const running = t.state === 'active' || t.state === 'queued';
+					const pct = t.bytesTotal && t.bytesTotal > 0 ? Math.min(100, Math.round((t.bytesDone / t.bytesTotal) * 100)) : null;
 
-				return (
-					<ListItem key={t.id} divider sx={{ display: 'block', py: '4px' }}>
-						<Stack direction='row' alignItems='center' spacing={1}>
-							{t.direction === 'up' ? (
-								<ArrowUp size={13} strokeWidth={1.5} opacity={0.7} />
-							) : (
-								<ArrowDown size={13} strokeWidth={1.5} opacity={0.7} />
-							)}
-							<Typography variant='body2' noWrap sx={{ flex: 1, minWidth: 0, fontSize: 16 }}>
-								{t.name}
-							</Typography>
-							<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 11 }}>
-								{humanSize(t.bytesTotal)}
-							</Typography>
-							<Typography variant='caption' sx={{ width: 44, textAlign: 'right', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
-								{pct !== null ? `${pct}%` : t.state}
-							</Typography>
+					return (
+						<ListItem key={t.id} divider sx={{ display: 'block', py: '4px' }}>
+							<Stack direction='row' alignItems='center' spacing={1}>
+								{t.direction === 'up' ? (
+									<ArrowUp size={13} strokeWidth={1.5} opacity={0.7} />
+								) : (
+									<ArrowDown size={13} strokeWidth={1.5} opacity={0.7} />
+								)}
+								<Typography variant='body2' noWrap sx={{ flex: 1, minWidth: 0, fontSize: 16 }}>
+									{t.name}
+								</Typography>
+								<Typography variant='caption' sx={{ color: 'text.disabled', fontSize: 11 }}>
+									{humanSize(t.bytesTotal)}
+								</Typography>
+								<Typography variant='caption' sx={{ width: 44, textAlign: 'right', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+									{pct !== null ? `${pct}%` : t.state}
+								</Typography>
+								{running && (
+									<Tooltip title='Отменить' arrow>
+										<IconButton size='small' sx={{ p: '2px' }} onClick={() => void commands.storageCancelTransfer(t.id)}>
+											<X size={12} strokeWidth={1.5} />
+										</IconButton>
+									</Tooltip>
+								)}
+
+								{/* Упавшая передача требует решения человека, поэтому у неё свои
+								    действия: повторить или снять задачу. Без них строка висела
+								    вечно, и список переставал отвечать на вопрос «всё ли в порядке».
+								    Если исходник исчез, «Повторить» сам снимает задачу и говорит
+								    об этом текстом — молча удалять чужую задачу нельзя. */}
+								{t.state === 'error' && (
+									<>
+										<Tooltip title='Повторить' arrow>
+											<IconButton
+												size='small'
+												sx={{ p: '2px' }}
+												onClick={() => {
+													void commands.storageRetryTransfer(t.id).then((r) => {
+														onNotice(r.status === 'ok' ? r.data : `Не удалось повторить: ${r.error}`);
+													});
+												}}
+											>
+												<RotateCcw size={12} strokeWidth={1.5} />
+											</IconButton>
+										</Tooltip>
+										<Tooltip title='Убрать задачу' arrow>
+											<IconButton size='small' sx={{ p: '2px' }} onClick={() => void commands.storageDismissTransfer(t.id)}>
+												<Trash2 size={12} strokeWidth={1.5} />
+											</IconButton>
+										</Tooltip>
+									</>
+								)}
+							</Stack>
+
 							{running && (
-								<Tooltip title='Отменить' arrow>
-									<IconButton size='small' sx={{ p: '2px' }} onClick={() => void commands.storageCancelTransfer(t.id)}>
-										<X size={12} strokeWidth={1.5} />
-									</IconButton>
-								</Tooltip>
+								<LinearProgress variant={pct === null ? 'indeterminate' : 'determinate'} value={pct ?? 0} sx={{ height: 2, mt: '2px' }} />
 							)}
 
-							{/* Упавшая передача требует решения человека, поэтому у неё свои
-							    действия: повторить или снять задачу. Без них строка висела
-							    вечно, и список переставал отвечать на вопрос «всё ли в порядке».
-							    Если исходник исчез, «Повторить» сам снимает задачу и говорит
-							    об этом текстом — молча удалять чужую задачу нельзя. */}
-							{t.state === 'error' && (
-								<>
-									<Tooltip title='Повторить' arrow>
-										<IconButton
-											size='small'
-											sx={{ p: '2px' }}
-											onClick={() => {
-												void commands.storageRetryTransfer(t.id).then((r) => {
-													onNotice(r.status === 'ok' ? r.data : `Не удалось повторить: ${r.error}`);
-												});
-											}}
-										>
-											<RotateCcw size={12} strokeWidth={1.5} />
-										</IconButton>
-									</Tooltip>
-									<Tooltip title='Убрать задачу' arrow>
-										<IconButton size='small' sx={{ p: '2px' }} onClick={() => void commands.storageDismissTransfer(t.id)}>
-											<Trash2 size={12} strokeWidth={1.5} />
-										</IconButton>
-									</Tooltip>
-								</>
+							{/* Ошибку показываем целиком: «байты уехали, но подтверждение не
+							    прошло» — случай, требующий человека, и прятать его нельзя. */}
+							{t.error && (
+								<Typography variant='caption' sx={{ display: 'block', fontSize: 10, color: 'error.main' }}>
+									{t.error}
+								</Typography>
 							)}
-						</Stack>
-
-						{running && (
-							<LinearProgress variant={pct === null ? 'indeterminate' : 'determinate'} value={pct ?? 0} sx={{ height: 2, mt: '2px' }} />
-						)}
-
-						{/* Ошибку показываем целиком: «байты уехали, но подтверждение не
-						    прошло» — случай, требующий человека, и прятать его нельзя. */}
-						{t.error && (
-							<Typography variant='caption' sx={{ display: 'block', fontSize: 10, color: 'error.main' }}>
-								{t.error}
-							</Typography>
-						)}
-					</ListItem>
-				);
-			})}
-		</List>
+						</ListItem>
+					);
+				})}
+			</List>
+		</>
 	);
 }
 
