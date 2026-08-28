@@ -32,13 +32,14 @@
 | `UNIFIED_SOURCES_ENGINE.md` | 🔧 фазы 1–5 закрыты (постинг); ⏸ TG как нода-источник отложен до тестов с большими файлами, дневная уборка — низкий приоритет |
 | `DISTRIBUTED_QUEUE_PLAN.md` | 🔧 режим воркера работает (живой прогон 2026-08-18); вопрос токена закрыт (`mch_` + `machineUuid`). ⏸ постинг через очередь отменён — публикует сайт, план у них: `innovation-hub/docs/SOCIAL_POSTING_PLAN.md` |
 
-| `SITE_STATS_LINK_PLAN.md` | 🔧 наша сторона (A, B) сделана; пункт C — за сайтом (`task.id` в `description.dbItemId`), у них тоже ещё ⬜ (`docs/PIPELINE.md` §15) |
+| `SITE_STATS_LINK_PLAN.md` | ✅ сделано целиком: A и B у нас (2026-08-19), C на сайте (2026-08-27). `itemId` архива = `tasks.id`. Можно переименовать в `+SITE_STATS_LINK_PLAN.md`, если поправить ссылки в `+STATS_SCHEMA_PLAN.md`, `BILLING_NODE_CONTRACT_PLAN.md` и у сайта |
 | `PIPELINE_BACKEND_REQUESTS.md` | 🔧 живой список просьб к сайту по конвейеру и воркеру, статусы внутри |
 
 ## Спроектировано, кода нет
 
 | документ | почему ещё нет |
 |---|---|
+| `BILLING_NODE_CONTRACT_PLAN.md` | 🎯 что нужно от нас для оплаты обработки на сайте: оси `payBase`/`payMeter` в ноде `description`, `srcSec` (схема v2), валюта себестоимости. План сайта — `../innovation-hub/docs/BILLING_AND_TRIAL_PLAN.md` |
 | `SECRETS_VAULT_SITE_PLAN.md` | 🎯 шов готов (плагины зовут IPC), сейфа на сайте нет |
 | `R2_SHARING_PLAN.md` | ✅ **у бэкенда сделано** (`project_members`, роли viewer/editor); десктопу расшаренность не видна по их решению — нам делать нечего, файл = модель |
 | `VISION.md` | 🎯 направление продукта; из него в коде нет capability resolver, workspace backend, engine/shell split |
