@@ -22,6 +22,7 @@ import { listen } from '@tauri-apps/api/event';
 import { CurentProjectFolder } from './ProjectFolderColumn/CurentProjectFolder';
 import { storage_store } from '@/Store/MainWin/storage_store';
 import { useStorageChanged } from './Storage/useStorageChanged';
+import { HydrateGateOverlay } from './Storage/HydrateGateOverlay';
 import { useSettingsSync } from './Storage/useSettingsSync';
 
 import { MainTopPanel } from './MainTopPanel';
@@ -289,6 +290,9 @@ export default function AppMain() {
 						<CurentProjectFolder />
 					</GlobalMenuProvider>
 				</Box>
+				{/* Пауза перед копированием облачного: окно одно на всю программу, потому
+				    что копирование зовут из меню файла, меню папки, Ctrl+V и дропа. */}
+				<HydrateGateOverlay />
 				<Box sx={{ ...bottomBoxStyle, mt: '5px', zIndex: 10 }}>
 					<MyDivider disablePadding />
 					{/* Три раннера — три одинаковые строки. Общий StatusRow, чтобы они не расходились

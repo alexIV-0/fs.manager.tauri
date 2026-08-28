@@ -15,9 +15,10 @@ import { CurentFolderItem } from '../FileExplorerColumn/CurentFolderItem';
 import { UniversalFolderView } from '../FileExplorerColumn/UniversalFolderView';
 import { joinPath } from '@/Utils/joinPath';
 import { commands, unwrap } from '@/Utils/specta';
-import { ensureLocal, moveInCloud } from '@/Utils/storageSeam';
+import { ensureLocal, isInMirror, moveInCloud } from '@/Utils/storageSeam';
 import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { ensureMirrorDir } from '@/Utils/storageSeam';
+import { hydrateForCopy } from '@/Utils/hydrateForCopy';
 
 export function CurentProjectFolder() {
 	const [activeItem, setActiveItem] = useState<{
@@ -136,9 +137,28 @@ export function CurentProjectFolder() {
 			const storeState = useColumnView_Store.getState();
 			const multiSelected = storeState.instances[dragData.source].multiSelectedPaths;
 			const isDraggingMultiSelected = multiSelected.length > 0 && multiSelected.includes(dragData.path);
+			const sources = isDraggingMultiSelected ? multiSelected : [dragData.path];
+
+			// Дроп — то же копирование/перемещение, значит и байты нужны те же: облачная
+			// папка существует в каталоге, а на диске её может не быть вовсе, и без
+			// гидрации переехала бы пустая структура. Одна пауза на весь дроп, а не по
+			// файлу: окно прогресса должно открыться один раз (`HydrateGateOverlay`).
+			//
+			// Перенос ВНУТРИ облака байтов не требует вовсе — там меняется только папка
+			// в каталоге, поэтому такие пути в гидрацию не попадают.
+			const целевойВЗеркале = await isInMirror(dropData.targetPath);
+			const черезДиск: string[] = [];
+			for (const srcPath of sources) {
+				if (!isCopy && целевойВЗеркале && (await isInMirror(srcPath))) continue;
+				черезДиск.push(srcPath);
+			}
+			if (черезДиск.length > 0) {
+				const готово = await hydrateForCopy(черезДиск, isCopy ? 'Копирование' : 'Перемещение');
+				if (готово === false) return;
+			}
 
 			if (isDraggingMultiSelected) {
-				for (const srcPath of multiSelected) {
+				for (const srcPath of sources) {
 					const name = srcPath.split(/[\\/]/).pop() ?? '';
 					await handleFileOperation({ ...dragData, path: srcPath, name }, dropData, isCopy);
 				}

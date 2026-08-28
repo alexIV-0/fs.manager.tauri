@@ -3,17 +3,17 @@ import { prefetchDir } from '@/Store/helpers/readDirContent';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { ListItem, ListItemButton, ListItemText, TextField } from '@mui/material';
 import { Folder } from 'lucide-react';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
-import { useMenuItems } from '../hooks/useMenuItems';
+import { menuSelection, useMenuItems } from '../hooks/useMenuItems';
 import { useEditableField } from '@/hooks/useEditableField';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import {
 	copyPath,
 	copyToClipboardFs,
 	cutToClipboardFs,
-	deleteItem,
+	deleteItems,
 	pasteFromClipboardFs,
 	renameFolder,
 	showInFinder,
@@ -23,8 +23,9 @@ import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
 import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
 import { downloadFolder, uploadFolder } from '@/MAIN_WIN/Storage/bulkActions';
-import { storageFolderMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
-import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { storageSelectionItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
+import { selectionTargets } from '@/Store/MainWin/useColumnView_store';
+import type { FileItem } from '@/Store/helpers/readDirContent';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 
 interface CurentFolderItemProps {
@@ -84,36 +85,43 @@ export function CurentFolderItem({
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
 	const isCut = clipboardFs_store((s) => s.type === 'cut' && s.paths.includes(path));
 
-	const getMultiPaths = () => {
-		if (!isMultiSelected) return [path];
-		const s = useColumnView_Store.getState();
-		if (s.instances.gd.multiSelectedPaths.includes(path)) return s.instances.gd.multiSelectedPaths;
-		if (s.instances.local.multiSelectedPaths.includes(path)) return s.instances.local.multiSelectedPaths;
-		return [path];
-	};
+	// Строка, по которой кликнули, — в том же виде, что и строки в колонке.
+	const me: FileItem = useMemo(() => ({ name, path, isDir: true, storage }), [name, path, storage]);
+
+	// На что подействует меню. Считается в момент ОТКРЫТИЯ, а не при отрисовке:
+	// строки мемоизированы (`DraggableFolderItem` сравнивает пропсы вручную), и уже
+	// выделенная строка не перерисовывается, когда к выделению добавляют соседнюю, —
+	// посчитанный в рендере список остался бы коротким.
+	const [targets, setTargets] = useState<FileItem[] | null>(null);
+	const acting = targets ?? [me];
+	const selection = menuSelection(acting);
+	const actingPaths = acting.map((t) => t.path);
 
 	const menuItems = useMenuItems({
 		type: 'folder',
+		selection,
 		onRename: () => {
 			handleMenuClose();
 			// Откладываем до следующего тика, чтобы MUI Menu успел вернуть фокус,
 			// иначе autoFocus на TextField немедленно потеряет фокус и onBlur скроет поле
 			setTimeout(() => startEditing(), 0);
 		},
-		onCopyPath: () => copyPath(path),
-		onShowInFinder: () => showInFinder(path),
-		onDelete: () => deleteItem(path),
+		// Несколько путей — по строке на каждый: так их вставляют в терминал и в чат.
+		onCopyPath: () => copyPath(actingPaths.join('\n')),
+		// Системе показываем ОДНУ папку: десять окон Finder'а никто не просил.
+		onShowInFinder: () => showInFinder(actingPaths[0]),
+		onDelete: () => void deleteItems(actingPaths),
+		// Создать и вставить можно только в ОДНУ папку — при выделении пункты серые.
 		onCreateFolder: () => createFolder(path),
-		onCopy: () => copyToClipboardFs(getMultiPaths()),
-		onCut: () => cutToClipboardFs(getMultiPaths()),
+		onCopy: () => copyToClipboardFs(actingPaths),
+		onCut: () => cutToClipboardFs(actingPaths),
 		onPaste: () => pasteFromClipboardFs(path),
 		hasClipboard,
 	});
 
-	// Облачные пункты — только у папки зеркала. Признак «облачная» берём из наличия
+	// Облачные пункты — только у строк зеркала. Признак «облачная» берём из наличия
 	// данных каталога у строки: они появляются только у того, что пришло из зеркала.
-	const folderCloudItems = storageFolderMenuItems(path, Boolean(storage));
-	const allMenuItems = [...menuItems, ...folderCloudItems];
+	const allMenuItems = [...menuItems, ...storageSelectionItems(acting)];
 
 	// Клик по значку папки = рекурсивное действие над всем поддеревом, поэтому оно
 	// всегда спрашивает подтверждение с числами (`bulkActions`). Там, где внутри
@@ -141,7 +149,13 @@ export function CurentFolderItem({
 				disablePadding
 				ref={listItemRef}
 				data-item-path={path}
-				onContextMenu={(e) => handleContextMenu(e, isMultiSelected ? undefined : onSelect)}
+				onContextMenu={(e) => {
+					const t = selectionTargets(me);
+					setTargets(t);
+					// Клик по строке ВНЕ выделения — обычный выбор одной строки; клик
+					// внутри выделения его не ломает.
+					handleContextMenu(e, t.length > 1 ? undefined : onSelect);
+				}}
 				onMouseEnter={() => prefetchDir(path)}
 				sx={{
 					height: 34,

@@ -3,17 +3,17 @@ import { typeOfFile_store } from '@/Store/MainWin/pathPattern_store';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { Box, ListItem, ListItemButton, ListItemText, TextField } from '@mui/material';
 import { File, FileAudio, FileBadge2, FileImage, FileKey2, FileSpreadsheet, FileText, FileType2, FileVideo, FolderOpenDot } from 'lucide-react';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { FileFolderContextMenu } from './ContextMenu/FileFolderContextMenu';
 import { useContextMenu } from '../hooks/useContextMenu';
-import { useMenuItems } from '../hooks/useMenuItems';
+import { menuSelection, useMenuItems } from '../hooks/useMenuItems';
 import { useEditableField } from '@/hooks/useEditableField';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import {
 	copyPath,
 	copyToClipboardFs,
 	cutToClipboardFs,
-	deleteItem,
+	deleteItems,
 	openFile,
 	pasteFromClipboardFs,
 	renameFile,
@@ -21,12 +21,13 @@ import {
 } from '@/PROCESSING/utils/fileSystemActions';
 import { joinPath } from '@/Utils/joinPath';
 import { dirname } from '@/Utils/path';
-import { useColumnView_Store } from '@/Store/MainWin/useColumnView_store';
+import { selectionTargets } from '@/Store/MainWin/useColumnView_store';
+import type { FileItem } from '@/Store/helpers/readDirContent';
 import { handleDragOutMouseDown } from '@/Utils/dragOut';
 import { StorageBadge } from '@/MAIN_WIN/Storage/StorageBadge';
 import { SyncChoice } from '@/MAIN_WIN/Storage/SyncChoice';
 import { идётПередача, нуженВыбор, pullFromCloud, pushToCloud } from '@/MAIN_WIN/Storage/fileActions';
-import { storageMenuItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
+import { storageSelectionItems } from '@/MAIN_WIN/Storage/useStorageMenuItems';
 
 interface CurrentFileItemProps {
 	name: string;
@@ -83,13 +84,17 @@ export function CurrentFileItem({
 	const hasClipboard = clipboardFs_store((s) => s.type !== null && s.paths.length > 0);
 	const isCut = clipboardFs_store((s) => s.type === 'cut' && s.paths.includes(path));
 
-	const getMultiPaths = () => {
-		if (!isMultiSelected) return [path];
-		const s = useColumnView_Store.getState();
-		if (s.instances.gd.multiSelectedPaths.includes(path)) return s.instances.gd.multiSelectedPaths;
-		if (s.instances.local.multiSelectedPaths.includes(path)) return s.instances.local.multiSelectedPaths;
-		return [path];
-	};
+	// Строка, по которой кликнули, — в том же виде, что и строки в колонке.
+	const me: FileItem = useMemo(() => ({ name, path, isDir: false, storage }), [name, path, storage]);
+
+	// На что подействует меню. Считается в момент ОТКРЫТИЯ, а не при отрисовке:
+	// строки мемоизированы (`DraggableFileItem` сравнивает пропсы вручную), и уже
+	// выделенная строка не перерисовывается, когда к выделению добавляют соседнюю, —
+	// посчитанный в рендере список остался бы коротким.
+	const [targets, setTargets] = useState<FileItem[] | null>(null);
+	const acting = targets ?? [me];
+	const selection = menuSelection(acting);
+	const actingPaths = acting.map((t) => t.path);
 
 	// Вставить рядом (в ту же папку что и файл)
 	const handlePaste = async () => {
@@ -99,26 +104,28 @@ export function CurrentFileItem({
 
 	const menuItems = useMenuItems({
 		type: 'file',
-		onOpen: () => openFile(path),
+		selection,
+		onOpen: () => {
+			for (const p of actingPaths) void openFile(p);
+		},
 		onRename: () => {
 			handleMenuClose();
 			setTimeout(() => startEditing(), 0);
 		},
-		onCopyPath: () => copyPath(path),
-		onShowInFinder: () => showInFinder(path),
-		onDelete: () => deleteItem(path),
-		onCopy: () => copyToClipboardFs(getMultiPaths()),
-		onCut: () => cutToClipboardFs(getMultiPaths()),
+		// Несколько путей — по строке на каждый: так их вставляют в терминал и в чат.
+		onCopyPath: () => copyPath(actingPaths.join('\n')),
+		// Системе показываем ОДИН элемент: десять окон Finder'а никто не просил.
+		onShowInFinder: () => showInFinder(actingPaths[0]),
+		onDelete: () => void deleteItems(actingPaths),
+		onCopy: () => copyToClipboardFs(actingPaths),
+		onCut: () => cutToClipboardFs(actingPaths),
 		onPaste: handlePaste,
 		hasClipboard,
 	});
 
 	// Облачные действия добавляются к обычному меню, а не заменяют его: облачный
 	// файл — тот же файл, отличаются только три действия.
-	const allMenuItems = useMemo(
-		() => [...menuItems, ...storageMenuItems(path, storage)],
-		[menuItems, path, storage],
-	);
+	const allMenuItems = [...menuItems, ...storageSelectionItems(acting)];
 
 	// Клик по значку — самое очевидное действие для этого состояния, и только оно.
 	// Там, где сторон две (расхождение), угадывать за человека нельзя: выбор
@@ -181,7 +188,13 @@ export function CurrentFileItem({
 				disablePadding
 				ref={listItemRef}
 				data-item-path={path}
-				onContextMenu={(e) => handleContextMenu(e, isMultiSelected ? undefined : onSelect)}
+				onContextMenu={(e) => {
+					const t = selectionTargets(me);
+					setTargets(t);
+					// Клик по строке ВНЕ выделения — обычный выбор одной строки (выделение
+					// снимется сам `onSelect`). Клик внутри выделения его не ломает.
+					handleContextMenu(e, t.length > 1 ? undefined : onSelect);
+				}}
 				sx={{
 					height: 34,
 					backgroundColor: isMultiSelected

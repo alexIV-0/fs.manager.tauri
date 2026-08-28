@@ -4,7 +4,7 @@ import { options_store } from '@/Store/MainWin/options_store';
 import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { restrictToParentElement } from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Box, Button, IconButton, List } from '@mui/material';
+import { Box, Button, IconButton, List, Tooltip } from '@mui/material';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -190,6 +190,8 @@ export function ProjectFolderColumn() {
 		// тут будем просто добавлять новую папку в текущую main, т.е. создавать новую со всей структурой что для настройки
 		const activeMain = mainFolderArr.find((f) => f.id === activeMainFolder);
 		if (!activeMain) return;
+		// Дубль запрета с кнопки — на случай вызова мимо неё. Почему нельзя, см. там же.
+		if (activeMain.online) return;
 		const allFoldersArr: any = unwrap(await commands.getSomeFromFolder(activeMain.path, [{ type: 'folders', ext: [] }]));
 
 		const newFolderName = getUniqueFolderName('newFolder', allFoldersArr.folders);
@@ -337,10 +339,34 @@ export function ProjectFolderColumn() {
 				</DndContext>
 			</Box>
 
+			{/* В облачной папке кнопка погашена намеренно. Папку ПРОЕКТА программа
+			    завести не может: `/mkdir` создаёт папку внутри проекта (нужен
+			    `projectId`), а сам проект — отдельная запись каталога, и эндпоинта
+			    под неё у бэкенда нет. Раньше кнопка молча делала пустую папку на
+			    диске: каталог о ней не знает, значит ни переименования, ни `options`
+			    внутри — призрак, который к тому же ловил `(1)` при следующем нажатии.
+			    Тултип на `span`: MUI не показывает подсказку на отключённой кнопке. */}
 			<Box sx={{ ...bottomBoxStyle, ...bottomShadowStyle }}>
-				<Button fullWidth onClick={addNewFolder} sx={{ p: 0 }} disabled={isScanning}>
-					add new folder
-				</Button>
+				<Tooltip
+					title={
+						isOnlineFolder
+							? 'Папку проекта в облаке заводит владелец на сайте — программа работает с уже созданной'
+							: 'Создать новую папку проекта'
+					}
+					placement='top'
+					arrow
+				>
+					<span style={{ display: 'flex' }}>
+						<Button
+							fullWidth
+							onClick={addNewFolder}
+							sx={{ p: 0 }}
+							disabled={isScanning || isOnlineFolder}
+						>
+							add new folder
+						</Button>
+					</span>
+				</Tooltip>
 			</Box>
 			<Box
 				sx={{
