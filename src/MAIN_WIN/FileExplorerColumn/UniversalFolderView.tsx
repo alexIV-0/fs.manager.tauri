@@ -12,7 +12,7 @@ import { invalidateDirCache } from '@/Store/helpers/readDirContent';
 import { TopPanelLocal } from './TopPanelLocal';
 import { TopPanelGD } from './TopPanelGD';
 import { deleteItemWithTrimColumns } from '@/PROCESSING/utils/deleteIteWithTrimColumn';
-import { openPreview } from '@/PROCESSING/utils/fileSystemActions';
+import { deleteItems, openPreview } from '@/PROCESSING/utils/fileSystemActions';
 import { copyToClipboardFs, cutToClipboardFs, pasteFromClipboardFs } from '@/PROCESSING/utils/fileSystemActions';
 import { clipboardFs_store } from '@/Store/MainWin/clipboardFs_store';
 import { joinPath } from '@/Utils/joinPath';
@@ -28,7 +28,7 @@ interface UniversalFolderViewProps {
 
 export function UniversalFolderView({ type, containerHeight = '100%', onStartResize }: UniversalFolderViewProps) {
 	const { activeMainFolder, activeProjectFolder } = setActiveFolders_store();
-	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths, clearMultiSelection } = useColumnView_Store();
+	const { instances, openRoot, selectItem, setColumnWidth, toggleMultiSelect, setMultiSelectedPaths } = useColumnView_Store();
 	const lastActiveInstance = useColumnView_Store((s) => s.lastActiveInstance);
 	const { localFolder } = localFolders_stor();
 
@@ -220,10 +220,10 @@ export function UniversalFolderView({ type, containerHeight = '100%', onStartRes
 			const { multiSelectedPaths } = state.instances[type];
 
 			if (multiSelectedPaths.length > 0) {
-				for (const path of multiSelectedPaths) {
-					await deleteItemWithTrimColumns(path);
-				}
-				clearMultiSelection(type);
+				// Через общий `deleteItems`, а не циклом по одному: у облачных файлов
+				// вторая ступень удаления спрашивает подтверждение, и оно должно быть
+				// одно на всё выделение, а не по окну на файл. Выделение он снимает сам.
+				await deleteItems(multiSelectedPaths);
 				return;
 			}
 

@@ -310,9 +310,13 @@ export function MainFolderColumn() {
 			    погашенной): тому, кто облаком не пользуется, она не объясняет ничего,
 			    а «+ папка» при этом занимает всю ширину. */}
 			<Box sx={{ ...bottomBoxStyle, ...bottomShadowStyle, display: 'flex', alignItems: 'center' }}>
-				<Button onClick={addNewFolder} sx={{ p: 0, flex: 1, minWidth: 0 }} disabled={isScanning}>
-					+ папка
-				</Button>
+				<Tooltip title='Добавить локальную папку с диска' placement='top' arrow>
+					<span style={{ flex: 1, display: 'flex' }}>
+						<Button onClick={addNewFolder} sx={{ p: 0, flex: 1, minWidth: 0 }} disabled={isScanning}>
+							+ папка
+						</Button>
+					</span>
+				</Tooltip>
 
 				{storageStatus.connected && (
 					<Tooltip title='Добавить папку из облака' placement='top' arrow>

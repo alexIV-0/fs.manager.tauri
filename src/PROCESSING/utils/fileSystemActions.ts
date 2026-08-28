@@ -7,6 +7,7 @@ import clipboard from 'tauri-plugin-clipboard-api';
 import { basename, dirname } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
 import { ensureLocal, ensureMirrorDir, renameInCloud, mkdirInCloud, deleteInCloud, moveInCloud } from '@/Utils/storageSeam';
+import { hydrateForCopy } from '@/Utils/hydrateForCopy';
 
 // ── Определяем тип инстанса по пути ────────────────────────────────────────
 // Сначала пытаемся понять, в какой панели реально открыт путь — сравниваем с
@@ -71,6 +72,74 @@ export async function deleteItem(path: string): Promise<void> {
 
 	const instanceType = getInstanceType(path);
 	await useColumnView_Store.getState().removeItemAndTrimColumns(instanceType, path);
+}
+
+/**
+ * Удалить несколько строк разом — с ОДНИМ подтверждением на всё выделение.
+ *
+ * Прогнать выделение через `deleteItem` по одному значило бы показать по `confirm`
+ * на каждый файл, у которого нет локальной копии: десять окон подряд перестают
+ * читать после второго, а вопрос там про необратимое удаление в облаке. Поэтому
+ * первая ступень проходит по всем, а вторая спрашивается списком.
+ */
+export async function deleteItems(paths: string[]): Promise<void> {
+	if (paths.length === 0) return;
+	if (paths.length === 1) {
+		await deleteItem(paths[0]);
+		return;
+	}
+
+	const store = useColumnView_Store.getState();
+	const нужноПодтвердить: string[] = [];
+
+	for (const path of paths) {
+		try {
+			const stage = await deleteInCloud(path);
+			if (stage === 'needsConfirm') {
+				// Вторая ступень — общим списком ниже.
+				нужноПодтвердить.push(path);
+				continue;
+			}
+			if (stage === null) {
+				// Не зеркало — обычное локальное удаление.
+				unwrap(await commands.deleteItem(path));
+			} else if (stage === 'localCopy') {
+				// Файл остался в облаке: путь живой, меняется только значок.
+				// Обрезать колонки в этом случае нельзя (см. `deleteItem`).
+				store.refreshAffectedColumns('gd', [dirname(path)]);
+				store.refreshAffectedColumns('local', [dirname(path)]);
+				continue;
+			}
+			await store.removeItemAndTrimColumns(getInstanceType(path), path);
+		} catch (err) {
+			console.error('deleteItems failed:', path, err);
+		}
+	}
+
+	if (нужноПодтвердить.length > 0) {
+		const имена = нужноПодтвердить.slice(0, 10).map((p) => basename(p)).join('\n');
+		const ok = window.confirm(
+			`Локальных копий нет — эти ${нужноПодтвердить.length} будут удалены В ОБЛАКЕ:\n\n` +
+				имена +
+				(нужноПодтвердить.length > 10 ? `\n…и ещё ${нужноПодтвердить.length - 10}` : '') +
+				`\n\nВосстановить будет нельзя: корзины на стороне сайта пока нет.`,
+		);
+		if (ok) {
+			for (const path of нужноПодтвердить) {
+				try {
+					await deleteInCloud(path, true);
+					await store.removeItemAndTrimColumns(getInstanceType(path), path);
+				} catch (err) {
+					console.error('deleteItems (облако) failed:', path, err);
+				}
+			}
+		}
+	}
+
+	// Выделение относилось к строкам, которых уже нет: оставить его — значит дать
+	// следующему действию сработать по призракам.
+	store.clearMultiSelection('gd');
+	store.clearMultiSelection('local');
 }
 
 // ── Копировать путь в буфер ─────────────────────────────────────────────────
@@ -305,24 +374,51 @@ export async function pasteFromClipboardFs(destFolderPath: string): Promise<void
 	// перед вставкой. Вне зеркала вызов ничего не делает.
 	await ensureMirrorDir(destFolderPath);
 
+	// ── Шаг 1: то, что переезжает ВНУТРИ облака ─────────────────────────────
+	// Это `/rename` со сменой папки: байты не двигаются вообще, качать нечего.
+	// Двинуть только на диске значило бы сломать связь с каталогом — путь перестал
+	// бы разбираться, и значки исчезли бы (ровно то, что уже случалось с
+	// переименованием). Поэтому такие пути уходят из работы первыми, до гидрации:
+	// иначе перенос папки на 50 ГБ внутри облака сначала скачал бы её целиком.
+	const черезДиск: string[] = [];
 	for (const srcPath of paths) {
-		const name = basename(srcPath);
-		const destPath = joinPath(destFolderPath, name);
-
 		try {
-			// Перенос ВНУТРИ облака идёт через каталог: это `/rename` со сменой папки,
-			// байты не двигаются. Двинуть только на диске значило бы сломать связь с
-			// каталогом — путь перестал бы разбираться, и значки исчезли бы (ровно то,
-			// что уже случалось с переименованием).
 			if (type === 'cut' && (await moveInCloud(srcPath, destFolderPath))) {
 				const srcInstanceType = getInstanceType(srcPath);
 				await useColumnView_Store.getState().removeItemAndTrimColumns(srcInstanceType, srcPath);
 				continue;
 			}
+		} catch (err) {
+			// Бэкенд отказал (например, перенос между проектами он не умеет).
+			// Через диск такой перенос делать нельзя — связь с каталогом порвётся.
+			console.error('moveInCloud failed for', srcPath, err);
+			continue;
+		}
+		черезДиск.push(srcPath);
+	}
 
-			// Источник может быть облачным и ещё не скачанным: в каталоге он есть, на
-			// диске нет. Без гидрации скопировалась бы пустота — а `ensureLocal` вне
-			// зеркала не делает ничего, так что вызов безопасен для локальных файлов.
+	// ── Шаг 2: байты ────────────────────────────────────────────────────────
+	// Всё, что поедет через диск, должно на этом диске быть. Для облачной папки это
+	// не мелочь: `copyItem` копирует ДИСК, а в каталоге папка может быть целиком
+	// онлайн — копировалась бы пустая структура, и выглядело бы это как удача.
+	// Операция ждёт скачивания, показывая прогресс (`HydrateGateOverlay`); отказ
+	// («Отменить» или недокачали) отменяет вставку целиком.
+	if (черезДиск.length > 0) {
+		const готово = await hydrateForCopy(черезДиск, type === 'copy' ? 'Копирование' : 'Перемещение');
+		if (!готово) {
+			useColumnView_Store.getState().refreshAffectedColumns(instanceType, [destFolderPath]);
+			return;
+		}
+	}
+
+	// ── Шаг 3: обычная файловая операция ────────────────────────────────────
+	for (const srcPath of черезДиск) {
+		const name = basename(srcPath);
+		const destPath = joinPath(destFolderPath, name);
+
+		try {
+			// `ensureLocal` здесь остаётся ради одиночного файла вне плана гидрации
+			// (например, путь из системного буфера): для уже скачанного это no-op.
 			const readySrc = await ensureLocal(srcPath);
 			if (type === 'copy') {
 				unwrap(await commands.copyItem(readySrc, destPath, { overwrite: false }));

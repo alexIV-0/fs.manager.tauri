@@ -13,13 +13,46 @@ import {
 	LucideIcon,
 } from 'lucide-react';
 import { ContextMenuItem } from '../FileExplorerColumn/ContextMenu/FileFolderContextMenu';
+import type { FileItem } from '@/Store/helpers/readDirContent';
+import { plural } from '../Storage/syncText';
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 const showInSystemLabel = isMac ? 'Показать в Finder' : 'Показать в Проводнике';
 
+/**
+ * Сколько строк тронет пункт меню — и как это назвать.
+ *
+ * Меню вызывают по ОДНОЙ строке, а работает оно по всему выделению (см.
+ * `selectionTargets`). Значит человек обязан видеть охват до нажатия: «Удалить» и
+ * «Удалить 10 файлов» — разные решения, и узнавать разницу после нажатия поздно.
+ */
+export interface MenuSelection {
+	count: number;
+	/** «4 файла», «2 папки», «5 объектов» — в винительном падеже, для подстановки. */
+	text: string;
+}
+
+/** Состав выделения по-русски. Пусто (одна строка) — подписи остаются прежними. */
+export function menuSelection(items: FileItem[]): MenuSelection | undefined {
+	if (items.length <= 1) return undefined;
+	const forms: [string, string, string] = items.every((i) => i.isDir)
+		? ['папку', 'папки', 'папок']
+		: items.every((i) => !i.isDir)
+			? ['файл', 'файла', 'файлов']
+			: ['объект', 'объекта', 'объектов'];
+	return { count: items.length, text: plural(items.length, forms) };
+}
+
+/** «Копировать» → «Копировать 4 файла». Одна строка — подпись как была. */
+function много(base: string, sel?: MenuSelection): string {
+	return sel ? `${base} ${sel.text}` : base;
+}
+
 // ─── Пункты для файла ───────────────────────────────────────────────────────
 interface UseFileMenuItemsProps {
 	type: 'file';
+	/** Охват действия, если выделена не одна строка. */
+	selection?: MenuSelection;
 	onOpen: () => void;
 	onRename: () => void;
 	onCopyPath: () => void;
@@ -34,6 +67,8 @@ interface UseFileMenuItemsProps {
 // ─── Пункты для папки ───────────────────────────────────────────────────────
 interface UseFolderMenuItemsProps {
 	type: 'folder';
+	/** Охват действия, если выделена не одна строка. */
+	selection?: MenuSelection;
 	onRename: () => void;
 	onCopyPath: () => void;
 	onShowInFinder: () => void;
@@ -81,12 +116,12 @@ type UseMenuItemsProps =
 
 export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 	if (props.type === 'file') {
-		const { onOpen, onRename, onCopyPath, onShowInFinder, onDelete, onCopy, onCut, onPaste, hasClipboard } = props;
+		const { selection, onOpen, onRename, onCopyPath, onShowInFinder, onDelete, onCopy, onCut, onPaste, hasClipboard } = props;
 
 		const items: ContextMenuItem[] = [
 			{
 				id: 'open',
-				label: 'Открыть',
+				label: много('Открыть', selection),
 				icon: FolderOpenDot,
 				onClick: onOpen,
 			},
@@ -95,29 +130,34 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 				label: 'Переименовать',
 				icon: Pencil,
 				onClick: onRename,
+				// Имя даётся одному файлу. Выделено десять — переименовывать нечего:
+				// серый пункт честнее, чем молчаливое «переименую тот, по которому кликнул».
+				disabled: Boolean(selection),
 			},
 			{
 				id: 'copy-path',
-				label: 'Копировать путь',
+				label: selection ? `Копировать пути (${selection.count})` : 'Копировать путь',
 				icon: Copy,
 				onClick: onCopyPath,
 			},
 			{
 				id: 'show-in-finder',
+				// Без счётчика намеренно: системе показывают ОДИН элемент — открывать
+				// десять окон Finder'а никто не просил.
 				label: showInSystemLabel,
 				icon: FolderOpenDot,
 				onClick: onShowInFinder,
 			},
 			{
 				id: 'copy',
-				label: 'Копировать',
+				label: много('Копировать', selection),
 				icon: Copy,
 				onClick: onCopy,
 				dividerBefore: true,
 			},
 			{
 				id: 'cut',
-				label: 'Вырезать',
+				label: много('Вырезать', selection),
 				icon: Scissors,
 				onClick: onCut,
 			},
@@ -126,6 +166,8 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 		if (hasClipboard && onPaste) {
 			items.push({
 				id: 'paste',
+				// Вставка кладёт в ПАПКУ файла, а она у всего выделения одна — счётчик
+				// здесь был бы враньём, и запрещать пункт не за что.
 				label: 'Вставить',
 				icon: Clipboard,
 				onClick: onPaste,
@@ -134,7 +176,7 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 
 		items.push({
 			id: 'delete',
-			label: 'Удалить файл',
+			label: selection ? `Удалить ${selection.text}` : 'Удалить файл',
 			icon: Trash2,
 			onClick: onDelete,
 			dividerBefore: true,
@@ -145,7 +187,7 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 	}
 
 	if (props.type === 'folder') {
-		const { onRename, onCopyPath, onShowInFinder, onDelete, onCreateFolder, onCopy, onCut, onPaste, hasClipboard } = props;
+		const { selection, onRename, onCopyPath, onShowInFinder, onDelete, onCreateFolder, onCopy, onCut, onPaste, hasClipboard } = props;
 
 		const items: ContextMenuItem[] = [
 			{
@@ -153,10 +195,12 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 				label: 'Переименовать',
 				icon: Pencil,
 				onClick: onRename,
+				// См. файловую ветку: имя даётся одной папке.
+				disabled: Boolean(selection),
 			},
 			{
 				id: 'copy-path',
-				label: 'Копировать путь',
+				label: selection ? `Копировать пути (${selection.count})` : 'Копировать путь',
 				icon: Copy,
 				onClick: onCopyPath,
 			},
@@ -168,23 +212,25 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 			},
 			{
 				id: 'copy',
-				label: 'Копировать',
+				label: много('Копировать', selection),
 				icon: Copy,
 				onClick: onCopy,
 				dividerBefore: true,
 			},
 			{
 				id: 'cut',
-				label: 'Вырезать',
+				label: много('Вырезать', selection),
 				icon: Scissors,
 				onClick: onCut,
 			},
 			{
 				id: 'paste',
+				// Вставка кладёт В папку, по которой кликнули: охват выделения к ней
+				// отношения не имеет, поэтому счётчика здесь нет и быть не может.
 				label: 'Вставить',
 				icon: Clipboard,
 				onClick: onPaste,
-				disabled: !hasClipboard,
+				disabled: !hasClipboard || Boolean(selection),
 			},
 			{
 				id: 'create-folder',
@@ -192,10 +238,11 @@ export function useMenuItems(props: UseMenuItemsProps): ContextMenuItem[] {
 				icon: FolderPlus,
 				onClick: onCreateFolder,
 				dividerBefore: true,
+				disabled: Boolean(selection),
 			},
 			{
 				id: 'delete',
-				label: 'Удалить папку',
+				label: selection ? `Удалить ${selection.text}` : 'Удалить папку',
 				icon: Trash2,
 				onClick: onDelete,
 				dividerBefore: true,

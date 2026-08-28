@@ -14,7 +14,14 @@ import type { ContextMenuItem } from '../FileExplorerColumn/ContextMenu/FileFold
 import type { FileItem } from '@/Store/helpers/readDirContent';
 import { commands } from '@/Utils/specta';
 import { refreshFolder } from '@/Utils/storageSeam';
-import { downloadFolder, refreshFolderRows, uploadFolder } from './bulkActions';
+import {
+	downloadFolder,
+	downloadSelection,
+	refreshFolderRows,
+	setPinnedSelection,
+	uploadFolder,
+	uploadSelection,
+} from './bulkActions';
 import { естьВОблаке, естьНаДиске, идётПередача, pullFromCloud, pushToCloud } from './fileActions';
 
 type Storage = FileItem['storage'];
@@ -145,6 +152,87 @@ export function storageMenuItems(path: string, storage: Storage): ContextMenuIte
 					.storageSetPinned(storage.fileId!, !storage.pinned)
 					.then(() => refreshFolderRows(path));
 			},
+		});
+	}
+
+	return items;
+}
+
+/**
+ * Облачные пункты для ВЫДЕЛЕНИЯ — одна точка входа для строки файла и строки папки.
+ *
+ * Одна строка — прежние наборы, слово в слово: у файла свои три пункта, у папки
+ * свои четыре. Несколько строк — общий набор с охватом в подписи и одним вопросом
+ * на всё выделение (`downloadSelection`/`uploadSelection`).
+ *
+ * Смешанное выделение (файлы и папки вместе) — обычный случай, а не край: в папке
+ * проекта лежит и то и другое. Поэтому набор здесь один на оба вида строк, а
+ * разбирается с ними план внутри действия.
+ */
+export function storageSelectionItems(targets: FileItem[]): ContextMenuItem[] {
+	if (targets.length === 0) return [];
+	if (targets.length === 1) {
+		const one = targets[0];
+		return one.isDir
+			? storageFolderMenuItems(one.path, Boolean(one.storage))
+			: storageMenuItems(one.path, one.storage);
+	}
+
+	// Строки не из зеркала в выделении просто не участвуют: локальный файл рядом с
+	// облачным — норма, и из-за него весь набор пропадать не должен.
+	const зеркальные = targets.filter((t) => Boolean(t.storage));
+	if (зеркальные.length === 0) return [];
+
+	const можноСкачать = зеркальные.some((t) =>
+		t.isDir
+			? t.storage?.aggregate === 'allCloud' || t.storage?.aggregate === 'mixed'
+			: t.storage?.state != null && !идётПередача(t.storage.state) && естьВОблаке(t.storage.state),
+	);
+	const можноОтправить = зеркальные.some((t) =>
+		t.isDir
+			? t.storage?.aggregate === 'needsUpload'
+			: t.storage?.state != null && !идётПередача(t.storage.state) && естьНаДиске(t.storage.state),
+	);
+
+	// Пин живёт на записи каталога — он есть только у файлов.
+	const пинуемые = зеркальные.filter((t) => !t.isDir && t.storage?.fileId);
+	const всеЗакреплены = пинуемые.length > 0 && пинуемые.every((t) => t.storage?.pinned);
+
+	const items: ContextMenuItem[] = [];
+
+	if (можноСкачать) {
+		items.push({
+			id: 'storage-download-selection',
+			label: `Скачать из облака (${зеркальные.length})…`,
+			icon: CloudDownload,
+			dividerBefore: true,
+			onClick: () => void downloadSelection(зеркальные),
+		});
+		items.push({
+			id: 'storage-download-selection-pin',
+			label: 'Скачать и оставить оффлайн…',
+			icon: HardDriveDownload,
+			onClick: () => void downloadSelection(зеркальные, true),
+		});
+	}
+
+	if (можноОтправить) {
+		items.push({
+			id: 'storage-upload-selection',
+			label: `Отправить в облако (${зеркальные.length})…`,
+			icon: CloudUpload,
+			dividerBefore: items.length === 0,
+			onClick: () => void uploadSelection(зеркальные),
+		});
+	}
+
+	if (пинуемые.length > 0) {
+		items.push({
+			id: 'storage-pin-selection',
+			label: всеЗакреплены ? `Не держать оффлайн (${пинуемые.length})` : `Оставить оффлайн (${пинуемые.length})`,
+			icon: всеЗакреплены ? PinOff : Pin,
+			dividerBefore: items.length === 0,
+			onClick: () => void setPinnedSelection(пинуемые, !всеЗакреплены),
 		});
 	}
 
