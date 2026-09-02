@@ -13,6 +13,8 @@ import LoopGroupProperty from './LoopGroupProperty';
 import TextEditPropertyComponent from '../properties/TextEditProperty';
 import AddNewPropertyButtom from '../properties/AddNewPropertyButtom';
 import SimpleDDMProperty from '../properties/SimpleDDM';
+import ServiceAccountDDM from '@/NODE_WIN/nodes/properties/ServiceAccountDDM';
+import { SERVICE_TAG_PREFIX } from '@/Utils/vendorServices';
 import VkAccountDDM from '../properties/VkAccountDDM';
 import YoutubeAccountDDM from '../properties/YoutubeAccountDDM';
 import TgAccountDDM from '../properties/TgAccountDDM';
@@ -48,6 +50,10 @@ function GenericProperty({ property }: { property: Property }) {
 					<ChipAutocompleteProperty property={property} onChange={handleChange} />
 				);
 			case 'ddm':
+				// Учётка внешнего сервиса — тег параметризован слагом, поэтому startsWith,
+				// а не includes (VENDOR_KEYS_CONTRACT.md §6.2).
+				if (property.controlProps.options?.some((o) => typeof o === 'string' && o.startsWith(SERVICE_TAG_PREFIX)))
+					return <ServiceAccountDDM property={property} onChange={handleChange} />;
 				if (property.controlProps.options?.includes('#vkAccounts'))
 					return <VkAccountDDM property={property} onChange={handleChange} />;
 				if (property.controlProps.options?.includes('#youtubeAccounts'))

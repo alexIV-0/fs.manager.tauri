@@ -20,7 +20,10 @@
 					"value": ""
 				},
 				"isInput": true,
-				"acceptedTypes": ["video", "audio"],
+				"acceptedTypes": [
+					"video",
+					"audio"
+				],
 				"required": true,
 				"outputType": "accepted"
 			},
@@ -30,14 +33,20 @@
 				"controlProps": {
 					"label": "Target Path",
 					"tooltip": "Путь до финального файла. Если пустой — сохраняется рядом с исходником",
-					"options": ["#pathPattern", "Custom Folder...", "#historyValue(targetPath)"],
+					"options": [
+						"#pathPattern",
+						"Custom Folder...",
+						"#historyValue(targetPath)"
+					],
 					"multiSelect": true,
 					"allowDuplicates": true,
 					"value": []
 				},
 				"isInput": true,
 				"outputType": "path",
-				"acceptedTypes": ["path"],
+				"acceptedTypes": [
+					"path"
+				],
 				"required": false
 			},
 			{
@@ -50,16 +59,19 @@
 					"tooltip": "Модель Whisper для транскрипции. Чем больше модель — тем точнее, но медленнее.",
 					"value": "ggml-large-v3-turbo.bin",
 					"freeInput": false,
-					"options": ["#whisperModels", "Custom File..."]
+					"options": [
+						"#whisperModels",
+						"Custom File..."
+					]
 				}
 			},
 			{
 				"id": "vadThreshold",
 				"controlType": "slider",
 				"controlProps": {
-					"label": "VAD threshold",
-					"tooltip": "Voice Activity Detection (Silero) - детекция речи. Распознаёт только участки с речью, отбрасывая тишину и музыку — точнее тайминги и сегментация. Модель встроена в плагин, скачивать ничего не нужно.<div><b>0 — VAD выключен.</b></div>Порог чувствительности VAD (когда включён, >0).<div>Выше (0.7–0.85) — строже: отсекает музыку/эмбиент, которые иначе принимаются за речь и портят тайминги начала.</div><div>Ниже (0.3–0.5) — мягче: ловит тихую речь, но может цеплять фон.</div>0.5 — дефолт Silero. Для роликов с музыкой/подложкой поднимай к 0.8.",
-					"value": 0.5,
+					"label": "Чувствительность к паузам",
+					"tooltip": "Порог детектора речи (Silero VAD). Им размечаются ПАУЗЫ: где в файле молчат, а где говорят. Распознавание идёт по всему файлу целиком — на текст этот слайдер больше не влияет, только на тайминги.<div><b>0 — коррекция таймингов выключена.</b> Слова остаются такими, как их отдал whisper: слово перед паузой растянуто на всю тишину, титр висит лишнее.</div><div><b>0.2–0.35 — рабочий диапазон.</b> Детектор слышит и тихую речь, паузы находятся честно.</div><div><b>Выше 0.5 — вредно.</b> Silero начинает считать тихую речь молчанием, и её тайминги обрезаются по чужим границам (замерено: при 0.5 целая реплика не попала в разметку вовсе).</div>Ложное «здесь речь» безопасно — просто не станем ничего обрезать.",
+					"value": 0.3,
 					"minValue": 0,
 					"maxValue": 0.9,
 					"step": 0.05,
@@ -95,7 +107,14 @@
 				"controlProps": {
 					"label": "Output Format",
 					"tooltip": "Формат выходного файла. Тайминги собираются из пословного DTW-вывода (точные in/out + паузы).<div>srt/vtt — субтитры; json — фразы с таймингами {from,to,text}; JSONfull — сырой пословный JSON whisper; txt — только текст.</div>«Detect Language» — только определить язык и записать его в .txt.",
-					"options": ["srt", "vtt", "JSONfull", "json", "txt", "Detect Language"],
+					"options": [
+						"srt",
+						"vtt",
+						"JSONfull",
+						"json",
+						"txt",
+						"Detect Language"
+					],
 					"freeInput": false,
 					"value": "JSONfull"
 				},

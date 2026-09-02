@@ -150,8 +150,36 @@ impl MockApi {
     // отвечает «пусто», а отчёты молча принимаются: воркер на моке крутится вхолостую
     // и ничего не ломает, вместо того чтобы падать на каждом запросе.
 
-    pub async fn queue_ping(&self, _machine: &super::client::MachineRef<'_>) -> StorageResult<()> {
-        Ok(())
+    pub async fn queue_ping(&self, _machine: &super::client::MachineRef<'_>) -> StorageResult<i64> {
+        // Ревизия сейфа всегда 0: сейфа у демо-режима нет, и «она не менялась» —
+        // единственный честный ответ. Иначе мок гонял бы клиента за ключами.
+        Ok(0)
+    }
+
+    /// Сейфа в демо-режиме нет: все запрошенные сервисы недоступны.
+    ///
+    /// Не пустой ответ, а именно `unavailable` — пустой означал бы «спросили ни о
+    /// чём», и гейт пропустил бы задачу без ключей дальше.
+    pub async fn vault_keys(
+        &self,
+        services: &[String],
+        _known: &std::collections::BTreeMap<String, VendorKnownKey>,
+        _accounts: &std::collections::BTreeMap<String, String>,
+        _task_id: Option<&str>,
+    ) -> StorageResult<VendorKeysResponse> {
+        Ok(VendorKeysResponse {
+            unavailable: services.to_vec(),
+            ..Default::default()
+        })
+    }
+
+    pub async fn vault_usage(
+        &self,
+        _task_id: &str,
+        _project_id: Option<&str>,
+        _entries: &[VendorUsageEntry],
+    ) -> StorageResult<VendorUsageResult> {
+        Ok(VendorUsageResult::default())
     }
 
     pub async fn queue_claim(

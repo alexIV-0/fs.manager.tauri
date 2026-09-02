@@ -11,7 +11,7 @@ import { parseSubtitles, detectFormat } from './parsers';
 import { adaptSettingsToVideo } from './settingsAdapter';
 import { buildPhrases } from './buildPhrases';
 import { buildAssFile } from './buildAss';
-import { resolveFontFamily } from './fontFamily';
+import { resolveAssFontName } from './fontFamily';
 
 
 function isTitleFile(filePath: string): boolean {
@@ -123,14 +123,27 @@ export async function addTitle(_item: any, _description: any, ctx: PluginContext
 		if (!fontResult) {
 			sendToMW('log', { text: `[addTitle] Font not found: "${adapted.text.font}", using fallback` });
 		}
-		// libass матчит шрифт ASS-стиля по ИМЕНИ СЕМЕЙСТВА, а fonts_get_list отдаёт лишь
-		// stem файла ("ArialHB" вместо "Arial Hebrew") — при несовпадении шрифт молча
-		// подменяется дефолтным. Поэтому читаем настоящее имя семейства из файла.
+		// В панели шрифт выбирают ФАЙЛОМ, а libass ищет его по ИМЕНИ из таблицы `name`
+		// самого файла — stem («ArialHB», «Georgia Bold») с этими именами обычно не
+		// совпадает, и тогда шрифт молча подменяется. Имя добываем сами, см. fontFamily.ts.
 		let fontName = fontResult?.name ?? platformFallbackFont();
 		if (fontResult) {
-			const family = await resolveFontFamily(fontResult.path, fs);
-			if (family) fontName = family;
-			else sendToMW('log', { text: `[addTitle] Could not read family name from ${fontResult.path}, using stem "${fontName}"` });
+			const { info, error } = await resolveAssFontName(fontResult.path, fontResult.name, fs);
+			if (info) {
+				fontName = info.name;
+				sendToMW('log', {
+					text:
+						`[addTitle] Font "${fontResult.name}" → Fontname "${info.name}"` +
+						` (family: "${info.family ?? '?'}", face: "${info.subfamily ?? '?'}"` +
+						`, matched by ${info.viaFace ? 'face' : 'family'})`,
+				});
+			} else {
+				// Отдельной строкой и с причиной: иначе libass подставит чужой шрифт, и
+				// со стороны это выглядит как «настройка шрифта не работает».
+				sendToMW('log', {
+					text: `[addTitle] Could not read font names from ${fontResult.path} (${error}) — falling back to "${fontName}", libass will likely substitute another font`,
+				});
+			}
 		}
 		// fontsdir гарантирует, что libass подхватит файл даже если он не в системном кэше.
 		const fontsDir = fontResult ? path.dirname(fontResult.path) : null;

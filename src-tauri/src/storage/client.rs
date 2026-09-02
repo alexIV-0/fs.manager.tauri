@@ -290,13 +290,18 @@ impl StorageApi {
         self.send(Method::POST, "queue", &[], Some(props)).await
     }
 
-    /// «Я на связи» без запроса задачи.
+    /// «Я на связи» без запроса задачи. Возвращает ревизию сейфа вендорских ключей.
     ///
     /// Нужен отдельно от `claim`, иначе состояние «машина включена, воркер выключен»
     /// сайту не видно вовсе: он слышит нас только когда воркер спрашивает задачу.
-    pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<()> {
-        let _: serde_json::Value = self.queue_call("ping", machine, json!({})).await?;
-        Ok(())
+    ///
+    /// Ревизия едет попутным полем каждого удара сердца — по тому же приёму, что
+    /// `settingsRevision` в `/delta`: отдельный опрос сейфа по расписанию стоил бы
+    /// запроса на каждую машину каждые полминуты ради числа, которое почти никогда
+    /// не меняется.
+    pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<i64> {
+        let r: QueuePingResponse = self.queue_call("ping", machine, json!({})).await?;
+        Ok(r.vault_revision)
     }
 
     /// Взять следующую задачу. `None` — очередь пуста, это норма.
@@ -351,6 +356,69 @@ impl StorageApi {
             .queue_call("failed", machine, json!({ "taskId": task_id, "error": error }))
             .await?;
         Ok(())
+    }
+
+    // ─── Сейф вендорских ключей ──────────────────────────────────────────────
+    //
+    // Одна ручка `vault` с полем `action`, как у очереди. Токен тот же (`mch_…`):
+    // машина и есть устройство, второй заводить не надо.
+
+    /// Ключи под текущие задачи.
+    ///
+    /// `known` — что уже лежит в сейфе: слаг → пара «учётка + версия». Не одна
+    /// версия: нумерация у каждой учётки своя, и `v3` у `main` совпал бы с `v3` у
+    /// `test`, подтвердив нам чужой ключ как актуальный.
+    ///
+    /// `accounts` — метки, которые нода знает из поля проекта. Не назвали, а учёток
+    /// несколько — сайт не выбирает за нас и отвечает `ambiguous`.
+    ///
+    /// `task_id` нужен, чтобы выдали учётку ВЛАДЕЛЬЦА задачи: проект пользователя А
+    /// на воркере парка должен работать ключом А, а не нашим.
+    ///
+    /// Просим ТОЛЬКО нужные сервисы, а не весь сейф: иначе одна скомпрометированная
+    /// машина означала бы все ключи разом (`VENDOR_KEYS_CONTRACT.md` §3).
+    pub async fn vault_keys(
+        &self,
+        services: &[String],
+        known: &std::collections::BTreeMap<String, VendorKnownKey>,
+        accounts: &std::collections::BTreeMap<String, String>,
+        task_id: Option<&str>,
+    ) -> StorageResult<VendorKeysResponse> {
+        let mut body = json!({ "action": "keys", "services": services, "known": known });
+        // Пустые поля не шлём вовсе: у схемы они `optional`, а пустой объект и
+        // отсутствие поля — не одно и то же для того, кто читает лог запросов.
+        if !accounts.is_empty() {
+            body["accounts"] = json!(accounts);
+        }
+        if let Some(id) = task_id {
+            body["taskId"] = json!(id);
+        }
+        self.send(Method::POST, "vault", &[], Some(body)).await
+    }
+
+    /// Отчёт о потреблении в ЕДИНИЦАХ.
+    ///
+    /// Шлётся сразу после ответа вендора, не дожидаясь конца задачи: вендор уже
+    /// получил свои деньги, и упади машина следом — расход всё равно должен быть
+    /// учтён.
+    pub async fn vault_usage(
+        &self,
+        task_id: &str,
+        project_id: Option<&str>,
+        entries: &[VendorUsageEntry],
+    ) -> StorageResult<VendorUsageResult> {
+        self.send(
+            Method::POST,
+            "vault",
+            &[],
+            Some(json!({
+                "action": "usage",
+                "taskId": task_id,
+                "projectId": project_id,
+                "entries": entries,
+            })),
+        )
+        .await
     }
 
     /// Вернуть задачу в очередь — аварийный стоп, не дожидаясь протухания аренды.

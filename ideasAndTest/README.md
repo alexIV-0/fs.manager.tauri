@@ -40,7 +40,7 @@
 | документ | почему ещё нет |
 |---|---|
 | `BILLING_NODE_CONTRACT_PLAN.md` | 🎯 что нужно от нас для оплаты обработки на сайте: оси `payBase`/`payMeter` в ноде `description`, `srcSec` (схема v2), валюта себестоимости. План сайта — `../innovation-hub/docs/BILLING_AND_TRIAL_PLAN.md` |
-| `SECRETS_VAULT_SITE_PLAN.md` | 🎯 шов готов (плагины зовут IPC), сейфа на сайте нет |
+| `SECRETS_VAULT_SITE_PLAN.md` | 🔧 шов готов (плагины зовут IPC); сейф на сайте **появился для сервисных ключей** — `VENDOR_KEYS_CONTRACT.md`. Аккаунтов площадок (владелец = пользователь, device-enrollment) там пока нет |
 | `R2_SHARING_PLAN.md` | ✅ **у бэкенда сделано** (`project_members`, роли viewer/editor); десктопу расшаренность не видна по их решению — нам делать нечего, файл = модель |
 | `VISION.md` | 🎯 направление продукта; из него в коде нет capability resolver, workspace backend, engine/shell split |
 | `ARCHITECTURE_DISTRIBUTED.md` | 🎯 парковка направления (сайт = control plane), механика — в `DISTRIBUTED_QUEUE_PLAN.md` |
@@ -58,6 +58,7 @@
 
 | документ | роль |
 |---|---|
+| `VENDOR_KEYS_CONTRACT.md` | 📖 ключи внешних сервисов с сайта + отчёт о потреблении вместо `costUsd`. По §1–4 **сторона сайта готова 2026-08-28**, наша — не начата; §6 (учётки под сервисом, галочка = чей ключ, гейт) требует правки схемы и у сайта. Отменяет §3 из `BILLING_NODE_CONTRACT_PLAN.md`. Запрос к сайту — `../innovation-hub/docs/VENDOR_KEYS_CLIENT_REQUESTS.md` |
 | `DESCRIPTION_FORMAT_CONTRACT.md` + `description.example.md` | 📖 контракт формата описания для нас и сайта + эталонный файл |
 | `STORAGE_BACKEND_REQUESTS.md` | 📖 замороженная копия; главная редакция — `innovation-hub/docs/STORAGE_CLIENT_REQUESTS.md` |
 | `TELEGRAM_BOTS_SETUP.md`, `YT_SETUP_1_DEV.md`, `YT_SETUP_2_USER.md` | 📖 runbook'и ручной настройки платформ |

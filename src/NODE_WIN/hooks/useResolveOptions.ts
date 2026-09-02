@@ -85,6 +85,23 @@ export function useResolveOptions(propertyId?: string) {
 						return key ? (userInputHistory_store.getState().history[key] ?? []) : [];
 					}
 
+					// Учётки внешнего сервиса: #services:<слаг> (VENDOR_KEYS_CONTRACT.md §6.2).
+					// Тег параметризован слагом, поэтому разбирается до switch — как
+					// #historyValue(key). Отдаём МЕТКИ: секрет в дропдаун не попадает
+					// никогда, его достаёт vault_get_secret в момент вызова вендора.
+					const servicesMatch = tag.match(/^services:(.+)$/);
+					if (servicesMatch) {
+						const slug = servicesMatch[1].trim();
+						if (!slug) return [];
+						try {
+							const list = unwrap(await commands.vaultList(slug));
+							return list.map((a) => a.label);
+						} catch (e) {
+							console.warn(`[#services:${slug}] не удалось получить список учёток:`, e);
+							return [];
+						}
+					}
+
 					// ⚠️ При добавлении нового #tag — также добавить его в HASH_OPTIONS
 					// в src/MAIN_WIN/options/PluginBuilderWin/types.ts
 					switch (tag) {

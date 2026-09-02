@@ -52,8 +52,29 @@ impl Provider {
 
     // ─── Очередь задач ───────────────────────────────────────────────────────
 
-    pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<()> {
+    pub async fn queue_ping(&self, machine: &MachineRef<'_>) -> StorageResult<i64> {
         dispatch!(self, queue_ping(machine))
+    }
+
+    // ─── Сейф вендорских ключей ──────────────────────────────────────────────
+
+    pub async fn vault_keys(
+        &self,
+        services: &[String],
+        known: &std::collections::BTreeMap<String, VendorKnownKey>,
+        accounts: &std::collections::BTreeMap<String, String>,
+        task_id: Option<&str>,
+    ) -> StorageResult<VendorKeysResponse> {
+        dispatch!(self, vault_keys(services, known, accounts, task_id))
+    }
+
+    pub async fn vault_usage(
+        &self,
+        task_id: &str,
+        project_id: Option<&str>,
+        entries: &[VendorUsageEntry],
+    ) -> StorageResult<VendorUsageResult> {
+        dispatch!(self, vault_usage(task_id, project_id, entries))
     }
 
     pub async fn queue_claim(&self, machine: &MachineRef<'_>) -> StorageResult<Option<QueueTask>> {

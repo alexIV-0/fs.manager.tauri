@@ -32,6 +32,14 @@ function isSentenceEnding(word: FlatWord): boolean {
 	return SENTENCE_ENDINGS.has(word.text.slice(-1));
 }
 
+/**
+ * Пауза между словами, которая закрывает фразу (мс).
+ *
+ * Слова внутри одной реплики идут встык (для SRT/VTT время размазано
+ * пропорционально внутри cue), поэтому порог срабатывает ровно на границах реплик.
+ */
+const PAUSE_BREAK_MS = 500;
+
 function startsWithUppercase(text: string): boolean {
 	const ch = text.charAt(0);
 	return ch.length > 0 && ch === ch.toUpperCase() && ch !== ch.toLowerCase();
@@ -224,12 +232,20 @@ function buildSentenceBlocks(words: FlatWord[], maxLineLength: number, maxLine: 
 		} else if (nextWord && current.text.trim()) {
 			// Next word starts with uppercase AND current text ends with letter/digit
 			if (startsWithUppercase(nextWord.text) && /[\p{L}\p{N}]$/u.test(current.text.trim())) {
-				// Auto-add period to current block
+				// Auto-add period to current block.
+				// Конец фразы НЕ двигаем: следующая фраза начинается ровно там, где
+				// эта кончается, и любой сдвиг вперёд давал перекрытие (было +50 мс —
+				// на 25 fps это 1–2 кадра, в которых видны сразу оба титра).
 				current.text += '.';
-				if (current.toMs !== null) current.toMs += 50;
 				shouldEnd = true;
 			}
 		}
+
+		// Пауза в речи закрывает фразу. Без этого блок набирается только по ширине
+		// строки и заглавным буквам, а тишина между репликами попадает ВНУТРЬ фразы:
+		// титр повисает на всю паузу (в замере — с 2.8 до 20.5 секунды) и склеивает
+		// текст двух разных реплик.
+		if (nextWord && nextWord.fromMs - word.toMs > PAUSE_BREAK_MS) shouldEnd = true;
 
 		if (shouldEnd) pushCurrent();
 	}

@@ -958,10 +958,37 @@ impl StorageService {
         }
     }
 
-    pub async fn queue_ping(&self) -> Result<(), String> {
+    pub async fn queue_ping(&self) -> Result<i64, String> {
         let p = self.require_provider()?;
         let (uuid, hostname) = self.machine();
         p.queue_ping(&super::client::MachineRef { uuid, hostname })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    // ─── Сейф вендорских ключей ──────────────────────────────────────────────
+
+    pub async fn vault_keys(
+        &self,
+        services: &[String],
+        known: &std::collections::BTreeMap<String, VendorKnownKey>,
+        accounts: &std::collections::BTreeMap<String, String>,
+        task_id: Option<&str>,
+    ) -> Result<VendorKeysResponse, String> {
+        let p = self.require_provider()?;
+        p.vault_keys(services, known, accounts, task_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn vault_usage(
+        &self,
+        task_id: &str,
+        project_id: Option<&str>,
+        entries: &[VendorUsageEntry],
+    ) -> Result<VendorUsageResult, String> {
+        let p = self.require_provider()?;
+        p.vault_usage(task_id, project_id, entries)
             .await
             .map_err(|e| e.to_string())
     }
@@ -983,12 +1010,16 @@ impl StorageService {
     ) -> Result<(), String> {
         let p = self.require_provider()?;
         let (uuid, hostname) = self.machine();
+        // Сообщение шага уезжает на сайт и оседает в его журнале. Затираем здесь, а
+        // не у вызывающего: точек вызова со временем станет больше, а забытая точка
+        // означает ключ в чужом хранилище логов (VENDOR_KEYS_CONTRACT.md §3).
+        let safe = message.map(crate::redact::redact_secrets);
         p.queue_progress(
             &super::client::MachineRef { uuid, hostname },
             task_id,
             step_id,
             status,
-            message,
+            safe.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())

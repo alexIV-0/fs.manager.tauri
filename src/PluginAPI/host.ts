@@ -987,6 +987,108 @@ export const accounts = {
 	},
 };
 
+/**
+ * Метаданные учётки — то же, что отдаёт `vault_list`. Описано здесь, а не взято из
+ * `bindings.ts`: этот файл импортируют плагины, и тянуть в них артефакт specta со
+ * всеми командами ядра незачем (как и у `AccountInfo` выше).
+ */
+export interface VaultAccountMeta {
+	slug: string;
+	label: string;
+	/** `local` — заведена на этой машине; `site` — копия выданного сайтом ключа. */
+	source: string;
+	/** `••••4f21` — узнать ключ глазами, не доставая его. */
+	hint: string;
+	secretVersion: number;
+	/** Unix-секунды. `null` — бессрочно (только у локальных). */
+	expiresAt: number | null;
+	updatedAt: number;
+	/** Срок копии вышел: секрет запрашивать заново, работать по нему нельзя. */
+	expired: boolean;
+}
+
+/**
+ * Учётки внешних сервисов (ключи вендоров): каталог и секреты.
+ *
+ * Контракт: `ideasAndTest/VENDOR_KEYS_CONTRACT.md` §6. Плагин НЕ хранит ключ у себя и
+ * не читает файлов — в его свойстве лежит только МЕТКА учётки, выбранная в ноде, а
+ * значение достаётся здесь и ровно в момент вызова вендора.
+ *
+ * Отдельно от `accounts` намеренно: там аккаунты ПЛОЩАДОК (VK, Telegram, YouTube),
+ * где владелец секрета — конкретный человек и нужна привязка «чей это токен». Здесь
+ * сервисные ключи, у которых владелец — мы или клиент проекта. Ветки разные, сроки
+ * жизни разные, отзыв разный; сливать их в одну поверхность нельзя.
+ */
+export const vault = {
+	/** Учётки сервиса — БЕЗ секретов (метка, источник, подсказка, срок). */
+	list(slug: string): Promise<VaultAccountMeta[]> {
+		return invokeHost('vault_list', { slug }).then((r) => (Array.isArray(r) ? (r as VaultAccountMeta[]) : []));
+	},
+
+	/**
+	 * Поля секрета учётки. СЕКРЕТ: не логировать, не класть в options.json, не
+	 * показывать в UI и не отправлять никуда, кроме самого вендора.
+	 *
+	 * Протухшую копию хост не отдаёт вовсе — бросает. Это не сбой, а штатный конец
+	 * срока: ключ надо запросить у сайта заново.
+	 */
+	getSecret(slug: string, label: string): Promise<Record<string, string>> {
+		return invokeHost('vault_get_secret', { slug, label });
+	},
+
+	/**
+	 * Единственное значение секрета — то, что нужно в 90 % случаев.
+	 *
+	 * Существует потому, что имя поля различается по независящей от плагина
+	 * причине: у локально заведённой учётки оно из описания сервиса (`apiKey`,
+	 * `authorization`), а у выданной сайтом — каноничное `secret`, потому что сайт
+	 * хранит один секрет на сервис и имён полей пока не знает. Плагин, читающий
+	 * поле по имени, сломался бы при переезде учётки с машины на сайт.
+	 *
+	 * Полей больше одного (OAuth-набор, логин с паролем) — зовите `getSecret` и
+	 * разбирайте карту сами: угадывать «главное» поле здесь нечем.
+	 */
+	async getSecretValue(slug: string, label: string): Promise<string> {
+		const fields = await vault.getSecret(slug, label);
+		const values = Object.values(fields ?? {});
+		if (values.length === 1) return values[0];
+		if (values.length === 0) throw new Error(`Учётка '${label}' (${slug}) пуста`);
+		throw new Error(
+			`У учётки '${label}' (${slug}) полей больше одного (${Object.keys(fields).join(', ')}) — нужен getSecret`,
+		);
+	},
+
+	/**
+	 * Потребление в ЕДИНИЦАХ (`token` | `char` | `sec` | `image` | `run`), а не в
+	 * деньгах: цена живёт на сайте, у сервиса, с датой начала действия.
+	 *
+	 * Звать СРАЗУ после ответа вендора, не дожидаясь конца обработки: вендор уже
+	 * получил свои деньги, и упади машина следом — расход всё равно должен быть
+	 * учтён.
+	 *
+	 * `taskId` берётся из `_description.dbItemId` — общий объект хост-сервисов
+	 * состояния не имеет и знать текущую задачу не может.
+	 *
+	 * ⚠️ Ответ надо разбирать: `unpriced` и `noRate` означают, что строка НЕ
+	 * записана и расход надо прислать позже. `duplicate` — норма: повтор той же
+	 * тройки расход не удваивает, поэтому переотправка безопасна.
+	 */
+	reportUsage(
+		taskId: string,
+		entries: Array<{ service: string; unit: string; units: number }>,
+		projectId?: string,
+	): Promise<{
+		recorded: number;
+		duplicate: number;
+		unknown: string[];
+		unpriced: string[];
+		noRate: string[];
+	}> {
+		return invokeHost('vault_report_usage', { taskId, projectId: projectId ?? null, entries });
+	},
+};
+
+
 export const telegram = {
 	/**
 	 * База Bot API. Обычно официальная, но если поднят локальный
@@ -1012,6 +1114,7 @@ export interface PluginHostServices {
 	system: typeof system;
 	fonts: typeof fonts;
 	accounts: typeof accounts;
+	vault: typeof vault;
 	telegram: typeof telegram;
 }
 
@@ -1029,6 +1132,7 @@ export const hostServices: PluginHostServices = {
 	system,
 	fonts,
 	accounts,
+	vault,
 	telegram,
 };
 

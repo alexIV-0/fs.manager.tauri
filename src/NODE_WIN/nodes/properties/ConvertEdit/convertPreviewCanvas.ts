@@ -136,6 +136,17 @@ function applyFilter(
 			ctx.drawImage(input, left, top);
 			return out;
 		}
+		case 'opacity': {
+			// globalAlpha на прозрачном канвасе = умножение существующей альфы,
+			// ровно как ffmpeg `colorchannelmixer=aa=`.
+			const a = Math.min(100, Math.max(0, f.alpha)) / 100;
+			if (a >= 1) return input;
+			const out = makeCanvas(iw, ih);
+			const ctx = out.getContext('2d')!;
+			ctx.globalAlpha = a;
+			ctx.drawImage(input, 0, 0);
+			return out;
+		}
 		// No canvas equivalent — passthrough (don't affect visible preview):
 		case 'bgcolor':
 		case 'deinterlace':

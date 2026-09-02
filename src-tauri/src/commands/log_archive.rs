@@ -83,6 +83,10 @@ pub fn append_item(app: &tauri::AppHandle, group: &Value) {
             return;
         }
     };
+    // Ключи вендоров в архив попадать не должны: он лежит на диске двое суток, и
+    // вычистить оттуда утёкший ключ нечем (VENDOR_KEYS_CONTRACT.md §3). Затираем
+    // сериализованную строку целиком — это одна дешёвая точка на весь текст группы.
+    let line = crate::redact::redact_secrets(&line);
     let result = fs::OpenOptions::new()
         .create(true)
         .append(true)
