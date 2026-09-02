@@ -5,6 +5,7 @@ import { useReactFlow } from '@xyflow/react';
 import { useNodeContext } from '@/NODE_WIN/hooks/useNodeContext';
 import { CustomNodeData, Property } from '@/NODE_WIN/definitions/types';
 import { greyColor, greenColor } from '@/Store/Color/grayColor';
+import { serviceSlugFromOptions } from '@/Utils/vendorServices';
 
 interface ExposeToSiteToggleProps {
 	property: Property;
@@ -25,9 +26,27 @@ export default function ExposeToSiteToggle({ property }: ExposeToSiteToggleProps
 	const handleToggle = useCallback(() => {
 		reactFlow.updateNode(nodeId, (node) => {
 			const nodeData = node.data as CustomNodeData;
-			const updatedProperties = nodeData.properties.map((p) =>
-				p.id === property.id ? { ...p, exposedToSite: !(p.exposedToSite ?? false) } : p,
-			) as Property[];
+			const updatedProperties = nodeData.properties.map((p) => {
+				if (p.id !== property.id) return p;
+				const next = !(p.exposedToSite ?? false);
+				const patched: any = { ...p, exposedToSite: next };
+
+				// Поле УЧЁТКИ внешнего сервиса при включении галочки очищаем.
+				//
+				// Галочка здесь работает как политика «чей ключ и чьи деньги»
+				// (VENDOR_KEYS_CONTRACT.md §6.3): снята — наша учётка, стоит — заполняет
+				// клиент на сайте. Оставь мы прежнее значение, в `options.json` осталась
+				// бы лежать наша метка (обычно тестовая), и рано или поздно её прочли бы
+				// как фолбэк — клиент поехал бы на нашем ключе и за наши деньги.
+				//
+				// Только для полей учётки: у обычного параметра текущее значение — это
+				// осмысленный дефолт, и стирать его при показе на сайте незачем.
+				const isAccountField = !!serviceSlugFromOptions(patched.controlProps?.options);
+				if (next && isAccountField && patched.controlProps?.value) {
+					patched.controlProps = { ...patched.controlProps, value: '' };
+				}
+				return patched;
+			}) as Property[];
 			return { ...node, data: { ...nodeData, properties: updatedProperties } };
 		});
 	}, [nodeId, property.id, reactFlow]);

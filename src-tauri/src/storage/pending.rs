@@ -168,7 +168,8 @@ impl Pending {
         self.declined.contains_key(path)
     }
 
-    /// Есть ли запрет — для тестов и диагностики.
+    /// Сколько сейчас запретов — опора для тестов про снятие запрета.
+    #[cfg(test)]
     pub fn declined_len(&self) -> usize {
         self.declined.len()
     }

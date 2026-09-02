@@ -769,6 +769,23 @@ function VideoFilterBlock({
 				return (
 					<PanelSlider label='Amount' value={filter.amount} min={0} max={100} step={1} onChange={(v) => onChange({ ...filter, amount: Math.round(v) })} />
 				);
+			case 'opacity':
+				return (
+					<>
+						<Typography sx={{ fontSize: 10, color: dimC, mb: 0.75, fontStyle: 'italic' }}>
+							Multiplies the alpha channel (100 = opaque). Visible only in formats that keep transparency:
+							PNG / TIFF / WebP for images, alpha-capable codecs (ProRes 4444, Hap Alpha, VP9) for video.
+						</Typography>
+						<PanelSlider
+							label='Opacity (%)'
+							value={filter.alpha}
+							min={0}
+							max={100}
+							step={1}
+							onChange={(v) => onChange({ ...filter, alpha: Math.round(v) })}
+						/>
+					</>
+				);
 			case 'deband':
 				return (
 					<PanelSlider

@@ -8,6 +8,10 @@
 > (наша копия [`STORAGE_BACKEND_REQUESTS.md`](./STORAGE_BACKEND_REQUESTS.md) заморожена).
 > Здесь только конвейер: сборка задач, выдача, режим воркера.
 >
+> Про ключи внешних сервисов и потребление — третий список:
+> `innovation-hub/docs/VENDOR_KEYS_CLIENT_REQUESTS.md` (главная редакция там; наша сторона
+> контракта — [`VENDOR_KEYS_CONTRACT.md`](./VENDOR_KEYS_CONTRACT.md)).
+>
 > Связанные документы: `innovation-hub/docs/PIPELINE.md`, `innovation-hub/docs/SETTINGS_SYNC.md`,
 > у нас — [`+SETTINGS_SYNC_PLAN.md`](./+SETTINGS_SYNC_PLAN.md) §6,
 > [`DISTRIBUTED_QUEUE_PLAN.md`](./DISTRIBUTED_QUEUE_PLAN.md).

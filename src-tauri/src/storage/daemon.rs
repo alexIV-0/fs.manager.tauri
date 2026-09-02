@@ -116,6 +116,10 @@ pub fn start(app: tauri::AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let mut tick: u32 = 0;
+        // Ревизия сейфа с прошлого пульса. `None` — ещё не спрашивали: первое
+        // наблюдение только запоминается, иначе каждый запуск программы начинался
+        // бы с пометки всех копий несвежими и лишнего похода за ключами.
+        let mut known_vault_revision: Option<i64> = None;
         loop {
             tokio::time::sleep(PULSE).await;
             tick = tick.wrapping_add(1);
@@ -156,8 +160,27 @@ pub fn start(app: tauri::AppHandle) {
             // (старая сборка) или лежать, а пульс синхронизации из-за этого
             // останавливаться не должен.
             if tick % PING_EVERY == 0 {
-                if let Err(e) = svc.queue_ping().await {
-                    eprintln!("[storage] ping очереди: {e}");
+                match svc.queue_ping().await {
+                    // Ревизия сейфа приезжает попутным полем пульса. Разошлась с
+                    // прошлой — на сайте правили секреты, и наши копии могли быть
+                    // отозваны. Не удаляем их здесь: задача в работе не должна
+                    // рваться на середине ролика (VENDOR_KEYS_CONTRACT.md §6.6).
+                    // Помечаем несвежими — и ближайший запрос перед следующей
+                    // задачей пойдёт за ключами заново, не полагаясь на `known`.
+                    Ok(revision) => {
+                        let changed = matches!(known_vault_revision, Some(prev) if prev != revision);
+                        known_vault_revision = Some(revision);
+                        if changed {
+                            match crate::commands::vault_commands::mark_site_stale(&app) {
+                                Ok(n) if n > 0 => {
+                                    println!("[storage] ревизия сейфа {revision}: помечено копий {n}")
+                                }
+                                Ok(_) => {}
+                                Err(e) => eprintln!("[storage] пометка копий сейфа: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[storage] ping очереди: {e}"),
                 }
             }
 

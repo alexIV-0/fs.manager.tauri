@@ -4,7 +4,7 @@ import { defGray, greyColor } from '@/Store/Color/grayColor';
 import { Box, Divider, IconButton, InputBase, MenuItem, Select, Stack, Typography } from '@mui/material';
 import { Trash2 } from 'lucide-react';
 import { useStore } from '@xyflow/react';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import InputHandle from '../components/InputHandle';
 import TooltipOrDelete from './TooltipOrDelete';
 
@@ -26,9 +26,13 @@ interface SimpleDDMProps {
 	// опцию показывается корзина; клик зовёт onOptionDelete и НЕ выбирает пункт.
 	onOptionDelete?: (option: string) => void;
 	isOptionDeletable?: (option: string) => boolean;
+	// Опционально: значок справа от пункта (откуда учётка, протухла ли). Возвращаем
+	// узел, а не строку с суффиксом: значение пункта — это то, что ляжет в свойство
+	// ноды, и дописывать в него пометку нельзя.
+	optionAdornment?: (option: string) => ReactNode;
 }
 
-function SimpleDDM({ property, onChange, onOptionDelete, isOptionDeletable }: SimpleDDMProps) {
+function SimpleDDM({ property, onChange, onOptionDelete, isOptionDeletable, optionAdornment }: SimpleDDMProps) {
 	const { controlProps } = property;
 	// useViewport() ре-рендерит на каждый pan-tick. Подписываемся только на zoom.
 	const zoom = useStore((s) => s.transform[2]);
@@ -200,6 +204,7 @@ function SimpleDDM({ property, onChange, onOptionDelete, isOptionDeletable }: Si
 								<Box component='span' sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
 									{opt}
 								</Box>
+								{optionAdornment?.(opt)}
 								{onOptionDelete && isOptionDeletable?.(opt) && (
 									<IconButton
 										className='ddm-del'

@@ -61,7 +61,15 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
+# Сейф учёток внешних сервисов: поля секрета уходят в хранилище учётных данных ОС
+# (Keychain / Credential Manager), а не в файл рядом с приложением — см.
+# commands/vault_commands.rs. Зависимость per-target: у крейта бэкенд выбирается
+# фичей, и общей для всех платформ фичи не существует.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

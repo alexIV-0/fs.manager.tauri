@@ -317,6 +317,138 @@ pub struct QueueTask {
     pub lease_expires_at: Option<String>,
 }
 
+/// Ответ `ping`. Кроме подтверждения связи несёт ревизию сейфа вендорских ключей.
+///
+/// Ревизия растёт на любую правку секретов на сайте — включая отзыв. Машина
+/// сравнивает её со своей и, если разошлось, идёт за ключами заново; без этого
+/// единственной защитой был бы TTL копии, и отозванный ключ жил бы на машине до
+/// конца срока (`VENDOR_KEYS_CONTRACT.md` §2).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuePingResponse {
+    /// `default` не для красоты: старая сборка сайта поля не пришлёт вовсе, и пульс
+    /// из-за этого останавливаться не должен.
+    #[serde(default)]
+    pub vault_revision: i64,
+}
+
+// ─── Сейф вендорских ключей ──────────────────────────────────────────────────
+
+/// Что у нас уже лежит по этому сервису — пара «учётка + версия».
+///
+/// Пара, а не одна версия: нумерация у каждой учётки своя, и `v3` у `main` совпал
+/// бы с `v3` у `test`, подтвердив нам чужой ключ как актуальный.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorKnownKey {
+    pub account: String,
+    pub version: i64,
+}
+
+/// Выданный сайтом ключ.
+///
+/// `fields` здесь — НАСТОЯЩИЙ секрет, поэтому тип не `specta::Type`: в renderer он
+/// не уходит ни при каких обстоятельствах, его принимает Rust и сразу кладёт в сейф.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorKeyIssued {
+    pub slug: String,
+    /// Метка учётки. Она же лежит в поле проекта — не секрет и не id.
+    pub account: String,
+    pub version: i64,
+    /// Именованные поля: `apiKey`, либо `login`+`password`, либо OAuth-набор.
+    /// Объектом, а не строкой — первый же вендор с парой полей сломал бы строку.
+    #[serde(default)]
+    pub fields: std::collections::BTreeMap<String, String>,
+    /// Потолок жизни копии, а не рекомендация: истёк — спрашиваем заново.
+    #[serde(default)]
+    pub ttl_sec: i64,
+}
+
+/// «Эта версия у тебя актуальная» — по паре учётка + слаг.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorKeyFresh {
+    pub slug: String,
+    pub account: String,
+}
+
+/// Каталожная часть ответа: то, что не секрет.
+///
+/// Приезжает ВСЕГДА, в том числе когда ключ не менялся и ответ по нему `fresh`.
+/// Секрет — только при устаревшей версии, а адрес нужен каждый раз.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorServiceEndpoint {
+    pub slug: String,
+    /// Пусто — адрес знает сама нода.
+    #[serde(default)]
+    pub base_url: String,
+    /// Какая учётка выбрана для этого запроса. `None` — ни одна не подошла.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// `false` — законное состояние: свой сервис рядом может не требовать ключа.
+    #[serde(default)]
+    pub has_secret: bool,
+}
+
+/// Ответ `{action:"keys"}`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorKeysResponse {
+    #[serde(default)]
+    pub keys: Vec<VendorKeyIssued>,
+    /// Версия совпала — секрет по сети не поехал. Это основной режим работы.
+    #[serde(default)]
+    pub fresh: Vec<VendorKeyFresh>,
+    /// Нет такого сервиса, он на паузе, отозван или помечен `proxy`.
+    #[serde(default)]
+    pub unavailable: Vec<String>,
+    /// Учёток несколько, а метка не названа. Сайт не выбирает за ноду: `main`
+    /// вместо `test` заметили бы по счёту вендора.
+    #[serde(default)]
+    pub ambiguous: Vec<String>,
+    #[serde(default)]
+    pub services: Vec<VendorServiceEndpoint>,
+    #[serde(default)]
+    pub vault_revision: i64,
+}
+
+/// Строка потребления: единицы, а не деньги. Цену считает сайт по своему прайсу.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorUsageEntry {
+    pub service: String,
+    /// `token` | `char` | `sec` | `image` | `run`.
+    pub unit: String,
+    pub units: f64,
+    /// Метка учётки, которой звали вендора — та же, что пришла в выдаче.
+    /// Считать «чей это расход» нам не нужно: владельца знает сайт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
+/// Ответ `{action:"usage"}`. Разбирать обязательно: `unpriced` и `noRate` означают,
+/// что строка НЕ записана — расход потерян и его надо прислать позже.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorUsageResult {
+    #[serde(default)]
+    pub recorded: i64,
+    /// Повтор по той же тройке (задача, сервис, мера) расход не удваивает — норма,
+    /// именно это делает переотправку отчёта безопасной.
+    #[serde(default)]
+    pub duplicate: i64,
+    #[serde(default)]
+    pub unknown: Vec<String>,
+    /// Цена меры не назначена.
+    #[serde(default)]
+    pub unpriced: Vec<String>,
+    /// Нет курса валюты сервиса.
+    #[serde(default)]
+    pub no_rate: Vec<String>,
+}
+
 /// Ответ `claim`. `task: None` — очередь пуста; это штатный ответ, а не ошибка:
 /// машина спрашивает на каждом пульсе и почти всегда получает именно его.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

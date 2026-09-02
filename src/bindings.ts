@@ -1150,6 +1150,97 @@ async accountDelete(mainFolderName: string, platform: string, name: string) : Pr
 }
 },
 /**
+ * Список учёток БЕЗ секретов. `slug: None` — все, иначе только этого сервиса.
+ * 
+ * Хранилище ОС здесь не трогается вовсе: дропдаун открывается часто, а запрос к
+ * связке — операция с возможным диалогом.
+ */
+async vaultList(slug: string | null) : Promise<Result<VaultAccountMeta[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vault_list", { slug }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Завести/обновить учётку. `fields` — набор именованных полей секрета
+ * (`apiKey`, либо `login`+`password`, либо OAuth-набор): состав диктует описание
+ * сервиса в каталоге, здесь он произвольный.
+ * 
+ * `ttl_sec` осмыслен только для `source = "site"`: у выданной сайтом копии обязан
+ * быть срок. Локальной учётке срок не ставится — её никто не отзывает.
+ */
+async vaultSave(slug: string, label: string, fields: Partial<{ [key in string]: string }>, source: string | null, secretVersion: number | null, ttlSec: number | null) : Promise<Result<VaultAccountMeta, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vault_save", { slug, label, fields, source, secretVersion, ttlSec }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Достать поля секрета — только в момент вызова вендора.
+ * 
+ * Зеркало `account_get_token`: список отдаёт метаданные, секрет отдаёт отдельная
+ * команда. Протухшую копию не отдаём вовсе — иначе TTL был бы украшением.
+ */
+async vaultGetSecret(slug: string, label: string) : Promise<Result<Partial<{ [key in string]: string }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vault_get_secret", { slug, label }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Удалить учётку целиком. `false` — такой не было.
+ */
+async vaultDelete(slug: string, label: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vault_delete", { slug, label }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Сходить на сайт за ключами нужных сервисов и положить их в сейф.
+ * 
+ * Звать ПЕРЕД задачей и только по тем сервисам, которые ей нужны, — не весь сейф
+ * (§3 контракта). Запрос дешёвый: в `known` уходят версии, которые у нас уже есть,
+ * и на совпадении секрет по сети не едет вовсе.
+ * 
+ * Секрет в renderer не возвращается ни в каком виде: сюда приезжает ответ сайта,
+ * здесь же он кладётся в сейф, наружу уходит только отчёт «что с чем случилось».
+ */
+async vaultSyncFromSite(services: string[], accounts: Partial<{ [key in string]: string }>, taskId: string | null) : Promise<Result<VaultSyncReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vault_sync_from_site", { services, accounts, taskId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Отправить потребление сайту — в единицах, не в деньгах.
+ * 
+ * Звать сразу после ответа вендора, не дожидаясь конца задачи: вендор уже получил
+ * свои деньги, и упади машина следом — расход всё равно должен быть учтён.
+ * 
+ * ⚠️ Ответ надо разбирать: `unpriced` и `noRate` означают, что строка НЕ записана
+ * и расход надо прислать позже. Буфера переотправки здесь нет — он принадлежит
+ * раннеру, который знает, когда повторить.
+ */
+async vaultReportUsage(taskId: string, projectId: string | null, entries: VendorUsageEntry[]) : Promise<Result<VendorUsageResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("vault_report_usage", { taskId, projectId, entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Открыть окно логина VK. Токен придёт асинхронно событием `vk-auth-result`.
  * `fresh` зарезервирован (revoke=1 — показать диалог даже при активной сессии).
  */
@@ -1549,8 +1640,12 @@ async storageSettingsPut(baseRevision: number, domains: JsonValue) : Promise<Res
  * Зовётся на пульсе синхронизации НЕЗАВИСИМО от режима воркера: иначе состояние
  * «машина включена, воркер выключен» сайту не видно вовсе, и в админке один
  * индикатор отвечал бы сразу за два разных факта.
+ * 
+ * Возвращает ревизию сейфа вендорских ключей — её сайт кладёт в ответ на каждый
+ * пульс. Демон сравнивает её со своей сам (`storage/daemon.rs`); фронту значение
+ * нужно только для диагностики.
  */
-async storageQueuePing() : Promise<Result<null, string>> {
+async storageQueuePing() : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_queue_ping") };
 } catch (e) {
@@ -3558,6 +3653,129 @@ sidecar?: boolean }
  * в `transfers` уже есть, чтобы при появлении эндпоинтов не менять схему.
  */
 export type UploadStrategy = "singlePut" | "multipart"
+/**
+ * Метаданные учётки. Полей секрета здесь нет и быть не должно: этот тип уходит
+ * в renderer целиком (дропдаун, список в настройках).
+ */
+export type VaultAccountMeta = { 
+/**
+ * Слаг сервиса из каталога сайта (`eleven-labs`). Неизменяем: он лежит в
+ * `ui.json` собранных плагинов и в `options.json` чужих проектов.
+ */
+slug: string; 
+/**
+ * Метка учётки — то, что человек видит в дропдауне и что уезжает в options.json.
+ */
+label: string; 
+/**
+ * `local` | `site` — см. шапку модуля.
+ */
+source: string; 
+/**
+ * `••••4f21`, чтобы узнать ключ глазами, не доставая его.
+ */
+hint: string; 
+/**
+ * Версия секрета на сайте. У локальных — 0.
+ */
+secretVersion?: number; 
+/**
+ * Unix-секунды, до которых копия считается годной. `None` — бессрочно (только `local`).
+ */
+expiresAt?: number | null; updatedAt?: number; 
+/**
+ * Копия могла устареть: на сайте менялись секреты (ревизия сейфа выросла).
+ * 
+ * Не то же самое, что `expired`. Протухшую копию отдавать нельзя вовсе, а
+ * несвежую — можно: задача, которая уже идёт, не должна рваться на середине
+ * ролика. Флаг влияет на другое — на `known` в следующем запросе ключей:
+ * несвежую версию мы не подтверждаем, и сайт присылает секрет заново.
+ */
+stale?: boolean; 
+/**
+ * Посчитано на чтении, в файл не пишется: `expiresAt` в прошлом.
+ */
+expired?: boolean }
+/**
+ * Итог похода за ключами. Секретов здесь нет — только что с чем случилось.
+ */
+export type VaultSyncReport = { 
+/**
+ * Учётки, по которым приехал новый секрет.
+ */
+issued: VaultSyncedAccount[]; 
+/**
+ * Версия совпала — секрет по сети не поехал, работаем своей копией.
+ */
+fresh: VaultSyncedAccount[]; 
+/**
+ * Нет сервиса, пауза, отзыв или `proxy`. Копии с сайта по ним мы удалили.
+ */
+unavailable: string[]; 
+/**
+ * Учёток несколько, а метка не названа. Сайт не выбирает за ноду — выбрать
+ * должен человек в поле Account.
+ */
+ambiguous: string[]; 
+/**
+ * Каталожная часть: адрес и наличие ключа по каждому доступному сервису.
+ * Приходит и тогда, когда секрет не менялся, — адрес нужен всегда.
+ */
+services: VendorServiceEndpoint[]; vaultRevision: number }
+/**
+ * Пара «сервис + метка» в отчёте о синхронизации.
+ */
+export type VaultSyncedAccount = { slug: string; label: string }
+/**
+ * Каталожная часть ответа: то, что не секрет.
+ * 
+ * Приезжает ВСЕГДА, в том числе когда ключ не менялся и ответ по нему `fresh`.
+ * Секрет — только при устаревшей версии, а адрес нужен каждый раз.
+ */
+export type VendorServiceEndpoint = { slug: string; 
+/**
+ * Пусто — адрес знает сама нода.
+ */
+baseUrl?: string; 
+/**
+ * Какая учётка выбрана для этого запроса. `None` — ни одна не подошла.
+ */
+account?: string | null; 
+/**
+ * `false` — законное состояние: свой сервис рядом может не требовать ключа.
+ */
+hasSecret?: boolean }
+/**
+ * Строка потребления: единицы, а не деньги. Цену считает сайт по своему прайсу.
+ */
+export type VendorUsageEntry = { service: string; 
+/**
+ * `token` | `char` | `sec` | `image` | `run`.
+ */
+unit: string; units: number; 
+/**
+ * Метка учётки, которой звали вендора — та же, что пришла в выдаче.
+ * Считать «чей это расход» нам не нужно: владельца знает сайт.
+ */
+account?: string | null }
+/**
+ * Ответ `{action:"usage"}`. Разбирать обязательно: `unpriced` и `noRate` означают,
+ * что строка НЕ записана — расход потерян и его надо прислать позже.
+ */
+export type VendorUsageResult = { recorded?: number; 
+/**
+ * Повтор по той же тройке (задача, сервис, мера) расход не удваивает — норма,
+ * именно это делает переотправку отчёта безопасной.
+ */
+duplicate?: number; unknown?: string[]; 
+/**
+ * Цена меры не назначена.
+ */
+unpriced?: string[]; 
+/**
+ * Нет курса валюты сервиса.
+ */
+noRate?: string[] }
 export type WhisperModel = { name: string; filename: string; sizeBytes: number; sizeLabel: string; downloaded: boolean; recommended: boolean }
 export type WindowState = { width: number; height: number; x: number | null; y: number | null; is_maximized: boolean | null }
 /**

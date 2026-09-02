@@ -375,7 +375,11 @@ pub async fn storage_settings_put(
 /// индикатор отвечал бы сразу за два разных факта.
 #[tauri::command]
 #[specta::specta]
-pub async fn storage_queue_ping(state: State<'_, StorageService>) -> Result<(), String> {
+///
+/// Возвращает ревизию сейфа вендорских ключей — её сайт кладёт в ответ на каждый
+/// пульс. Демон сравнивает её со своей сам (`storage/daemon.rs`); фронту значение
+/// нужно только для диагностики.
+pub async fn storage_queue_ping(state: State<'_, StorageService>) -> Result<i64, String> {
     state.queue_ping().await
 }
 

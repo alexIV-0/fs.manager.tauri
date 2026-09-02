@@ -75,6 +75,9 @@ export interface FilterColorMix   { id: string; type: 'colormix';     enabled?: 
 export interface FilterColorBal   { id: string; type: 'colorbalance'; enabled?: boolean; rs: number; gs: number; bs: number; rm: number; gm: number; bm: number; rh: number; gh: number; bh: number; }
 export interface FilterLut3d      { id: string; type: 'lut3d';        enabled?: boolean; file: string; }
 export interface FilterVignette   { id: string; type: 'vignette';     enabled?: boolean; amount: number; }
+/** Прозрачность — умножает альфа-канал (ffmpeg `colorchannelmixer=aa=`).
+ *  Видна только в форматах, которые сохраняют альфу (png/tiff/webp, prores 4444 / hap alpha / vp9). */
+export interface FilterOpacity    { id: string; type: 'opacity';      enabled?: boolean; alpha: number; } // 0–100 %
 
 /** Position — places the source image inside the Frame canvas at xPct/yPct.
  *  0 = left/top, 50 = centered, 100 = right/bottom. */
@@ -97,7 +100,8 @@ export type VideoFilterItem =
 	| FilterUnsharp | FilterDenoise | FilterPixFmt | FilterRotate
 	| FilterPosition | FilterBgColor
 	| FilterDeband | FilterCleanup
-	| FilterHue | FilterCurves | FilterColorMix | FilterColorBal | FilterLut3d | FilterVignette;
+	| FilterHue | FilterCurves | FilterColorMix | FilterColorBal | FilterLut3d | FilterVignette
+	| FilterOpacity;
 
 /** Image filters = all video filters except deinterlace, fps, pixfmt */
 export type ImageFilterItem = Exclude<VideoFilterItem, FilterDeinterlace | FilterFps | FilterPixFmt>;
@@ -128,6 +132,7 @@ export const VIDEO_FILTER_LABELS: Record<VideoFilterType, string> = {
 	colorbalance:'Color Balance (shadows/mids/highs)',
 	lut3d:       'LUT (.cube)',
 	vignette:    'Vignette',
+	opacity:     'Opacity / Transparency (alpha)',
 };
 
 export const IMAGE_FILTER_LABELS: Partial<Record<VideoFilterType, string>> = {
@@ -148,6 +153,7 @@ export const IMAGE_FILTER_LABELS: Partial<Record<VideoFilterType, string>> = {
 	lut3d:    'LUT (.cube)',
 	vignette: 'Vignette',
 	bgcolor:  'Background Color',
+	opacity:  'Opacity / Transparency (alpha)',
 };
 
 // ── Audio filter item types ────────────────────────────────────────────────
@@ -290,6 +296,7 @@ export function defaultVideoFilter(type: VideoFilterType): VideoFilterItem {
 		case 'colorbalance':return { id: uid(), type, enabled: true, rs: 0, gs: 0, bs: 0, rm: 0, gm: 0, bm: 0, rh: 0, gh: 0, bh: 0 };
 		case 'lut3d':       return { id: uid(), type, enabled: true, file: '' };
 		case 'vignette':    return { id: uid(), type, enabled: true, amount: 30 };
+		case 'opacity':     return { id: uid(), type, enabled: true, alpha: 50 };
 	}
 }
 
@@ -459,6 +466,13 @@ function buildVideoFilterItems(filters: VideoFilterItem[], frame?: FrameSettings
 			case 'vignette':
 				if (f.amount > 0) parts.push(`vignette=angle=${((f.amount / 100) * Math.PI / 2).toFixed(4)}`);
 				break;
+			case 'opacity': {
+				// Умножаем существующую альфу: прозрачные зоны остаются прозрачными.
+				// format=rgba обязателен — без альфы в пикс-формате colorchannelmixer нечего умножать.
+				const a = Math.min(100, Math.max(0, f.alpha));
+				if (a < 100) parts.push(`format=rgba,colorchannelmixer=aa=${(a / 100).toFixed(3)}`);
+				break;
+			}
 		}
 	}
 	return parts;

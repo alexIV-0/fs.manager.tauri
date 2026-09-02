@@ -71,6 +71,7 @@ export const HASH_OPTIONS = [
 	{ value: '#typeOfFile', desc: 'Типы файлов из настроек' },
 	{ value: '#folders', desc: 'Папки в текущем проекте' },
 	{ value: '#whisperModels', desc: 'Модели Whisper' },
+	{ value: '#services:<слаг>', desc: 'Учётки внешнего сервиса по слагу из каталога (eleven-labs, comfyui, …)' },
 	{ value: '#vkAccounts', desc: 'Аккаунты VK для текущей главной папки' },
 	{ value: '#vkGroups', desc: 'Админ-сообщества VK выбранного аккаунта' },
 	{ value: '#tgAccounts', desc: 'Боты Telegram для текущей главной папки (постинг + сбор)' },

@@ -2,6 +2,7 @@
 
 mod commands;
 mod machine;
+mod redact;
 mod storage;
 
 use commands::{
@@ -23,6 +24,7 @@ use commands::{
     deps_commands::*,
     preview_commands::*,
     account_commands::*,
+    vault_commands::*,
     vk_auth_commands::*,
     youtube_auth_commands::*,
     youtube_upload_commands::*,
@@ -189,6 +191,14 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             account_add_channel,
             account_remove_channel,
             account_delete,
+            // Сейф учёток внешних сервисов (ключи вендоров): метаданные в файле,
+            // секрет — в хранилище учётных данных ОС
+            vault_list,
+            vault_save,
+            vault_get_secret,
+            vault_delete,
+            vault_sync_from_site,
+            vault_report_usage,
             // VK OAuth + валидация (vk_auth_capture — внутренняя, через raw invoke из init-скрипта)
             vk_auth_open,
             vk_validate_token,

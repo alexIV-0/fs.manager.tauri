@@ -13,6 +13,7 @@ import { basename } from '@/Utils/path';
 import { commands, unwrap } from '@/Utils/specta';
 import { injectMachineLocals } from './utils/machineLocals';
 import { ensureLocal, pathInfo } from '@/Utils/storageSeam';
+import { checkVendorAccounts, describeProblem } from './utils/vendorAccountsGate';
 
 export async function findFilesForSingleFolder(projectPathOnGD: string, mainFolderPath: string, year: string, findDateName: string) {
 	const { localFolder } = localFolders_stor.getState();
@@ -90,6 +91,23 @@ export async function findFilesForSingleFolder(projectPathOnGD: string, mainFold
 		console.warn('[createProcessQueue]', message);
 		void commands.sendLog('error', `[${projectName}] ${message}`).catch(() => {});
 	});
+
+	// ── Гейт учёток внешних сервисов ─────────────────────────────────────────
+	//
+	// Здесь, а не глубже: очередь уже построена (значит известно, какие ноды реально
+	// исполнятся), но ни один файл ещё не тронут. Нет ключа — проект в этом витке
+	// просто не стартует, с причиной в логе. Плагин упал бы тоже, но уже посреди
+	// работы, оставив недоделанный ролик в OUT.
+	const accountProblems = await checkVendorAccounts(nodesProps, processArr);
+	if (accountProblems.length > 0) {
+		for (const problem of accountProblems) {
+			void commands
+				.sendLog('error', `[${projectName}] ${describeProblem(problem)}`)
+				.catch(() => {});
+		}
+		console.warn('[findFilesForSingleFolder] проект пропущен, нет учёток:', projectName, accountProblems);
+		return;
+	}
 
 	const description = getDescription(nodesProps);
 	description.year = year;

@@ -1,0 +1,16 @@
+{
+	"id": "AIcomfyUI_v2",
+	"name": "AIcomfyUI v2",
+	"version": "0.1",
+	"apiVersion": 1,
+	"type": [
+		"nodeui",
+		"processing"
+	],
+	"description": "Берём настроенный flow для ComfyUI и отправляем на сервер. Отличие от v1: токен сервера не вшит в плагин, а берётся из сейфа учёток по метке, выбранной в ноде.",
+	"main": "AIcomfyUI_v2.js",
+	"ui": "ui.json",
+	"external": [],
+	"cost": "0",
+	"costUnit": "run"
+}
