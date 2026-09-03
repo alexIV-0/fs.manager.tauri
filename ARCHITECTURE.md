@@ -419,6 +419,7 @@ runProcessing
 
 # Соглашения репозитория
 
+- **`flows/`** — сценарии сборки графа под конкретный процесс и контракты с теми, кто читает результат. Не устройство программы: программа флоу не знает и не проверяет. Указатель — `flows/README.md`.
 - **`+` в начале имени файла в `ideasAndTest/`** — план реализован (например `+FOLDER_STATE_SSOT_PLAN.md`). Без плюса — цель, идея или незакрытый план.
 - **Генерённые файлы, править нельзя:** `src/bindings.ts` (`cargo test export_bindings`), таблица масок в `_template/ui.md` (`npm run masks:docs`), `distr-plugins/**` (`plug:build`), `jsx/distr/**` (`jsx:build`).
 - **Артефакты вне git:** `distr-plugins/`, `dist/`, `release/`.

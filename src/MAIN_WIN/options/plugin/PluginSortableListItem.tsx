@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { ListItem, ListItemIcon, IconButton, Checkbox, Typography, Box, Chip } from '@mui/material';
-import { GripVertical, Trash2, AlertCircle } from 'lucide-react';
+import { Trash2, AlertCircle } from 'lucide-react';
 import { plugin_Store, PluginItem } from '@/Store/MainWin/plugin_store';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
 import { COST_UNITS } from '@/MAIN_WIN/options/PluginBuilderWin/types';
@@ -26,19 +24,6 @@ export const PluginSortableListItem: React.FC<SortableListItemProps> = ({ plugin
 		setPluginCost(plugin.id, plugin.version, nextCost, nextUnit).catch(() => {
 			setCostDraft(plugin.cost ?? '0');
 		});
-	};
-
-	const sortableId = `${plugin.id}@${plugin.version}`;
-
-	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-		id: sortableId,
-		disabled: true, // Отключаем drag для отдельных версий
-	});
-
-	const style = {
-		transform: CSS.Transform.toString(transform),
-		transition,
-		opacity: isDragging ? 0.8 : 1,
 	};
 
 	const handleToggle = () => {
@@ -71,25 +56,22 @@ export const PluginSortableListItem: React.FC<SortableListItemProps> = ({ plugin
 
 	return (
 		<ListItem
-			ref={setNodeRef}
-			style={style}
 			sx={{
 				mb: 0.5,
-				p: 0.5,
-				pl: 4, // Отступ слева для визуальной вложенности
-				pr: 1, // Отступ справа для правых элементов
+				py: 0.5,
+				px: 1, // Отступы слева и справа одинаковые
 				minHeight: '40px',
+				// greyColor(25) — тот же тон, что был у строки внутри группы
+				// (Paper greyColor(10) под полупрозрачным action.selected).
 				bgcolor: !plugin.exists
 					? 'rgba(211, 47, 47, 0.08)' // Светло-красный фон для отсутствующих
 					: !plugin.enabled
 						? 'action.disabledBackground'
 						: isMainVersion
-							? 'action.selected'
-							: 'transparent',
+							? greyColor(30)
+							: greyColor(25),
 				borderRadius: 1,
-				// borderLeft: !plugin.exists ? '3px solid' : '1px solid transparent',
-				// borderLeftColor: !plugin.exists ? 'error.main' : 'transparent',
-				// borderBottom: `1px solid`,
+				border: '1px solid',
 				borderColor: getBorderColor(),
 				'&:hover': {
 					bgcolor: !plugin.exists ? 'rgba(211, 47, 47, 0.12)' : 'action.hover',
@@ -101,27 +83,9 @@ export const PluginSortableListItem: React.FC<SortableListItemProps> = ({ plugin
 				gap: 1,
 			}}
 		>
-			{/* Ручка перетаскивания (disabled для версий)
-			<IconButton
-				size='small'
-				{...attributes}
-				{...listeners}
-				disabled
-				sx={{
-					cursor: 'default',
-					p: 0.5,
-					color: greyColor(40),
-					opacity: 0.5,
-					flexShrink: 0,
-				}}
-			>
-				<GripVertical strokeWidth={1.2} size={20} />
-			</IconButton> */}
-
 			{/* Чекбокс включения/выключения */}
 			<ListItemIcon sx={{ minWidth: '36px', flexShrink: 0 }}>
 				<Checkbox
-					edge='start'
 					checked={plugin.enabled}
 					onChange={handleToggle}
 					disabled={!plugin.exists}
@@ -336,7 +300,6 @@ export const PluginSortableListItem: React.FC<SortableListItemProps> = ({ plugin
 
 				{/* Кнопка удаления */}
 				<IconButton
-					edge='end'
 					aria-label='delete'
 					onClick={handleRemove}
 					size='small'

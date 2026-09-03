@@ -109,10 +109,9 @@ export interface PluginListStore {
 	addOrUpdatePlugin: (plugin: PluginInfo) => void;
 
 	// ========================
-	// ОПЕРАЦИИ С ПОРЯДКОМ
+	// ГРУППЫ ВЕРСИЙ
 	// ========================
 
-	movePluginGroup: (fromIndex: number, toIndex: number) => void;
 	getPluginGroups: () => { id: string; plugins: PluginItem[] }[];
 
 	// ========================
@@ -461,30 +460,6 @@ export const plugin_Store = create<PluginListStore>((set, get) => ({
 				plugins: sortPluginsByGroups(newPlugins),
 				uiNodes: newUINodes,
 			};
-		});
-	},
-
-	// ========================
-	// ПЕРЕМЕЩЕНИЕ ГРУППЫ
-	// ========================
-
-	movePluginGroup: (fromIndex, toIndex) => {
-		set((state) => {
-			const groups = get().getFilteredGroups();
-
-			if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= groups.length || toIndex >= groups.length) {
-				return state;
-			}
-
-			const newOrder = [...pluginOrder];
-			const [movedGroupId] = newOrder.splice(fromIndex, 1);
-			newOrder.splice(toIndex, 0, movedGroupId);
-
-			pluginOrder = newOrder;
-			pluginsStorage.order = pluginOrder;
-			savePluginsData(pluginsStorage);
-
-			return { plugins: sortPluginsByGroups(state.plugins) };
 		});
 	},
 

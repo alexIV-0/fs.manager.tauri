@@ -119,6 +119,13 @@ function SimpleDDM({ property, onChange, onOptionDelete, isOptionDeletable, opti
 			<Select
 				value={selectValue}
 				onChange={(e) => handleChange(e.target.value as string)}
+				// В закрытом виде показываем ТОЛЬКО значение.
+				//
+				// По умолчанию Select рисует детей выбранного MenuItem, а там кроме текста
+				// живут корзина и значок «откуда учётка». Корзину это не выдавало — она
+				// прозрачна до наведения, — а значок вылезал в поле и ломал его в две строки.
+				// Пометки нужны при ВЫБОРЕ, то есть в раскрытом списке, и там они остаются.
+				renderValue={(v) => (v as string) ?? ''}
 				open={open}
 				onOpen={handleOpen}
 				onClose={handleClose}

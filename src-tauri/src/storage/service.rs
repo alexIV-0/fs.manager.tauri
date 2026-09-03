@@ -972,11 +972,10 @@ impl StorageService {
         &self,
         services: &[String],
         known: &std::collections::BTreeMap<String, VendorKnownKey>,
-        accounts: &std::collections::BTreeMap<String, String>,
         task_id: Option<&str>,
     ) -> Result<VendorKeysResponse, String> {
         let p = self.require_provider()?;
-        p.vault_keys(services, known, accounts, task_id)
+        p.vault_keys(services, known, task_id)
             .await
             .map_err(|e| e.to_string())
     }
