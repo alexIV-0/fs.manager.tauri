@@ -164,7 +164,6 @@ impl MockApi {
         &self,
         services: &[String],
         _known: &std::collections::BTreeMap<String, VendorKnownKey>,
-        _accounts: &std::collections::BTreeMap<String, String>,
         _task_id: Option<&str>,
     ) -> StorageResult<VendorKeysResponse> {
         Ok(VendorKeysResponse {

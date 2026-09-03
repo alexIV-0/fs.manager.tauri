@@ -4,10 +4,23 @@
 //
 // ── Чем отличается от v1
 //
-// Токен сервера больше не вшит в код (`const serverToken = 'Bearer test-token'`). В ноде
-// выбирается УЧЁТКА, и в `options.json` проекта уезжает только её метка; сам ключ лежит в
-// хранилище учётных данных ОС и достаётся здесь, в момент запроса, через `ctx.vault`.
+// Ни токен, ни адрес больше не вшиты в код. В ноде выбирается УЧЁТКА, и в `options.json`
+// проекта уезжает только её метка; ключ лежит в хранилище учётных данных ОС, а адрес —
+// в метаданных учётки. Оба достаются здесь, в момент запроса, через `ctx.vault`.
 // Контракт: `ideasAndTest/VENDOR_KEYS_CONTRACT.md` §6.
+//
+// ── Почему адрес у УЧЁТКИ, а не у ноды
+//
+// Своих ComfyUI может быть несколько на разных машинах. Завести под каждый свой сервис
+// нельзя — слаг уникален, а слаг это и есть «какая нода умеет с ним разговаривать».
+// Поэтому правильная развёртка: один сервис `comfyui` и несколько учёток, у каждой свой
+// адрес. Выбор установки — тот же выпадающий список меток, что и выбор ключа.
+//
+// ── Учётка может быть БЕЗ ключа
+//
+// Свой сервер, поднятый рядом, авторизации может не требовать вовсе: у него есть адрес и
+// нет секрета. Это законное состояние, а не сбой выдачи, поэтому отсутствие ключа мы
+// читаем из `hasSecret`, а не по факту ошибки при попытке его достать.
 //
 // v1 остаётся рабочей и не тронута: у неё свой id, свой бандл и свои флоу.
 
@@ -22,6 +35,14 @@ const POLL_INTERVAL_MS = 10000;
 
 /** Слаг сервиса в каталоге. Совпадает с `#services:comfyui` в `ui.json`. */
 const SERVICE_SLUG = 'comfyui';
+
+/**
+ * Адрес по умолчанию — на случай, когда у учётки он не задан.
+ *
+ * У вендора с одним публичным API адрес общий, и держать его в каждой учётке незачем;
+ * тогда он остаётся здесь. Для своих серверов адрес приходит из учётки и перекрывает это.
+ */
+const DEFAULT_BASE_URL = 'https://x.kraslance.ru';
 
 /**
  * Значение заголовка `Authorization`.
@@ -80,9 +101,15 @@ export async function AIcomfyUIv2Func(_item: any, _description: any, ctx: Plugin
 	if (!accountLabel) {
 		throw new Error('Не выбрана учётка ComfyUI — заполни поле Account в ноде');
 	}
-	let serverToken: string;
+	let serverToken = '';
+	let accountBaseUrl = '';
 	try {
-		serverToken = authHeaderValue(await vault.getSecretValue(SERVICE_SLUG, accountLabel));
+		const account = await vault.account(SERVICE_SLUG, accountLabel);
+		accountBaseUrl = account.baseUrl;
+		// Ключа может не быть по решению, а не по ошибке — зовём сервер без заголовка.
+		if (account.hasSecret) {
+			serverToken = authHeaderValue(await vault.getSecretValue(SERVICE_SLUG, accountLabel));
+		}
 	} catch (e) {
 		// Причин ровно две, и обе чинятся человеком, а не повтором: учётку удалили
 		// или у копии, выданной сайтом, вышел срок.
@@ -184,8 +211,13 @@ export async function AIcomfyUIv2Func(_item: any, _description: any, ctx: Plugin
 
 	sendToMW('log', { text: `📎 Input files: [${inputFiles.map((f) => f.filename).join(', ') || 'none'}]` });
 
-	const serverUrl = 'https://x.kraslance.ru/v2/run';
-	const baseUrl = new URL(serverUrl).origin;
+	// Адрес именно ЭТОЙ установки. Пустой у учётки — берём общий адрес сервиса.
+	let baseUrl: string;
+	try {
+		baseUrl = new URL(accountBaseUrl || DEFAULT_BASE_URL).origin;
+	} catch {
+		throw new Error(`Учётка «${accountLabel}»: неверный адрес установки «${accountBaseUrl}»`);
+	}
 
 	const result = await sendToComfyAsync({
 		baseUrl,

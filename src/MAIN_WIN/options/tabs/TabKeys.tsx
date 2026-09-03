@@ -58,15 +58,18 @@ export default function TabKeys() {
 		setBusy(true);
 		setMessage(null);
 		try {
-			// Метки не передаём: здесь мы обновляем всё, что знаем, а не собираем
-			// конкретную задачу. У сервиса с несколькими учётками сайт честно ответит
-			// `ambiguous` — выбирать за ноду он не станет, и это правильно.
-			const report = unwrap(await commands.vaultSyncFromSite(slugs, {}, null));
+			// Задачу не называем: здесь обновляется всё, что знаем, а не собирается
+			// конкретный прогон. Сайт присылает все доступные машине учётки сервиса —
+			// выбирать за ноду он не станет, и это правильно.
+			const report = unwrap(await commands.vaultSyncFromSite(slugs, null));
 			const parts: string[] = [];
 			if (report.issued.length) parts.push(`обновлено ${report.issued.length}`);
 			if (report.fresh.length) parts.push(`актуально ${report.fresh.length}`);
 			if (report.unavailable.length) parts.push(`недоступно: ${report.unavailable.join(', ')}`);
-			if (report.ambiguous.length) parts.push(`несколько учёток: ${report.ambiguous.join(', ')}`);
+			// Отозванные показываем отдельно: их копии мы только что стёрли, и если
+			// метка была выбрана в ноде, флоу перестанет стартовать — это надо увидеть.
+			if (report.revoked.length)
+				parts.push(`отозвано: ${report.revoked.map((r) => `${r.slug}/${r.label}`).join(', ')}`);
 			setMessage({ kind: 'info', text: parts.length ? parts.join('; ') : 'сайт не прислал ничего нового' });
 			await load();
 		} catch (e) {
@@ -108,7 +111,8 @@ export default function TabKeys() {
 			</Stack>
 
 			<Typography variant='caption' color={greyColor(45)}>
-				Ключи лежат в хранилище учётных данных ОС, здесь только метки и подсказки. Кнопка обновляет
+				Локальные ключи лежат в хранилище учётных данных ОС; выданные сайтом — только в памяти
+				программы и после перезапуска запрашиваются заново. Здесь в любом случае только метки. Кнопка обновляет
 				сервисы, которые уже есть в списке: каталог с сайта пока не приезжает, поэтому новый сервис
 				появляется здесь после того, как его выберут в ноде.
 			</Typography>
@@ -164,6 +168,12 @@ export default function TabKeys() {
 								/>
 							</Tooltip>
 
+							{a.loaded === false && (
+								<Tooltip title='Ключи с сайта живут в памяти программы: после перезапуска их надо запросить заново'>
+									<Chip size='small' label='не загружен' sx={{ height: 18, fontSize: 10 }} color='warning' variant='outlined' />
+								</Tooltip>
+							)}
+
 							{a.stale && (
 								<Tooltip title='На сайте меняли секреты — версия не подтверждается, ключ перезапросится'>
 									<Chip size='small' label='несвежая' sx={{ height: 18, fontSize: 10 }} variant='outlined' />
@@ -174,7 +184,11 @@ export default function TabKeys() {
 								{expiryText(a)}
 							</Typography>
 
-							<Typography sx={{ width: 90, color: greyColor(35), fontSize: 11 }}>{a.hint}</Typography>
+							<Tooltip title={a.baseUrl || 'Адрес знает сама нода'}>
+								<Typography sx={{ width: 90, color: greyColor(35), fontSize: 11 }} noWrap>
+									{a.hasSecret ? a.hint : 'без ключа'}
+								</Typography>
+							</Tooltip>
 
 							<IconButton
 								className='row-del'

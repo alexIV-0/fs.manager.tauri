@@ -70,6 +70,7 @@ export default function ServiceAccountDDM({ property, onChange }: Props) {
 
 	const [open, setOpen] = useState(false);
 	const [label, setLabel] = useState('');
+	const [baseUrl, setBaseUrl] = useState('');
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState('');
@@ -103,6 +104,7 @@ export default function ServiceAccountDDM({ property, onChange }: Props) {
 
 	const openDialog = useCallback(() => {
 		setLabel('');
+		setBaseUrl('');
 		setValues({});
 		setError('');
 		setOpen(true);
@@ -110,25 +112,24 @@ export default function ServiceAccountDDM({ property, onChange }: Props) {
 
 	const refreshFromSite = useCallback(async () => {
 		if (!slug) return;
-		const selected = property.controlProps.value;
-		// Метку передаём, если она выбрана: у сервиса может быть и `main`, и `test`,
-		// и сайт намеренно не выбирает за ноду — вернёт `ambiguous`.
-		const accounts = typeof selected === 'string' && selected.trim() ? { [slug]: selected.trim() } : {};
 		try {
-			const report = unwrap(await commands.vaultSyncFromSite([slug], accounts, null));
+			// Метку не передаём: сайт присылает все доступные машине учётки сервиса, а
+			// какую взять — решает это самое поле. Иначе не собрать флоу: прогнать
+			// локально тестовым ключом и отправить в работу основным.
+			const report = unwrap(await commands.vaultSyncFromSite([slug], null));
 			setRefreshKey((k) => k + 1);
 			const parts: string[] = [];
 			if (report.issued.length) parts.push(`получено ${report.issued.length}`);
 			if (report.fresh.length) parts.push(`актуально ${report.fresh.length}`);
 			if (report.unavailable.length) parts.push(`недоступно ${report.unavailable.join(', ')}`);
-			if (report.ambiguous.length) parts.push(`учёток несколько — выбери метку (${report.ambiguous.join(', ')})`);
+			if (report.revoked.length) parts.push(`отозвано ${report.revoked.map((r) => r.label).join(', ')}`);
 			setToast(parts.length ? parts.join('; ') : 'сайт не прислал ничего по этому сервису');
 		} catch (e) {
 			// Частая и совершенно нормальная причина — сервис просто не заведён на сайте
 			// или сайт недоступен. Текст показываем как есть: по нему и понятно, что чинить.
 			setToast(`Не получилось: ${String(e)}`);
 		}
-	}, [slug, property.controlProps.value]);
+	}, [slug]);
 
 	const handleChange = useCallback(
 		(value: string) => {
@@ -173,7 +174,7 @@ export default function ServiceAccountDDM({ property, onChange }: Props) {
 		try {
 			// source не передаём: учётка, заведённая руками на этой машине, — локальная.
 			// На сайт она не уезжает, срока у неё нет (§6 контракта).
-			unwrap(await commands.vaultSave(slug, name, filled, null, null, null));
+			unwrap(await commands.vaultSave(slug, name, filled, null, null, null, baseUrl.trim() || null));
 			setOpen(false);
 			onChange(name);
 			setRefreshKey((k) => k + 1);
@@ -266,6 +267,15 @@ export default function ServiceAccountDDM({ property, onChange }: Props) {
 							onChange={(e) => setLabel(e.target.value)}
 							fullWidth
 							autoFocus
+						/>
+
+						<TextField
+							label='Адрес установки (необязательно)'
+							placeholder='https://comfy-a.local'
+							helperText='Нужен, когда за одним слагом стоит несколько своих серверов: у каждой учётки свой адрес. У вендора с одним публичным API оставь пустым — адрес знает плагин.'
+							value={baseUrl}
+							onChange={(e) => setBaseUrl(e.target.value)}
+							fullWidth
 						/>
 
 						{service.fields.map((f) => (

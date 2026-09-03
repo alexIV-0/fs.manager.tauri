@@ -62,10 +62,9 @@ impl Provider {
         &self,
         services: &[String],
         known: &std::collections::BTreeMap<String, VendorKnownKey>,
-        accounts: &std::collections::BTreeMap<String, String>,
         task_id: Option<&str>,
     ) -> StorageResult<VendorKeysResponse> {
-        dispatch!(self, vault_keys(services, known, accounts, task_id))
+        dispatch!(self, vault_keys(services, known, task_id))
     }
 
     pub async fn vault_usage(

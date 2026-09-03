@@ -6,21 +6,12 @@ import { Box, Collapse, InputAdornment, Stack, TextField, Typography } from '@mu
 import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { DragEvent, memo, useEffect, useMemo, useState } from 'react';
 import SideNode from './SidebarList';
+import { compareNodeGroups } from '@/Utils/nodeGroupOrder';
 
 interface GroupedNodes {
 	colorType: string;
 	color: string;
 	nodes: ReturnType<typeof getNodeDefinitions>;
-}
-
-// Кастомный порядок аккордеонов в боковой панели.
-// Группы, чей colorType указан здесь, идут в этом порядке. Все остальные — после,
-// отсортированы алфавитом. Регистр учитывается (afterEffect — camelCase, как в colorTypes_store).
-const GROUP_ORDER = ['main', 'ai', 'helpers', 'ffmpeg', 'afterEffect', 'moho'];
-
-function groupOrderIndex(name: string): number {
-	const idx = GROUP_ORDER.indexOf(name);
-	return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
 }
 
 interface SidebarAccordionProps {
@@ -67,13 +58,7 @@ function SidebarAccordion({ onNodeClick, selectedNodeType, externalSearch }: Sid
 		});
 
 		return Array.from(map.entries())
-			.sort(([a], [b]) => {
-				const ai = groupOrderIndex(a);
-				const bi = groupOrderIndex(b);
-				if (ai !== bi) return ai - bi;
-				// Группы вне GROUP_ORDER сортируются между собой алфавитом.
-				return a.localeCompare(b);
-			})
+			.sort(([a], [b]) => compareNodeGroups(a, b))
 			.map(([colorType, nodes]) => ({
 				colorType,
 				color: (colorTypes[colorType] as string) ?? (colorTypes.default as string),

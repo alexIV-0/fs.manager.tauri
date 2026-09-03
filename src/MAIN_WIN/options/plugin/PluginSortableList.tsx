@@ -1,33 +1,34 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { commands, unwrap } from '@/Utils/specta';
-import {
-	DndContext,
-	closestCenter,
-	KeyboardSensor,
-	PointerSensor,
-	useSensor,
-	useSensors,
-	DragEndEvent,
-	DragStartEvent,
-	DragMoveEvent,
-} from '@dnd-kit/core';
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Box, IconButton, List } from '@mui/material';
-import { plugin_Store } from '@/Store/MainWin/plugin_store';
+import { plugin_Store, PluginItem } from '@/Store/MainWin/plugin_store';
+import { typeOfNodes_store } from '@/Store/MainWin/pathPattern_store';
 import { Plus } from 'lucide-react';
 
 import { MyStyledSearch } from '@/MAIN_WIN/Universal/MyStyledSearch';
 import { defGray, greyColor } from '@/Store/Color/grayColor';
+import { compareNodeGroups } from '@/Utils/nodeGroupOrder';
 import { AppUpdaterAccordion } from './AppUpdaterAccordion';
 import { useStore } from 'zustand';
 
-import { PluginSortableGroup } from './PluginSortableGroup';
+import { PluginSortableListItem } from './PluginSortableListItem';
+import { PluginTypeAccordion } from './PluginTypeAccordion';
+import { pluginKey, usePluginNodeTypes, UNTYPED_GROUP } from './usePluginNodeTypes';
+
+/** Группа версий одного плагина (то, что отдаёт стор). */
+type PluginGroup = { id: string; plugins: PluginItem[] };
+
+/** Строка списка: конкретная версия плагина. */
+type PluginRow = { plugin: PluginItem; isMainVersion: boolean };
+
+const OPEN_TYPES_KEY = 'plugins-type-accordions';
 
 export const PluginSortableList: React.FC = () => {
 	// Реактивное состояние
 	const plugins = useStore(plugin_Store, (state) => state.plugins);
 	const searchQuery = useStore(plugin_Store, (state) => state.searchQuery);
 	const isLoading = useStore(plugin_Store, (state) => state.isLoading);
+	const patterns = typeOfNodes_store((s) => s.patternStore);
 
 	const hasUpdaterPlugin = useMemo(
 		() => plugins.some((p) => p.id === 'updater' && p.enabled && p.exists),
@@ -35,108 +36,82 @@ export const PluginSortableList: React.FC = () => {
 	);
 
 	// Получаем методы из стора
-	const { setSearchQuery, movePluginGroup, getFilteredGroups, addOrUpdatePlugin } = plugin_Store();
+	const { setSearchQuery, getFilteredGroups, addOrUpdatePlugin } = plugin_Store();
+
+	// Тип ноды каждого плагина — та же раскладка, что в боковой панели NODE_WIN
+	const nodeTypes = usePluginNodeTypes(plugins);
+
+	// Цвет группы берём у типа ноды в настройках (Nodes) — как в нодовом редакторе
+	const typeColors = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const pattern of patterns) {
+			if (pattern.color) map.set(pattern.name, pattern.color);
+		}
+		return map;
+	}, [patterns]);
 
 	// Получаем отфильтрованные группы
-	const filteredGroups = useMemo(() => {
-		// console.log('[PluginSortableList] Recalculating filtered groups:', {
-		// 	pluginsCount: plugins.length,
-		// 	searchQuery,
-		// 	groupsCount: getFilteredGroups().length,
-		// });
-		return getFilteredGroups();
-	}, [plugins, searchQuery, getFilteredGroups]);
+	const filteredGroups = useMemo(() => getFilteredGroups(), [plugins, searchQuery, getFilteredGroups]);
 
-	// ID групп для SortableContext
-	const groupIds = useMemo(() => {
-		const ids = filteredGroups.map((group) => group.id);
-		// console.log('[PluginSortableList] Group IDs for SortableContext:', ids);
-		return ids;
-	}, [filteredGroups]);
+	// Раскладка по типам нод: аккордеон = тип, внутри сразу плагины по алфавиту.
+	// Версии одного плагина идут подряд — стор отдаёт их одной группой (свежая первой).
+	const typeGroups = useMemo(() => {
+		const byType = new Map<string, PluginGroup[]>();
 
-	// Настройка сенсоров для DnD
-	const sensors = useSensors(
-		useSensor(PointerSensor, {
-			activationConstraint: {
-				distance: 1, // Уменьшил с 5 до 1 для теста
-			},
-		}),
-		useSensor(KeyboardSensor, {
-			coordinateGetter: sortableKeyboardCoordinates,
-		}),
-	);
-
-	// Обработчик начала перетаскивания
-	const handleDragStart = (event: DragStartEvent) => {
-		// console.log('[DnD] Drag started:', {
-		// 	activeId: event.active.id,
-		// 	activeData: event.active.data.current,
-		// });
-	};
-
-	// Обработчик процесса перетаскивания
-	const handleDragMove = (event: DragMoveEvent) => {
-		// console.log('[DnD] Dragging:', {
-		// 	activeId: event.active.id,
-		// 	overId: event.over?.id,
-		// });
-	};
-
-	// Обработчик окончания перетаскивания
-	const handleDragEnd = (event: DragEndEvent) => {
-		// console.log('[DnD] Drag ended:', {
-		// 	activeId: event.active.id,
-		// 	overId: event.over?.id,
-		// 	delta: event.delta,
-		// });
-
-		const { active, over } = event;
-
-		if (!over) {
-			// console.log('[DnD] No target - drag cancelled');
-			return;
+		for (const group of filteredGroups) {
+			// Тип берём у актуальной (самой свежей) версии — на неё смотрит и NODE_WIN
+			const nodeType = nodeTypes.get(pluginKey(group.plugins[0])) ?? UNTYPED_GROUP;
+			if (!byType.has(nodeType)) byType.set(nodeType, []);
+			byType.get(nodeType)!.push(group);
 		}
 
-		if (active.id === over.id) {
-			// console.log('[DnD] Same target - no movement');
-			return;
+		return Array.from(byType.entries())
+			.sort(([a], [b]) => compareNodeGroups(a, b))
+			.map(([nodeType, groups]) => {
+				const rows: PluginRow[] = [...groups]
+					.sort((a, b) =>
+						(a.plugins[0]?.name ?? a.id).toLowerCase().localeCompare((b.plugins[0]?.name ?? b.id).toLowerCase()),
+					)
+					.flatMap((group) =>
+						group.plugins.map((plugin, index) => ({ plugin, isMainVersion: group.plugins.length > 1 && index === 0 })),
+					);
+
+				return { nodeType, color: typeColors.get(nodeType) ?? greyColor(45), rows };
+			});
+	}, [filteredGroups, nodeTypes, typeColors]);
+
+	// Открытые/закрытые аккордеоны типов — помним между сессиями
+	const [openTypes, setOpenTypes] = useState<Record<string, boolean>>(() => {
+		try {
+			const saved = localStorage.getItem(OPEN_TYPES_KEY);
+			return saved ? JSON.parse(saved) : {};
+		} catch {
+			return {};
 		}
+	});
 
-		// console.log('[DnD] Attempting to move group:', {
-		// 	fromId: active.id,
-		// 	toId: over.id,
-		// });
+	useEffect(() => {
+		try {
+			localStorage.setItem(OPEN_TYPES_KEY, JSON.stringify(openTypes));
+		} catch {}
+	}, [openTypes]);
 
-		const oldIndex = filteredGroups.findIndex((group) => group.id === active.id);
-		const newIndex = filteredGroups.findIndex((group) => group.id === over.id);
-
-		// console.log('[DnD] Indexes:', {
-		// 	oldIndex,
-		// 	newIndex,
-		// 	filteredGroupsCount: filteredGroups.length,
-		// 	filteredGroupsIds: filteredGroups.map((g) => g.id),
-		// });
-
-		if (oldIndex !== -1 && newIndex !== -1) {
-			// console.log('[DnD] Moving group from index', oldIndex, 'to', newIndex);
-			movePluginGroup(oldIndex, newIndex);
-		} else {
-			// console.log('[DnD] Invalid indexes - group not found');
-		}
+	// При активном поиске раскрываем все типы — иначе находки прячутся в закрытых
+	const isTypeOpen = (nodeType: string) => {
+		if (searchQuery.trim()) return true;
+		return openTypes[nodeType] ?? true;
 	};
 
-	// Обработчик отмены перетаскивания
-	const handleDragCancel = () => {
-		// console.log('[DnD] Drag cancelled');
+	const toggleType = (nodeType: string) => {
+		setOpenTypes((prev) => ({ ...prev, [nodeType]: !isTypeOpen(nodeType) }));
 	};
 
 	// Поиск
 	const handleSearch = (query: string) => {
-		// console.log('[PluginSortableList] Search query changed:', query);
 		setSearchQuery(query);
 	};
 
-	// Добавление тестового плагина
+	// Установка плагина из .fsmplug
 	const handleAddPlugin = async () => {
 		const filePaths = unwrap(await commands.selectFiles({
 			multiSelect: true,
@@ -211,7 +186,7 @@ export const PluginSortableList: React.FC = () => {
 				</IconButton>
 			</Box>
 
-			{/* Список групп с DnD */}
+			{/* Список: аккордеон на каждый тип ноды */}
 			<Box
 				sx={{
 					flex: 1,
@@ -226,30 +201,34 @@ export const PluginSortableList: React.FC = () => {
 					},
 				}}
 			>
-				{filteredGroups.length > 0 ? (
-					<DndContext
-						sensors={sensors}
-						collisionDetection={closestCenter}
-						onDragStart={handleDragStart}
-						onDragMove={handleDragMove}
-						onDragEnd={handleDragEnd}
-						onDragCancel={handleDragCancel}
+				{typeGroups.length > 0 ? (
+					<List
+						disablePadding
+						sx={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: 0.75,
+						}}
 					>
-						<SortableContext items={groupIds} strategy={verticalListSortingStrategy}>
-							<List
-								disablePadding
-								sx={{
-									display: 'flex',
-									flexDirection: 'column',
-									gap: 0.1,
-								}}
+						{typeGroups.map(({ nodeType, color, rows }) => (
+							<PluginTypeAccordion
+								key={nodeType}
+								nodeType={nodeType}
+								color={color}
+								count={rows.length}
+								open={isTypeOpen(nodeType)}
+								onToggle={() => toggleType(nodeType)}
 							>
-								{filteredGroups.map((group) => (
-									<PluginSortableGroup key={group.id} groupId={group.id} plugins={group.plugins} />
+								{rows.map(({ plugin, isMainVersion }) => (
+									<PluginSortableListItem
+										key={pluginKey(plugin)}
+										plugin={plugin}
+										isMainVersion={isMainVersion}
+									/>
 								))}
-							</List>
-						</SortableContext>
-					</DndContext>
+							</PluginTypeAccordion>
+						))}
+					</List>
 				) : (
 					<Box
 						sx={{

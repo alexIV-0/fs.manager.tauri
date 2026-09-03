@@ -13,11 +13,28 @@
 // читается без единого обращения к хранилищу ОС — а обращение это на macOS может
 // подниматься до диалога разблокировки связки.
 //
-// Сами поля секрета идут в хранилище учётных данных ОС (Keychain / Credential
-// Manager, крейт `keyring`). Это сильнее, чем шифрованный файл рядом с приложением:
-// ключа шифрования у нас нет вовсе, а значит его нельзя ни потерять, ни утащить
-// вместе с файлом. От `accounts/<mainFolder>/<platform>.json` (plaintext) уходим
-// именно поэтому — см. §3 контракта.
+// Сами поля секрета лежат на ДВУХ разных полках, и это не дублирование, а разные
+// сроки жизни:
+//
+//   • учётка, заведённая руками (`local`) → хранилище учётных данных ОС (Keychain /
+//     Credential Manager, крейт `keyring`). Это сильнее шифрованного файла рядом с
+//     приложением: ключа шифрования у нас нет вовсе, значит его нельзя ни потерять,
+//     ни утащить вместе с файлом. От `accounts/*.json` (plaintext) уходим сюда;
+//
+//   • ключ, выданный сайтом (`site`) → ТОЛЬКО память процесса, диска не касается.
+//
+// ── Почему ключи с сайта не кладутся в связку
+//
+// Keychain выдаёт доступ приложению, опознанному по подписи. Пока приложение не
+// подписано стабильным Developer ID, каждая новая сборка для macOS — другое
+// приложение, и система спрашивает пароль заново ПОСЛЕ КАЖДОГО ОБНОВЛЕНИЯ на каждой
+// машине. На парке это неисполнимо: кликать «разрешить» руками негде.
+//
+// В память они ложатся не как обходной манёвр, а по существу: у выданной копии и так
+// короткий `ttlSec`, гейт ходит за ключами перед каждым витком, и «копия не живёт
+// дольше, чем нужно» — ровно то, ради чего ключи переехали на сайт. Плата: после
+// перезапуска программы офлайн на этих ключах не поработать, нужен один поход к
+// сайту. Локальные учётки офлайн работают как работали.
 //
 // ── Источник записи (`source`) — это не пометка, а правило жизни
 //
@@ -80,6 +97,35 @@ pub struct VaultAccountMeta {
     /// Посчитано на чтении, в файл не пишется: `expiresAt` в прошлом.
     #[serde(default)]
     pub expired: bool,
+    /// Секрет доступен прямо сейчас. Тоже считается на чтении.
+    ///
+    /// У локальных всегда `true`: проверять означало бы лезть в связку ОС, а это и
+    /// есть тот самый запрос пароля — на КАЖДОЕ открытие списка. У выданных сайтом
+    /// зависит от памяти процесса: после перезапуска метаданные есть, ключа нет.
+    #[serde(default)]
+    pub loaded: bool,
+    /// Адрес ЭТОЙ установки. Пусто — адрес знает сама нода.
+    ///
+    /// У вендора с одним публичным API совпадает с сервисным, у своих серверов
+    /// различается: два своих ComfyUI — это один сервис и две учётки с разными
+    /// адресами, а не два сервиса (у сервиса слаг уникален, и слаг = плагин).
+    #[serde(default)]
+    pub base_url: String,
+    /// `platform` — наша учётка, `client` — клиента. У локальных пусто.
+    #[serde(default)]
+    pub owner: String,
+    /// Есть ли у учётки ключ. `false` — законное состояние: свой сервис рядом
+    /// может не требовать авторизации, у него есть только адрес.
+    ///
+    /// Дефолт `true`, а не `false`: все записи, сделанные до появления поля,
+    /// заводились с секретом, и прочитать их как «без ключа» значило бы сломать
+    /// работающие учётки при обновлении программы.
+    #[serde(default = "default_true")]
+    pub has_secret: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Пара «сервис + метка» в отчёте о синхронизации.
@@ -100,10 +146,9 @@ pub struct VaultSyncReport {
     pub fresh: Vec<VaultSyncedAccount>,
     /// Нет сервиса, пауза, отзыв или `proxy`. Копии с сайта по ним мы удалили.
     pub unavailable: Vec<String>,
-    /// Учёток несколько, а метка не названа. Сайт не выбирает за ноду — выбрать
-    /// должен человек в поле Account.
-    pub ambiguous: Vec<String>,
-    /// Каталожная часть: адрес и наличие ключа по каждому доступному сервису.
+    /// Учётки, пропавшие с сайта (удалены или отозваны) — их копии мы стёрли.
+    pub revoked: Vec<VaultSyncedAccount>,
+    /// Каталожная часть: адрес, состав учёток и поля секрета по каждому сервису.
     /// Приходит и тогда, когда секрет не менялся, — адрес нужен всегда.
     pub services: Vec<crate::storage::types::VendorServiceEndpoint>,
     pub vault_revision: i64,
@@ -200,11 +245,21 @@ fn upsert_meta(list: &mut Vec<VaultAccountMeta>, entry: VaultAccountMeta) {
     }
 }
 
-/// Помечает протухшие копии. Считается на чтении, а не хранится: иначе флаг пришлось
-/// бы обновлять по таймеру, и он врал бы ровно в тот момент, когда важен.
-fn mark_expired(list: &mut [VaultAccountMeta], now: i64) {
+/// Досчитывает то, что не хранится: протухание и наличие секрета.
+///
+/// Считается на чтении, а не пишется в файл: иначе флаги пришлось бы обновлять по
+/// таймеру, и они врали бы ровно в тот момент, когда важны.
+fn mark_computed(list: &mut [VaultAccountMeta], now: i64) {
     for m in list.iter_mut() {
         m.expired = matches!(m.expires_at, Some(exp) if exp <= now);
+        m.loaded = if m.source != "site" {
+            true
+        } else if !m.has_secret {
+            // Сервис без авторизации: грузить нечего, значит и «не загружено» нет.
+            true
+        } else {
+            site_loaded(&address(&m.slug, &m.label))
+        };
     }
 }
 
@@ -259,6 +314,44 @@ mod os_store {
     }
 }
 
+// ─── Ключи с сайта: только память ────────────────────────────────────────────
+
+/// Секреты, выданные сайтом. Живут ровно столько, сколько живёт процесс.
+///
+/// Статик, а не поле состояния Tauri, по той же причине, по которой сейф вообще
+/// существует: сюда ходят и команды из renderer, и демон, и им нужен один набор.
+static SITE_SECRETS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, BTreeMap<String, String>>>,
+> = std::sync::OnceLock::new();
+
+fn site_secrets(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, BTreeMap<String, String>>> {
+    SITE_SECRETS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn site_put(addr: String, fields: BTreeMap<String, String>) {
+    if let Ok(mut m) = site_secrets().lock() {
+        m.insert(addr, fields);
+    }
+}
+
+fn site_get(addr: &str) -> Option<BTreeMap<String, String>> {
+    site_secrets().lock().ok()?.get(addr).cloned()
+}
+
+fn site_forget(addr: &str) {
+    if let Ok(mut m) = site_secrets().lock() {
+        m.remove(addr);
+    }
+}
+
+fn site_loaded(addr: &str) -> bool {
+    site_secrets()
+        .lock()
+        .map(|m| m.contains_key(addr))
+        .unwrap_or(false)
+}
+
 fn address(slug: &str, label: &str) -> String {
     format!("{}/{}", slug, label)
 }
@@ -281,7 +374,7 @@ pub fn vault_list(
         let s = validate_slug(&s)?;
         list.retain(|m| m.slug == s);
     }
-    mark_expired(&mut list, now_sec());
+    mark_computed(&mut list, now_sec());
     list.sort_by(|a, b| (&a.slug, &a.label).cmp(&(&b.slug, &b.label)));
     Ok(list)
 }
@@ -292,6 +385,10 @@ pub fn vault_list(
 ///
 /// `ttl_sec` осмыслен только для `source = "site"`: у выданной сайтом копии обязан
 /// быть срок. Локальной учётке срок не ставится — её никто не отзывает.
+///
+/// `base_url` — адрес этой установки. Вендору с одним публичным API не нужен, его
+/// знает плагин; для своего сервера, поднятого рядом, это главное поле: два своих
+/// ComfyUI — это одна нода, один слаг и две учётки с разными адресами.
 #[tauri::command]
 #[specta::specta]
 pub fn vault_save(
@@ -302,6 +399,7 @@ pub fn vault_save(
     source: Option<String>,
     secret_version: Option<i64>,
     ttl_sec: Option<i64>,
+    base_url: Option<String>,
 ) -> Result<VaultAccountMeta, String> {
     save_account(
         &app,
@@ -311,6 +409,8 @@ pub fn vault_save(
         source.as_deref().unwrap_or("local"),
         secret_version,
         ttl_sec,
+        base_url.as_deref().unwrap_or("").trim(),
+        "",
     )
 }
 
@@ -323,6 +423,8 @@ fn save_account(
     source: &str,
     secret_version: Option<i64>,
     ttl_sec: Option<i64>,
+    base_url: &str,
+    owner: &str,
 ) -> Result<VaultAccountMeta, String> {
     let slug = validate_slug(slug)?;
     let label = validate_label(label)?;
@@ -357,9 +459,15 @@ fn save_account(
         None
     };
 
-    // Секрет — первым: если упадёт хранилище ОС, метаданные не должны обещать
-    // учётку, которой нет.
-    os_store::put(&address(&slug, &label), &blob)?;
+    // Секрет — первым: если запись не удастся, метаданные не должны обещать учётку,
+    // которой нет. Куда именно — решает источник: выданный сайтом ключ в связку не
+    // кладём вовсе (см. шапку модуля).
+    let addr = address(&slug, &label);
+    if source == "site" {
+        site_put(addr, fields.clone());
+    } else {
+        os_store::put(&addr, &blob)?;
+    }
 
     let entry = VaultAccountMeta {
         slug: slug.clone(),
@@ -373,6 +481,10 @@ fn save_account(
         // по определению, что бы ни лежало на этом месте раньше.
         stale: false,
         expired: false,
+        loaded: true,
+        base_url: base_url.trim().to_string(),
+        owner: owner.to_string(),
+        has_secret: true,
     };
 
     let path = meta_file(app)?;
@@ -402,36 +514,35 @@ pub fn mark_site_stale(app: &tauri::AppHandle) -> Result<usize, String> {
     Ok(n)
 }
 
-/// Что мы готовы подтвердить сайту как актуальное: слаг → пара «учётка + версия».
+/// Что мы готовы подтвердить сайту как актуальное: `слаг/метка` → пара.
 ///
-/// Пара, а не версия: нумерация у каждой учётки своя, и `v3` у `main` совпал бы с
-/// `v3` у `test`. Ключ карты — слаг, поэтому подтверждаем ровно ту учётку, которую
-/// спрашивает нода; не назвала метку — не подтверждаем по этому сервису ничего.
+/// Ключ с меткой, потому что по одному сервису мы держим несколько учёток, и без
+/// метки вторая затирала бы первую. Пара, а не версия: нумерация у каждой учётки
+/// своя, и `v3` у `main` совпал бы с `v3` у `test`.
 ///
 /// Несвежие и протухшие сюда не попадают намеренно: подтвердив такую версию, мы
 /// получили бы в ответ `fresh` и остались бы с копией, которую сами же считаем
 /// сомнительной. Ноль тоже не подтверждаем — у сайта версии начинаются с единицы.
 fn known_keys(
     list: &[VaultAccountMeta],
-    wanted: &BTreeMap<String, String>,
     now: i64,
 ) -> BTreeMap<String, crate::storage::types::VendorKnownKey> {
     let mut out = BTreeMap::new();
-    for (slug, label) in wanted {
-        let Some(m) = list
-            .iter()
-            .find(|m| &m.slug == slug && &m.label == label && m.source == "site")
-        else {
+    for m in list {
+        if m.source != "site" || m.stale || m.secret_version <= 0 || !m.has_secret {
             continue;
-        };
-        if m.stale || m.secret_version <= 0 {
+        }
+        // Секрет живёт в памяти процесса: после перезапуска метаданные с версией на
+        // диске есть, а ключа нет. Подтверди мы такую версию — сайт ответил бы
+        // «актуально», и мы остались бы с меткой без ключа.
+        if !site_loaded(&address(&m.slug, &m.label)) {
             continue;
         }
         if matches!(m.expires_at, Some(exp) if exp <= now) {
             continue;
         }
         out.insert(
-            slug.clone(),
+            format!("{}/{}", m.slug, m.label),
             crate::storage::types::VendorKnownKey {
                 account: m.label.clone(),
                 version: m.secret_version,
@@ -471,7 +582,20 @@ pub fn vault_get_secret(
         }
     }
 
-    let blob = os_store::get(&address(&slug, &label))?.ok_or_else(|| {
+    let addr = address(&slug, &label);
+
+    if meta.source == "site" {
+        // Ключа в памяти нет — программу перезапустили либо сайт был недоступен.
+        // Это не «сломалось», а «ещё не привезли»: чинится запросом, а не руками.
+        return site_get(&addr).ok_or_else(|| {
+            format!(
+                "ключ '{}' ({}) не загружен с сайта — обнови учётки перед запуском",
+                label, slug
+            )
+        });
+    }
+
+    let blob = os_store::get(&addr)?.ok_or_else(|| {
         format!(
             "учётка '{}' ({}) есть в списке, но секрета в хранилище ОС нет",
             label, slug
@@ -487,9 +611,12 @@ pub fn vault_delete(app: tauri::AppHandle, slug: String, label: String) -> Resul
     let slug = validate_slug(&slug)?;
     let label = validate_label(&label)?;
 
-    // Секрет удаляем всегда, даже если метаданных нет: иначе рассинхрон оставил бы
-    // «осиротевший» секрет в связке навсегда.
-    os_store::delete(&address(&slug, &label))?;
+    // Чистим обе полки, даже если метаданных нет: иначе рассинхрон оставил бы
+    // «осиротевший» секрет в связке навсегда. Какая из них занята — зависит от
+    // источника, но удаление пустого места ничего не стоит.
+    let addr = address(&slug, &label);
+    site_forget(&addr);
+    os_store::delete(&addr)?;
 
     let path = meta_file(&app)?;
     let mut list = read_meta(&path);
@@ -518,7 +645,6 @@ pub async fn vault_sync_from_site(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::storage::StorageService>,
     services: Vec<String>,
-    accounts: BTreeMap<String, String>,
     task_id: Option<String>,
 ) -> Result<VaultSyncReport, String> {
     let mut slugs = Vec::with_capacity(services.len());
@@ -531,32 +657,25 @@ pub async fn vault_sync_from_site(
         return Ok(VaultSyncReport::default());
     }
 
-    // Метки, которые нода знает из поля проекта. Не знает — сайт выберет сам по
-    // владельцу задачи либо по единственной учётке, а если их несколько, честно
-    // ответит `ambiguous`, вместо того чтобы угадывать между `main` и `test`.
-    let mut wanted = BTreeMap::new();
-    for (slug, label) in &accounts {
-        let slug = validate_slug(slug)?;
-        let label = validate_label(label)?;
-        if slugs.contains(&slug) {
-            wanted.insert(slug, label);
-        }
-    }
-
     let path = meta_file(&app)?;
-    let known = known_keys(&read_meta(&path), &wanted, now_sec());
+    let known = known_keys(&read_meta(&path), now_sec());
 
-    let resp = state
-        .vault_keys(&slugs, &known, &wanted, task_id.as_deref())
-        .await?;
+    let resp = state.vault_keys(&slugs, &known, task_id.as_deref()).await?;
+
+    // Адрес и владелец лежат в каталожной части, а не в выданном ключе: секрет
+    // приходит только при устаревшей версии, а адрес нужен каждый раз.
+    let endpoint = |slug: &str, label: &str| {
+        resp.services
+            .iter()
+            .find(|e| e.slug == slug)
+            .and_then(|e| e.accounts.iter().find(|a| a.label == label))
+    };
 
     let mut issued = Vec::new();
     for key in &resp.keys {
-        if key.fields.is_empty() {
-            // Сервис без ключа — законное состояние (свой сервер рядом может не
-            // требовать авторизации), но записывать пустую учётку незачем.
-            continue;
-        }
+        let (base_url, owner) = endpoint(&key.slug, &key.account)
+            .map(|a| (a.base_url.clone(), a.owner.clone()))
+            .unwrap_or_default();
         save_account(
             &app,
             &key.slug,
@@ -565,6 +684,8 @@ pub async fn vault_sync_from_site(
             "site",
             Some(key.version),
             Some(key.ttl_sec),
+            &base_url,
+            &owner,
         )?;
         issued.push(VaultSyncedAccount {
             slug: key.slug.clone(),
@@ -572,23 +693,84 @@ pub async fn vault_sync_from_site(
         });
     }
 
-    // Недоступный сервис — это пауза, отзыв или `proxy`. Копии по нему держать
-    // нельзя: именно их удаление и делает отзыв отзывом, а не пожеланием до конца
+    let mut list = read_meta(&path);
+    let mut dirty = false;
+
+    // Каталожная часть: обновляем адрес и владельца у всех известных учёток и
+    // заводим запись без секрета для тех, у кого ключа нет по решению — это
+    // законное состояние (свой сервер рядом может не требовать авторизации), и
+    // отличать его от «выдача не сработала» нода должна явно.
+    for e in &resp.services {
+        for a in &e.accounts {
+            let slug = e.slug.clone();
+            match list
+                .iter_mut()
+                .find(|m| m.slug == slug && m.label == a.label && m.source == "site")
+            {
+                Some(m) => {
+                    if m.base_url != a.base_url || m.owner != a.owner || m.has_secret != a.has_secret
+                    {
+                        m.base_url = a.base_url.clone();
+                        m.owner = a.owner.clone();
+                        m.has_secret = a.has_secret;
+                        dirty = true;
+                    }
+                }
+                None if !a.has_secret => {
+                    list.push(VaultAccountMeta {
+                        slug,
+                        label: a.label.clone(),
+                        source: "site".into(),
+                        // Ключа нет — и подсказка про него была бы враньём.
+                        hint: "—".into(),
+                        secret_version: 0,
+                        expires_at: None,
+                        updated_at: now_sec(),
+                        stale: false,
+                        expired: false,
+                        loaded: true,
+                        base_url: a.base_url.clone(),
+                        owner: a.owner.clone(),
+                        has_secret: false,
+                    });
+                    dirty = true;
+                }
+                None => {}
+            }
+        }
+    }
+
+    // Что пропало с сайта, должно пропасть и здесь: сервис недоступен целиком либо
+    // учётка удалена. Именно это делает отзыв отзывом, а не пожеланием до конца
     // TTL. Локальные учётки не трогаем — они к сайту отношения не имеют.
-    if !resp.unavailable.is_empty() {
-        let mut list = read_meta(&path);
-        let doomed: Vec<(String, String)> = list
-            .iter()
-            .filter(|m| m.source == "site" && resp.unavailable.contains(&m.slug))
-            .map(|m| (m.slug.clone(), m.label.clone()))
-            .collect();
-        for (slug, label) in &doomed {
-            let _ = os_store::delete(&address(slug, label));
+    let mut revoked = Vec::new();
+    list.retain(|m| {
+        if m.source != "site" {
+            return true;
         }
-        if !doomed.is_empty() {
-            list.retain(|m| !(m.source == "site" && resp.unavailable.contains(&m.slug)));
-            write_meta(&path, &list)?;
+        let gone = resp.unavailable.contains(&m.slug)
+            || resp
+                .services
+                .iter()
+                .find(|e| e.slug == m.slug)
+                .map(|e| !e.accounts.iter().any(|a| a.label == m.label))
+                .unwrap_or(false);
+        if gone {
+            let addr = address(&m.slug, &m.label);
+            site_forget(&addr);
+            let _ = os_store::delete(&addr);
+            revoked.push(VaultSyncedAccount {
+                slug: m.slug.clone(),
+                label: m.label.clone(),
+            });
         }
+        !gone
+    });
+    if !revoked.is_empty() {
+        dirty = true;
+    }
+    if dirty {
+        write_meta(&path, &list)?;
     }
 
     Ok(VaultSyncReport {
@@ -602,7 +784,7 @@ pub async fn vault_sync_from_site(
             })
             .collect(),
         unavailable: resp.unavailable.clone(),
-        ambiguous: resp.ambiguous.clone(),
+        revoked,
         services: resp.services.clone(),
         vault_revision: resp.vault_revision,
     })
@@ -635,6 +817,10 @@ pub async fn vault_report_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn one_field() -> BTreeMap<String, String> {
+        [("secret".to_string(), "x".to_string())].into_iter().collect()
+    }
 
     fn f(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -691,6 +877,10 @@ mod tests {
             updated_at: 0,
             stale: false,
             expired: false,
+            loaded: true,
+            base_url: String::new(),
+            owner: String::new(),
+            has_secret: true,
         };
         upsert_meta(&mut list, mk("eleven-labs", "main", "••••1111"));
         upsert_meta(&mut list, mk("eleven-labs", "test", "••••2222"));
@@ -711,6 +901,10 @@ mod tests {
             updated_at: 0,
             stale: false,
             expired: false,
+            loaded: true,
+            base_url: String::new(),
+            owner: String::new(),
+            has_secret: true,
         }
     }
 
@@ -729,36 +923,77 @@ mod tests {
             meta("s-zero", "main", "site", 0),
         ];
 
-        let wanted: BTreeMap<String, String> = [
-            ("s-ok", "main"),
-            ("s-stale", "main"),
-            ("s-old", "main"),
-            ("s-local", "мой ключ"),
-            ("s-zero", "main"),
-        ]
-        .iter()
-        .map(|(a, b)| (a.to_string(), b.to_string()))
-        .collect();
+        // Секрет живёт в памяти процесса, поэтому «годная копия» — это ещё и
+        // «ключ у нас на руках». Кладём только для s-ok.
+        site_put(address("s-ok", "main"), one_field());
 
-        let known = known_keys(&list, &wanted, 150);
-        assert_eq!(known.get("s-ok").map(|k| k.version), Some(7));
-        assert_eq!(known.get("s-ok").map(|k| k.account.as_str()), Some("main"));
+        let known = known_keys(&list, 150);
+        assert_eq!(known.get("s-ok/main").map(|k| k.version), Some(7));
+        assert_eq!(known.get("s-ok/main").map(|k| k.account.as_str()), Some("main"));
         // Несвежую версию подтверждать нельзя: в ответ придёт `fresh`, и мы
         // останемся с копией, которую сами считаем сомнительной.
-        assert!(!known.contains_key("s-stale"));
-        assert!(!known.contains_key("s-old"), "протухшая копия не подтверждается");
-        assert!(!known.contains_key("s-local"), "локальные сайту не показываем");
-        assert!(!known.contains_key("s-zero"), "у сайта версии начинаются с единицы");
+        assert!(!known.contains_key("s-stale/main"));
+        assert!(!known.contains_key("s-old/main"), "протухшая копия не подтверждается");
+        assert!(!known.contains_key("s-local/мой ключ"), "локальные сайту не показываем");
+        assert!(!known.contains_key("s-zero/main"), "у сайта версии начинаются с единицы");
         assert_eq!(known.len(), 1);
+        site_forget(&address("s-ok", "main"));
     }
 
     #[test]
-    fn known_молчит_про_сервис_без_названной_метки() {
-        // Метку не назвали — подтверждать нечего: у сервиса может быть и `main`, и
-        // `test`, и подтверждение «версия 7» относилось бы неизвестно к какой.
-        let list = vec![meta("eleven-labs", "main", "site", 7)];
-        let known = known_keys(&list, &BTreeMap::new(), 150);
-        assert!(known.is_empty());
+    fn known_различает_учётки_одного_сервиса() {
+        // Ключ с меткой, иначе вторая учётка затирала бы первую и сайт подтвердил
+        // бы `test` версией от `main`.
+        let list = vec![
+            meta("eleven-labs", "main", "site", 7),
+            meta("eleven-labs", "test", "site", 3),
+        ];
+        site_put(address("eleven-labs", "main"), one_field());
+        site_put(address("eleven-labs", "test"), one_field());
+
+        let known = known_keys(&list, 150);
+        assert_eq!(known.get("eleven-labs/main").map(|k| k.version), Some(7));
+        assert_eq!(known.get("eleven-labs/test").map(|k| k.version), Some(3));
+        assert_eq!(known.len(), 2);
+
+        // Перезапуск программы: метаданные с версией остались, память пуста.
+        // Подтверди мы такую версию — сайт ответил бы «актуально», и мы остались бы
+        // с меткой без ключа.
+        site_forget(&address("eleven-labs", "test"));
+        let after_restart = known_keys(&list, 150);
+        assert_eq!(after_restart.len(), 1, "неподгруженную версию не подтверждаем");
+        site_forget(&address("eleven-labs", "main"));
+    }
+
+    #[test]
+    fn учётка_без_ключа_сайту_не_подтверждается() {
+        // Сервис без авторизации: подтверждать нечего, версии у него нет.
+        let mut no_key = meta("comfyui", "свой сервер", "site", 0);
+        no_key.has_secret = false;
+        assert!(known_keys(&[no_key], 150).is_empty());
+    }
+
+    #[test]
+    fn ключ_с_сайта_живёт_в_памяти_а_не_в_связке() {
+        // Смысл теста — зафиксировать развилку: у выданного сайтом ключа `loaded`
+        // зависит от памяти процесса, у локального всегда true (лезть в связку ради
+        // списка нельзя — это и есть запрос пароля на каждое открытие).
+        let mut site = meta("comfyui", "forTest", "site", 7);
+        let local = meta("comfyui", "мой", "local", 0);
+        site.has_secret = true;
+
+        let mut list = vec![site, local];
+        mark_computed(&mut list, 150);
+        assert!(!list[0].loaded, "секрета в памяти нет — значит не загружен");
+        assert!(list[1].loaded, "локальный считаем доступным без обращения к связке");
+
+        site_put(
+            address("comfyui", "forTest"),
+            [("secret".to_string(), "x".to_string())].into_iter().collect(),
+        );
+        mark_computed(&mut list, 150);
+        assert!(list[0].loaded, "после выдачи ключ доступен");
+        site_forget(&address("comfyui", "forTest"));
     }
 
     #[test]
@@ -774,6 +1009,10 @@ mod tests {
                 updated_at: 0,
                 stale: false,
                 expired: false,
+                loaded: true,
+                base_url: String::new(),
+                owner: String::new(),
+                has_secret: true,
             },
             VaultAccountMeta {
                 slug: "s".into(),
@@ -785,9 +1024,13 @@ mod tests {
                 updated_at: 0,
                 stale: false,
                 expired: true, // прилетело из файла — должно быть пересчитано
+                loaded: true,
+                base_url: String::new(),
+                owner: String::new(),
+                has_secret: true,
             },
         ];
-        mark_expired(&mut list, 150);
+        mark_computed(&mut list, 150);
         assert!(list[0].expired, "site-копия со сроком в прошлом протухла");
         assert!(!list[1].expired, "у локальной срока нет — не протухает никогда");
     }

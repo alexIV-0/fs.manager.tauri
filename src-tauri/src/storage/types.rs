@@ -373,23 +373,55 @@ pub struct VendorKeyFresh {
     pub account: String,
 }
 
+/// Из чего состоит секрет сервиса — по этому описанию рисуется форма заведения.
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorSecretField {
+    /// Ключ в объекте секрета. Под ним же значение ляжет в сейф.
+    pub key: String,
+    /// Подпись в форме. Пусто — показываем сам ключ.
+    #[serde(default)]
+    pub label: String,
+    /// Прятать ли ввод: логин прятать незачем, пароль — обязательно.
+    #[serde(default)]
+    pub secret: bool,
+}
+
+/// Учётка сервиса в каталожной части ответа. Секрета здесь нет.
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VendorAccountEndpoint {
+    pub label: String,
+    /// Адрес ЭТОЙ установки. У вендора с одним публичным API совпадает с
+    /// сервисным; у своих, поднятых по-разному, различается — и звать надо его.
+    #[serde(default)]
+    pub base_url: String,
+    /// `platform` — наша учётка, `client` — клиента (владельца задачи).
+    #[serde(default)]
+    pub owner: String,
+    /// `false` — законное состояние: свой сервис рядом может не требовать ключа.
+    #[serde(default)]
+    pub has_secret: bool,
+}
+
 /// Каталожная часть ответа: то, что не секрет.
 ///
 /// Приезжает ВСЕГДА, в том числе когда ключ не менялся и ответ по нему `fresh`.
-/// Секрет — только при устаревшей версии, а адрес нужен каждый раз.
+/// Секрет — только при устаревшей версии, а адрес и состав учёток нужны каждый раз:
+/// положи их внутрь `issued`, правка адреса без ротации ключа до машины не доехала бы.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VendorServiceEndpoint {
     pub slug: String,
-    /// Пусто — адрес знает сама нода.
+    /// Адрес сервиса. Пусто — адрес знает сама нода.
     #[serde(default)]
     pub base_url: String,
-    /// Какая учётка выбрана для этого запроса. `None` — ни одна не подошла.
+    /// Учётки, доступные этой машине: все наши плюс учётка владельца задачи,
+    /// если задача названа. Чужие клиентские сюда не попадают никогда.
     #[serde(default)]
-    pub account: Option<String>,
-    /// `false` — законное состояние: свой сервис рядом может не требовать ключа.
+    pub accounts: Vec<VendorAccountEndpoint>,
     #[serde(default)]
-    pub has_secret: bool,
+    pub secret_fields: Vec<VendorSecretField>,
 }
 
 /// Ответ `{action:"keys"}`.
@@ -401,13 +433,10 @@ pub struct VendorKeysResponse {
     /// Версия совпала — секрет по сети не поехал. Это основной режим работы.
     #[serde(default)]
     pub fresh: Vec<VendorKeyFresh>,
-    /// Нет такого сервиса, он на паузе, отозван или помечен `proxy`.
+    /// Считается по каталогу, а не по «не выдали ключ»: сервис без ключа пригоден
+    /// к работе, и попади он сюда, нода сняла бы задачу, для которой всё есть.
     #[serde(default)]
     pub unavailable: Vec<String>,
-    /// Учёток несколько, а метка не названа. Сайт не выбирает за ноду: `main`
-    /// вместо `test` заметили бы по счёту вендора.
-    #[serde(default)]
-    pub ambiguous: Vec<String>,
     #[serde(default)]
     pub services: Vec<VendorServiceEndpoint>,
     #[serde(default)]

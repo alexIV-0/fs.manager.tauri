@@ -18,9 +18,9 @@ export const description = {
 					tooltip: 'Контактное лицо, к кому можно обратиться по поводу этой песочницы',
 					options: ['#historyValue(contactNames)'],
 					multiSelect: true,
-					value: ['Aleksey Ivanov'],
+					value: [],
 				},
-				required: true,
+				required: false,
 				outputType: 'array',
 			},
 			{

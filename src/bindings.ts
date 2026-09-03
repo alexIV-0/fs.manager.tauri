@@ -1170,10 +1170,14 @@ async vaultList(slug: string | null) : Promise<Result<VaultAccountMeta[], string
  * 
  * `ttl_sec` осмыслен только для `source = "site"`: у выданной сайтом копии обязан
  * быть срок. Локальной учётке срок не ставится — её никто не отзывает.
+ * 
+ * `base_url` — адрес этой установки. Вендору с одним публичным API не нужен, его
+ * знает плагин; для своего сервера, поднятого рядом, это главное поле: два своих
+ * ComfyUI — это одна нода, один слаг и две учётки с разными адресами.
  */
-async vaultSave(slug: string, label: string, fields: Partial<{ [key in string]: string }>, source: string | null, secretVersion: number | null, ttlSec: number | null) : Promise<Result<VaultAccountMeta, string>> {
+async vaultSave(slug: string, label: string, fields: Partial<{ [key in string]: string }>, source: string | null, secretVersion: number | null, ttlSec: number | null, baseUrl: string | null) : Promise<Result<VaultAccountMeta, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("vault_save", { slug, label, fields, source, secretVersion, ttlSec }) };
+    return { status: "ok", data: await TAURI_INVOKE("vault_save", { slug, label, fields, source, secretVersion, ttlSec, baseUrl }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1214,9 +1218,9 @@ async vaultDelete(slug: string, label: string) : Promise<Result<boolean, string>
  * Секрет в renderer не возвращается ни в каком виде: сюда приезжает ответ сайта,
  * здесь же он кладётся в сейф, наружу уходит только отчёт «что с чем случилось».
  */
-async vaultSyncFromSite(services: string[], accounts: Partial<{ [key in string]: string }>, taskId: string | null) : Promise<Result<VaultSyncReport, string>> {
+async vaultSyncFromSite(services: string[], taskId: string | null) : Promise<Result<VaultSyncReport, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("vault_sync_from_site", { services, accounts, taskId }) };
+    return { status: "ok", data: await TAURI_INVOKE("vault_sync_from_site", { services, taskId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3695,7 +3699,36 @@ stale?: boolean;
 /**
  * Посчитано на чтении, в файл не пишется: `expiresAt` в прошлом.
  */
-expired?: boolean }
+expired?: boolean; 
+/**
+ * Секрет доступен прямо сейчас. Тоже считается на чтении.
+ * 
+ * У локальных всегда `true`: проверять означало бы лезть в связку ОС, а это и
+ * есть тот самый запрос пароля — на КАЖДОЕ открытие списка. У выданных сайтом
+ * зависит от памяти процесса: после перезапуска метаданные есть, ключа нет.
+ */
+loaded?: boolean; 
+/**
+ * Адрес ЭТОЙ установки. Пусто — адрес знает сама нода.
+ * 
+ * У вендора с одним публичным API совпадает с сервисным, у своих серверов
+ * различается: два своих ComfyUI — это один сервис и две учётки с разными
+ * адресами, а не два сервиса (у сервиса слаг уникален, и слаг = плагин).
+ */
+baseUrl?: string; 
+/**
+ * `platform` — наша учётка, `client` — клиента. У локальных пусто.
+ */
+owner?: string; 
+/**
+ * Есть ли у учётки ключ. `false` — законное состояние: свой сервис рядом
+ * может не требовать авторизации, у него есть только адрес.
+ * 
+ * Дефолт `true`, а не `false`: все записи, сделанные до появления поля,
+ * заводились с секретом, и прочитать их как «без ключа» значило бы сломать
+ * работающие учётки при обновлении программы.
+ */
+hasSecret?: boolean }
 /**
  * Итог похода за ключами. Секретов здесь нет — только что с чем случилось.
  */
@@ -3713,12 +3746,11 @@ fresh: VaultSyncedAccount[];
  */
 unavailable: string[]; 
 /**
- * Учёток несколько, а метка не названа. Сайт не выбирает за ноду — выбрать
- * должен человек в поле Account.
+ * Учётки, пропавшие с сайта (удалены или отозваны) — их копии мы стёрли.
  */
-ambiguous: string[]; 
+revoked: VaultSyncedAccount[]; 
 /**
- * Каталожная часть: адрес и наличие ключа по каждому доступному сервису.
+ * Каталожная часть: адрес, состав учёток и поля секрета по каждому сервису.
  * Приходит и тогда, когда секрет не менялся, — адрес нужен всегда.
  */
 services: VendorServiceEndpoint[]; vaultRevision: number }
@@ -3727,24 +3759,55 @@ services: VendorServiceEndpoint[]; vaultRevision: number }
  */
 export type VaultSyncedAccount = { slug: string; label: string }
 /**
- * Каталожная часть ответа: то, что не секрет.
- * 
- * Приезжает ВСЕГДА, в том числе когда ключ не менялся и ответ по нему `fresh`.
- * Секрет — только при устаревшей версии, а адрес нужен каждый раз.
+ * Учётка сервиса в каталожной части ответа. Секрета здесь нет.
  */
-export type VendorServiceEndpoint = { slug: string; 
+export type VendorAccountEndpoint = { label: string; 
 /**
- * Пусто — адрес знает сама нода.
+ * Адрес ЭТОЙ установки. У вендора с одним публичным API совпадает с
+ * сервисным; у своих, поднятых по-разному, различается — и звать надо его.
  */
 baseUrl?: string; 
 /**
- * Какая учётка выбрана для этого запроса. `None` — ни одна не подошла.
+ * `platform` — наша учётка, `client` — клиента (владельца задачи).
  */
-account?: string | null; 
+owner?: string; 
 /**
  * `false` — законное состояние: свой сервис рядом может не требовать ключа.
  */
 hasSecret?: boolean }
+/**
+ * Из чего состоит секрет сервиса — по этому описанию рисуется форма заведения.
+ */
+export type VendorSecretField = { 
+/**
+ * Ключ в объекте секрета. Под ним же значение ляжет в сейф.
+ */
+key: string; 
+/**
+ * Подпись в форме. Пусто — показываем сам ключ.
+ */
+label?: string; 
+/**
+ * Прятать ли ввод: логин прятать незачем, пароль — обязательно.
+ */
+secret?: boolean }
+/**
+ * Каталожная часть ответа: то, что не секрет.
+ * 
+ * Приезжает ВСЕГДА, в том числе когда ключ не менялся и ответ по нему `fresh`.
+ * Секрет — только при устаревшей версии, а адрес и состав учёток нужны каждый раз:
+ * положи их внутрь `issued`, правка адреса без ротации ключа до машины не доехала бы.
+ */
+export type VendorServiceEndpoint = { slug: string; 
+/**
+ * Адрес сервиса. Пусто — адрес знает сама нода.
+ */
+baseUrl?: string; 
+/**
+ * Учётки, доступные этой машине: все наши плюс учётка владельца задачи,
+ * если задача названа. Чужие клиентские сюда не попадают никогда.
+ */
+accounts?: VendorAccountEndpoint[]; secretFields?: VendorSecretField[] }
 /**
  * Строка потребления: единицы, а не деньги. Цену считает сайт по своему прайсу.
  */
