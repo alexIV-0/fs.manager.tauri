@@ -9,6 +9,9 @@ export interface PhraseWord {
 	lineIndex: number;
 }
 
+/** Ширина строки в пикселях кадра — та же функция, что меряет превью. */
+export type MeasureWidth = (text: string) => number;
+
 export interface DisplayPhrase {
 	fromMs: number;
 	toMs: number;
@@ -47,21 +50,23 @@ function startsWithUppercase(text: string): boolean {
 
 // ─── Line fitting ─────────────────────────────────────────────────────────────
 
-function calcMaxChars(fontSize: number, videoWidth: number, wrapWidthPct: number): number {
-	const maxPixels = videoWidth * (wrapWidthPct / 100);
-	return Math.max(1, Math.floor(maxPixels / (fontSize * 0.55)));
-}
-
 /**
- * Checks if adding word to current text would overflow the line.
+ * Влезет ли слово в текущую строку.
+ *
+ * Мерим РЕАЛЬНУЮ ширину тем же шрифтом, что и превью в панели (см. measure.ts).
+ * Раньше здесь считались символы по оценке «ширина ≈ 0.55 × кегль», и у
+ * пропорционального шрифта строка ломалась не там, где в панели: одна и та же
+ * фраза показывалась в две строки, а рендерилась в три — а от числа строк
+ * зависит вся вертикальная геометрия блока.
+ *
  * Uses \r as line separator (same as original).
  */
-function shouldStartNewLine(currentText: string, wordText: string, maxLineLength: number): boolean {
-	if (maxLineLength === 0) return false;
+function shouldStartNewLine(currentText: string, wordText: string, maxWidthPx: number, measure: MeasureWidth): boolean {
+	if (maxWidthPx <= 0) return false;
 	const lines = currentText.split('\r');
 	const lastLine = lines[lines.length - 1];
-	const needed = wordText.length + (lastLine.length > 0 ? 1 : 0);
-	return lastLine.length + needed > maxLineLength;
+	const candidate = lastLine.length > 0 ? `${lastLine} ${wordText}` : wordText;
+	return measure(candidate) > maxWidthPx;
 }
 
 // ─── Collect flat words from JSONFull tokens ──────────────────────────────────
@@ -177,7 +182,7 @@ interface SentenceBlock {
 	byWord: FlatWord[];
 }
 
-function buildSentenceBlocks(words: FlatWord[], maxLineLength: number, maxLine: number): SentenceBlock[] {
+function buildSentenceBlocks(words: FlatWord[], maxWidthPx: number, maxLine: number, measure: MeasureWidth): SentenceBlock[] {
 	const result: SentenceBlock[] = [];
 	let current: SentenceBlock = { text: '', fromMs: null, toMs: null, byWord: [] };
 
@@ -200,7 +205,7 @@ function buildSentenceBlocks(words: FlatWord[], maxLineLength: number, maxLine: 
 			current.fromMs = word.fromMs;
 			current.toMs = word.toMs;
 			current.byWord.push(word);
-		} else if (shouldStartNewLine(current.text, word.text, maxLineLength)) {
+		} else if (shouldStartNewLine(current.text, word.text, maxWidthPx, measure)) {
 			// Word doesn't fit on current line
 			const lineCount = current.text.split('\r').length;
 
@@ -316,31 +321,65 @@ function blockToPhrase(block: SentenceBlock, hasWordTiming: boolean): DisplayPhr
  *   - srt/vtt:  segment-level timestamps split proportionally per word,
  *               same sentence ending logic applied
  *
- * @param cues         - parsed from parsers.ts
- * @param fontSize     - font size px (already scaled to real video)
- * @param videoWidth   - real video width px
- * @param wrapWidthPct - wrap width as % of video width (0-100)
- * @param maxLines     - max lines per display block
- * @param hasWords     - true for jsonfull (has word-level tokens)
+ * @param cues       - parsed from parsers.ts
+ * @param maxWidthPx - предельная ширина строки в px кадра (wrapWidth % от ширины видео)
+ * @param maxLines   - max lines per display block
+ * @param hasWords   - true for jsonfull (has word-level tokens)
+ * @param measure    - измеритель ширины строки (см. measure.ts)
  */
 export function buildPhrases(
 	cues: SubtitleCue[],
-	fontSize: number,
-	videoWidth: number,
-	wrapWidthPct: number,
+	maxWidthPx: number,
 	maxLines: number,
 	hasWords: boolean,
+	measure: MeasureWidth,
 ): DisplayPhrase[] {
-	const maxChars = calcMaxChars(fontSize, videoWidth, wrapWidthPct);
-
 	// Step 1: collect flat word list
 	const words = hasWords ? collectWordsFromCues(cues) : collectWordsFromSegments(cues);
 
 	if (words.length === 0) return [];
 
 	// Step 2: build sentence blocks with line breaking
-	const blocks = buildSentenceBlocks(words, maxChars, maxLines);
+	const blocks = buildSentenceBlocks(words, maxWidthPx, maxLines, measure);
 
 	// Step 3: convert to DisplayPhrase
 	return blocks.map((b) => blockToPhrase(b, hasWords));
+}
+
+// ─── Превью панели ────────────────────────────────────────────────────────────
+
+/**
+ * Раскладывает произвольную строку по строкам ТЕМ ЖЕ правилом, что и рендер.
+ *
+ * Панель показывает не субтитры, а одну строку-образец, но ломать её обязана
+ * так же, как плагин ломает реальную фразу, — иначе превью снова разъедется с
+ * результатом. Разбиения по паузам и концам предложений тут нет: у образца нет
+ * тайминга, и делить его не по чему.
+ */
+export function buildPreviewLines(text: string, maxWidthPx: number, maxLines: number, measure: MeasureWidth): string[] {
+	const words = text.split(/\s+/).filter(Boolean);
+	let acc = '';
+
+	for (const word of words) {
+		if (!acc) {
+			acc = word;
+			continue;
+		}
+		if (shouldStartNewLine(acc, word, maxWidthPx, measure)) {
+			if (acc.split('\r').length >= Math.max(1, maxLines)) break;
+			acc += `\r${word}`;
+		} else {
+			acc += ` ${word}`;
+		}
+	}
+
+	return acc
+		.split('\r')
+		.map((l) => l.trim())
+		.filter(Boolean);
+}
+
+/** Фраза-образец для превью: видна на любой позиции таймлайна. */
+export function buildPreviewPhrase(lines: string[]): DisplayPhrase {
+	return { fromMs: 0, toMs: 10 * 3600 * 1000, lines };
 }

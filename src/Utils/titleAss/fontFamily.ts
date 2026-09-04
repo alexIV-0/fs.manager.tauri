@@ -20,7 +20,7 @@
 // Байты читаем через asset-протокол (scope = "**" в tauri.conf.json) обычным
 // fetch'ем в WebView — без новых Rust-команд.
 
-import type { PluginContext } from '../../src/PluginAPI/host';
+import type { ToAssetUrl } from './measure';
 
 // Сервисы приходят параметром из ctx точки входа через границу модуля —
 // у файла не остаётся собственного состояния, плагин кэшируется.
@@ -179,14 +179,14 @@ const cache = new Map<string, { info: FontNameInfo | null; error: string | null 
 export async function resolveAssFontName(
 	fontPath: string,
 	pickedName: string,
-	fs: PluginContext['fs'],
+	toUrl: ToAssetUrl,
 ): Promise<{ info: FontNameInfo | null; error: string | null }> {
 	const cached = cache.get(fontPath);
 	if (cached) return cached;
 
 	let result: { info: FontNameInfo | null; error: string | null };
 	try {
-		const res = await fetch(fs.toFetchUrl(fontPath));
+		const res = await fetch(toUrl(fontPath));
 		// Без этой проверки тело ошибки уходило в разбор таблиц и падало там —
 		// в логе оставалось «не смог прочитать», а не «asset-протокол ответил 403».
 		if (!res.ok) throw new Error(`asset fetch ${res.status} ${res.statusText}`);

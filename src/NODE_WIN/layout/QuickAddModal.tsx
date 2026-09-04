@@ -1,6 +1,6 @@
 import { Box, InputBase, List, ListItemButton, Typography } from '@mui/material';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getNodeDefinitions } from '../definitions';
+import { getMultiVersionPlugins, getNodeDefinitions } from '../definitions';
 import { CustomNodeData } from '../definitions/types';
 import { useNodeQuickAdd_store } from '@/Store/Node/useNodeQuickAdd_store';
 import { colorTypes_store } from '@/Store/Color/colorTypes_store';
@@ -10,13 +10,18 @@ interface QuickAddModalProps {
 	open: boolean;
 	position: { x: number; y: number };
 	onClose: () => void;
-	onAddNode: (nodeType: string) => void;
+	/** id определения (`type@version` у плагинов), а не тип: версий одного плагина может быть несколько. */
+	onAddNode: (defId: string) => void;
 }
 
 type NodeOption = {
+	/** `type@version` у плагинных нод, `type` у встроенных — по нему и добавляем. */
+	id: string;
 	type: string;
 	label: string;
 	colorType: string;
+	/** Не null, только когда у плагина загружено несколько версий (как в шапке ноды и в сайдбаре). */
+	version: string | null;
 };
 
 function matchesQuery(label: string, terms: string[]): boolean {
@@ -44,14 +49,22 @@ function QuickAddModal({ open, position, onClose, onAddNode }: QuickAddModalProp
 
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	const allNodes = useMemo<NodeOption[]>(
-		() =>
-			getNodeDefinitions()
+		() => {
+			const multi = getMultiVersionPlugins();
+			return getNodeDefinitions()
 				.filter((n) => n.deletable !== false)
-				.map((n) => ({
-					type: n.type as string,
-					label: (n.data as CustomNodeData).label,
-					colorType: (n.data as CustomNodeData).colorType,
-				})),
+				.map((n) => {
+					const pluginId = (n as any).pluginId as string | undefined;
+					const pluginVersion = (n as any).pluginVersion as string | undefined;
+					return {
+						id: ((n as any).id as string) ?? (n.type as string),
+						type: n.type as string,
+						label: (n.data as CustomNodeData).label,
+						colorType: (n.data as CustomNodeData).colorType,
+						version: pluginId && pluginVersion && multi.has(pluginId) ? pluginVersion : null,
+					};
+				});
+		},
 		// rebuild when modal opens to pick up any new plugin definitions
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[open],
@@ -61,7 +74,16 @@ function QuickAddModal({ open, position, onClose, onAddNode }: QuickAddModalProp
 		if (!query.trim()) {
 			return [...lastUsed]
 				.sort((a, b) => (usageCount[b.type] ?? 0) - (usageCount[a.type] ?? 0))
-				.map((entry) => allNodes.find((n) => n.type === entry.type) ?? { type: entry.type, label: entry.label, colorType: 'default' });
+				.map(
+					(entry) =>
+						allNodes.find((n) => n.type === entry.type) ?? {
+							id: entry.type,
+							type: entry.type,
+							label: entry.label,
+							colorType: 'default',
+							version: null,
+						},
+				);
 		}
 
 		const terms = query.split(/\s+/).filter(Boolean);
@@ -104,7 +126,7 @@ function QuickAddModal({ open, position, onClose, onAddNode }: QuickAddModalProp
 					break;
 				case 'Enter':
 					e.preventDefault();
-					if (displayedItems[selectedIndex]) onAddNode(displayedItems[selectedIndex].type);
+					if (displayedItems[selectedIndex]) onAddNode(displayedItems[selectedIndex].id);
 					break;
 				case 'Escape':
 				case 'Tab':
@@ -161,16 +183,18 @@ function QuickAddModal({ open, position, onClose, onAddNode }: QuickAddModalProp
 							const isSelected = i === selectedIndex;
 							return (
 								<ListItemButton
-									key={item.type}
+									key={item.id}
 									selected={isSelected}
 									onMouseDown={(e) => {
 										e.preventDefault();
-										onAddNode(item.type);
+										onAddNode(item.id);
 									}}
 									onMouseEnter={() => setSelectedIndex(i)}
 									sx={{
 										py: 0.4,
 										px: 1.5,
+										gap: 1,
+										justifyContent: 'space-between',
 										borderLeft: `3px solid ${isSelected ? color : 'transparent'}`,
 										'&.Mui-selected': { backgroundColor: color + '20' },
 										'&.Mui-selected:hover': { backgroundColor: color + '30' },
@@ -185,6 +209,21 @@ function QuickAddModal({ open, position, onClose, onAddNode }: QuickAddModalProp
 									>
 										{item.label}
 									</Typography>
+									{/* Версия — только когда версий несколько: иначе в списке две
+									    неразличимые строки, и выбрать нужную нельзя. */}
+									{item.version && (
+										<Typography
+											sx={{
+												fontSize: 11,
+												fontFamily: 'monospace',
+												color: isSelected ? color : '#ffffffbb',
+												opacity: 0.5,
+												userSelect: 'none',
+											}}
+										>
+											{item.version}
+										</Typography>
+									)}
 								</ListItemButton>
 							);
 						})}

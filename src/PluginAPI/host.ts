@@ -137,8 +137,17 @@ export interface VideoFileInfo {
 	avg_frame_rate?: string;
 	r_frame_rate?: string;
 	time_base?: string;
+	/** Стороны ПОТОКА, как они записаны в файле (без учёта поворота). */
 	width: number;
 	height: number;
+	/** Поворот из матрицы отображения в градусах: 0, ±90, 180, ±270. */
+	rotation: number;
+	/** Стороны КАДРА, который увидят фильтры `-vf`: ffmpeg разворачивает видео сам,
+	 *  ДО фильтров, поэтому у снятого вертикально ролика width/height потока
+	 *  горизонтальные, а фильтр получает вертикальный кадр. Для всего, что зависит
+	 *  от геометрии кадра (титры, оверлеи, crop), брать именно эти. */
+	displayWidth: number;
+	displayHeight: number;
 	codec_name: string;
 	profile?: string;
 	level?: number;
@@ -688,6 +697,17 @@ export const ffmpeg = {
 		}
 	},
 
+	/** Поворот видеопотока в градусах: сначала матрица отображения, затем старый тег `rotate`. */
+	rotation(video?: FfprobeStream): number {
+		const list = (video as any)?.side_data_list;
+		if (Array.isArray(list)) {
+			const side = list.find((d: any) => Number.isFinite(Number(d?.rotation)));
+			if (side) return Math.round(Number(side.rotation));
+		}
+		const tag = Number((video as any)?.tags?.rotate);
+		return Number.isFinite(tag) ? Math.round(tag) : 0;
+	},
+
 	pickVideo(streams: FfprobeStream[]): FfprobeStream | undefined {
 		return streams.find((s) => s.codec_type === 'video');
 	},
@@ -718,6 +738,12 @@ export const ffmpeg = {
 		if (!durationSec && audio?.duration) durationSec = Number(audio.duration);
 		if (!Number.isFinite(durationSec)) durationSec = 0;
 
+		// ±90 и ±270 меняют стороны местами; 0 и 180 — нет.
+		const rotation = ffmpeg.rotation(video);
+		const swapped = Math.abs(rotation) % 180 === 90;
+		const codedW = video?.width || 0;
+		const codedH = video?.height || 0;
+
 		return {
 			durationInSeconds: durationSec || 0,
 			// fps не подставляем: у файла без видеопотока таймкод будет в
@@ -727,8 +753,11 @@ export const ffmpeg = {
 			avg_frame_rate: video?.avg_frame_rate,
 			r_frame_rate: video?.r_frame_rate,
 			time_base: video?.time_base,
-			width: video?.width || 0,
-			height: video?.height || 0,
+			width: codedW,
+			height: codedH,
+			rotation,
+			displayWidth: swapped ? codedH : codedW,
+			displayHeight: swapped ? codedW : codedH,
 			codec_name: video?.codec_name || '',
 			profile: video?.profile,
 			level: video?.level,

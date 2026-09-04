@@ -73,9 +73,45 @@ export interface DrawTextParams {
 	vx: number;
 	vy: number;
 	scale: number;
+	/** Рисовать всё, кроме самих букв: их во время правки показывает textarea,
+	 *  а плашка должна жить и подстраиваться под набираемый текст. */
+	skipText?: boolean;
 }
 
-export function drawTextBlock({ ctx, s, text, vx, vy, scale }: DrawTextParams) {
+/** Геометрия текстового блока в экранных координатах канваса. */
+export interface TextBlockLayout {
+	lines: string[];
+	/** Строка шрифта, годная и для `ctx.font`, и для CSS. */
+	fontStyle: string;
+	fontSize: number;
+	lineHeight: number;
+	ascent: number;
+	realLineH: number;
+	totalTextHeight: number;
+	/** Y верха блока. */
+	blockTop: number;
+	/** X точки привязки (смысл зависит от hAlign). */
+	textX: number;
+	/** Предельная ширина строки. */
+	wrapWidth: number;
+	maxLineWidth: number;
+}
+
+/**
+ * Считает раскладку блока, ничего не рисуя.
+ *
+ * Вынесено из `drawTextBlock`, потому что тем же нужен и редактор текста поверх
+ * канваса: он обязан встать ровно на место нарисованных строк, иначе при двойном
+ * клике текст прыгает.
+ */
+export function layoutTextBlock(
+	ctx: CanvasRenderingContext2D,
+	s: TitleFormatSettings,
+	text: string,
+	vx: number,
+	vy: number,
+	scale: number,
+): TextBlockLayout {
 	const { videoWidth, videoHeight } = s;
 
 	const fontSize = s.text.size * scale;
@@ -97,10 +133,13 @@ export function drawTextBlock({ ctx, s, text, vx, vy, scale }: DrawTextParams) {
 	const lineSpacing = (s.text.lineSpacing ?? 0) * scale;
 	const lineHeight = fontSize * 1.2 + lineSpacing;
 
-	// Реальные метрики шрифта
+	// Метрики ШРИФТА, а не чернильные границы конкретных букв: строчная коробка
+	// (ascender/descender) — ровно то, по чему libass ставит строку в рендере
+	// (`@/Utils/titleAss/buildAss.ts`, тег \an7). actualBoundingBox* прыгал
+	// от того, есть ли в тексте выносные элементы, и превью уезжало от рендера.
 	const metrics = ctx.measureText('Hy');
-	const ascent = metrics.actualBoundingBoxAscent;
-	const descent = metrics.actualBoundingBoxDescent;
+	const ascent = metrics.fontBoundingBoxAscent || metrics.actualBoundingBoxAscent;
+	const descent = metrics.fontBoundingBoxDescent || metrics.actualBoundingBoxDescent;
 	const realLineH = ascent + descent;
 
 	// Высота всего блока текста
@@ -126,32 +165,59 @@ export function drawTextBlock({ ctx, s, text, vx, vy, scale }: DrawTextParams) {
 	// Позиция X
 	const textX = vx + ((videoWidth * s.position.x) / 100) * scale;
 
+	let maxLineWidth = 0;
+	lines.forEach((line) => {
+		const w = ctx.measureText(line).width;
+		if (w > maxLineWidth) maxLineWidth = w;
+	});
+
+	return {
+		lines,
+		fontStyle,
+		fontSize,
+		lineHeight,
+		ascent,
+		realLineH,
+		totalTextHeight,
+		blockTop,
+		textX,
+		wrapWidth,
+		maxLineWidth,
+	};
+}
+
+/** Рисует блок целиком: фон, тень, обводку, текст. */
+export function drawTextBlock({ ctx, s, text, vx, vy, scale, skipText }: DrawTextParams) {
+	const { lines, ascent, lineHeight, totalTextHeight, blockTop, textX, maxLineWidth } = layoutTextBlock(
+		ctx,
+		s,
+		text,
+		vx,
+		vy,
+		scale,
+	);
+
 	// ── Фон — один общий прямоугольник ────────────────────────────────────────
 	if (s.background.enabled) {
-		const bgPad = s.background.padding * scale;
+		const bgPadX = s.background.paddingX * scale;
+		const bgPadY = s.background.paddingY * scale;
 
-		let maxLineWidth = 0;
-		lines.forEach((line) => {
-			const w = ctx.measureText(line).width;
-			if (w > maxLineWidth) maxLineWidth = w;
-		});
-
-		const bgW = maxLineWidth + bgPad * 2;
-		const bgH = totalTextHeight + bgPad * 2;
+		const bgW = maxLineWidth + bgPadX * 2;
+		const bgH = totalTextHeight + bgPadY * 2;
 
 		let bgX: number;
 		switch (s.position.hAlign) {
 			case 'left':
-				bgX = textX - bgPad;
+				bgX = textX - bgPadX;
 				break;
 			case 'right':
-				bgX = textX - maxLineWidth - bgPad;
+				bgX = textX - maxLineWidth - bgPadX;
 				break;
 			default:
-				bgX = textX - maxLineWidth / 2 - bgPad;
+				bgX = textX - maxLineWidth / 2 - bgPadX;
 				break;
 		}
-		const bgY = blockTop - bgPad;
+		const bgY = blockTop - bgPadY;
 
 		ctx.save();
 		ctx.globalAlpha = s.background.opacity;
@@ -166,27 +232,40 @@ export function drawTextBlock({ ctx, s, text, vx, vy, scale }: DrawTextParams) {
 	}
 
 	// ── Строки текста ──────────────────────────────────────────────────────────
+	//
+	// Тень кладём ОТДЕЛЬНЫМ проходом под весь силуэт. Раньше `shadowColor` был
+	// включён и на обводке, и на заливке: тень заливки рисовалась ПОВЕРХ уже
+	// нарисованной обводки и ложилась на неё пятном. В ASS тень — отдельный
+	// нижний слой (см. buildAss), так что заодно это и приводит превью к рендеру.
+	const strokeLine = (line: string, baseline: number) => {
+		if (!s.outline.enabled) return;
+		ctx.strokeStyle = s.outline.color;
+		ctx.lineWidth = s.outline.width * scale * 2;
+		ctx.lineJoin = 'round';
+		ctx.strokeText(line, textX, baseline);
+	};
+
+	if (skipText) return;
+
 	lines.forEach((line, i) => {
 		const lineBaseline = blockTop + i * lineHeight + ascent;
 
 		if (s.shadow.enabled) {
+			// Первый проход рисует силуэт вместе с его тенью; второй кладёт поверх
+			// чистые обводку и заливку, так что видна остаётся только тень.
 			ctx.save();
 			ctx.shadowColor = s.shadow.color;
 			ctx.shadowOffsetX = s.shadow.offsetX * scale;
 			ctx.shadowOffsetY = s.shadow.offsetY * scale;
 			ctx.shadowBlur = s.shadow.blur * scale;
+			strokeLine(line, lineBaseline);
+			ctx.fillStyle = s.text.color;
+			ctx.fillText(line, textX, lineBaseline);
+			ctx.restore();
 		}
 
-		if (s.outline.enabled) {
-			ctx.strokeStyle = s.outline.color;
-			ctx.lineWidth = s.outline.width * scale * 2;
-			ctx.lineJoin = 'round';
-			ctx.strokeText(line, textX, lineBaseline);
-		}
-
+		strokeLine(line, lineBaseline);
 		ctx.fillStyle = s.text.color;
 		ctx.fillText(line, textX, lineBaseline);
-
-		if (s.shadow.enabled) ctx.restore();
 	});
 }

@@ -70,8 +70,12 @@ export function useQuickAdd() {
 	}, [open]);
 
 	const addNodeToCanvas = useCallback(
-		(nodeType: string) => {
-			const nodeReference = getNodeDefinitions().find((node) => node.type === nodeType);
+		(defId: string) => {
+			// Ищем по id (`type@version`), а не по type: при двух версиях одного плагина
+			// поиск по type всегда возвращал первую, и выбрать вторую было нельзя.
+			// Фолбэк по type — для списка недавних, он хранит именно тип.
+			const defs = getNodeDefinitions();
+			const nodeReference = defs.find((node) => (node.id ?? node.type) === defId) ?? defs.find((node) => node.type === defId);
 			if (!nodeReference) return;
 
 			const nodeWidth = typeof nodeReference.width === 'number' ? nodeReference.width : 0;
@@ -132,8 +136,8 @@ export function useQuickAdd() {
 			reactFlow.setNodes((nodes) => [...nodes, newNode]);
 
 			addUsed({
-				type: nodeType,
-				label: (nodeReference.data as any).label ?? nodeType,
+				type: nodeReference.type as string,
+				label: (nodeReference.data as any).label ?? nodeReference.type,
 			});
 
 			setOpen(false);

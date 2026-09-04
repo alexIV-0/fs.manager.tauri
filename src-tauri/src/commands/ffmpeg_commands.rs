@@ -99,20 +99,33 @@ pub async fn ffprobe_get_info(
     let ffprobe = resolve_program_path("ffprobe", &state);
 
     tokio::task::spawn_blocking(move || {
-        let output = Command::new(&ffprobe)
-            .args([
-                "-v", "error",
-                "-show_entries",
-                "stream=codec_name,profile,level,pix_fmt,r_frame_rate,avg_frame_rate,time_base,\
-                 width,height,color_range,color_space,color_primaries,color_transfer,\
-                 sample_aspect_ratio,display_aspect_ratio,duration,duration_ts,start_pts,\
-                 start_time,codec_type,sample_rate,channels,channel_layout,bit_rate",
-                "-of", "json",
-                &file_path,
-            ])
-            .hide_console()
-            .output()
-            .map_err(|e| format!("ffprobe not found or failed to start: {}", e))?;
+        const STREAM_FIELDS: &str = "stream=codec_name,profile,level,pix_fmt,r_frame_rate,avg_frame_rate,time_base,\
+             width,height,color_range,color_space,color_primaries,color_transfer,\
+             sample_aspect_ratio,display_aspect_ratio,duration,duration_ts,start_pts,\
+             start_time,codec_type,sample_rate,channels,channel_layout,bit_rate";
+
+        // Поворот (матрица отображения) обязателен: ffmpeg разворачивает кадр САМ,
+        // до -vf, поэтому фильтры получают перевёрнутые стороны, а width/height
+        // потока остаются исходными. Без этого нода титров считала вертикальное
+        // видео горизонтальным и рисовала титры в неверном масштабе.
+        let with_rotation = format!("{}:stream_side_data=rotation:stream_tags=rotate", STREAM_FIELDS);
+
+        let run = |entries: &str| {
+            Command::new(&ffprobe)
+                .args(["-v", "error", "-show_entries", entries, "-of", "json", &file_path])
+                .hide_console()
+                .output()
+        };
+
+        let mut output = run(&with_rotation).map_err(|e| format!("ffprobe not found or failed to start: {}", e))?;
+
+        // Секции side_data/tags понимает не всякий ffprobe, а бинарь пользователь
+        // может подменить своим (Settings → Paths). Неизвестная секция — жёсткая
+        // ошибка, поэтому откатываемся на прежний набор полей, а не роняем пробу
+        // для всех плагинов разом.
+        if !output.status.success() {
+            output = run(STREAM_FIELDS).map_err(|e| format!("ffprobe not found or failed to start: {}", e))?;
+        }
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
