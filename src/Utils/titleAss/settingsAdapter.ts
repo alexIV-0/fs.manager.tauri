@@ -1,4 +1,4 @@
-import { TitleSettings, TitleFormatSettings } from './types';
+import { TitleSettings, TitleFormatSettings, VAlign } from './types';
 
 /**
  * Ключи ФОРМАТОВ, а не все поля настроек. Раньше здесь стоял `keyof TitleSettings`, и
@@ -7,7 +7,7 @@ import { TitleSettings, TitleFormatSettings } from './types';
  */
 type FormatKey = 'landscape' | 'portrait' | 'square';
 
-export function pickBestFormat(realWidth: number, realHeight: number, settings: TitleSettings): TitleFormatSettings {
+export function pickBestFormatKey(realWidth: number, realHeight: number, settings: TitleSettings): FormatKey {
 	const realRatio = realWidth / realHeight;
 
 	const formats: { key: FormatKey; ratio: number }[] = [
@@ -27,7 +27,12 @@ export function pickBestFormat(realWidth: number, realHeight: number, settings: 
 		}
 	}
 
-	return settings[bestKey];
+	return bestKey;
+}
+
+/** Единственное место, где чинится разнобой имён: старые пресеты могли нести 'center'. */
+function normalizeVAlign(v: unknown): VAlign {
+	return v === 'top' ? 'top' : v === 'center' || v === 'middle' ? 'middle' : 'bottom';
 }
 
 export function scaleSettingsToVideo(
@@ -52,12 +57,14 @@ export function scaleSettingsToVideo(
 
 		position: {
 			...formatSettings.position,
+			vAlign: normalizeVAlign(formatSettings.position.vAlign),
 			padding: r(formatSettings.position.padding * scale),
 		},
 
 		background: {
 			...formatSettings.background,
-			padding: r(formatSettings.background.padding * scale),
+			paddingX: r(formatSettings.background.paddingX * scale),
+			paddingY: r(formatSettings.background.paddingY * scale),
 			borderRadius: r(formatSettings.background.borderRadius * scale),
 		},
 
@@ -77,7 +84,14 @@ export function scaleSettingsToVideo(
 	};
 }
 
-export function adaptSettingsToVideo(settings: TitleSettings, realWidth: number, realHeight: number): TitleFormatSettings {
-	const best = pickBestFormat(realWidth, realHeight, settings);
-	return scaleSettingsToVideo(best, realWidth, realHeight);
+/** Возвращает и НАСТРОЙКИ, и то, какой формат был выбран, — иначе по логу не
+ *  понять, почему титры легли не так, как в открытой вкладке панели. */
+export function adaptSettingsToVideo(
+	settings: TitleSettings,
+	realWidth: number,
+	realHeight: number,
+): { format: FormatKey; source: TitleFormatSettings; scaled: TitleFormatSettings } {
+	const format = pickBestFormatKey(realWidth, realHeight, settings);
+	const source = settings[format];
+	return { format, source, scaled: scaleSettingsToVideo(source, realWidth, realHeight) };
 }

@@ -227,7 +227,11 @@ runProcessing
 
 **Границы.** Единственный путь к ffmpeg — Rust. Сборка ffmpeg проверяется на наличие нужных фильтров.
 
-**Где код.** `commands/ffmpeg_commands.rs` (`ffmpeg_exec_with_progress`, `ffprobe_get_info`, `ffmpeg_get_video_thumbnail`), гейт возможностей `src-tauri/ffmpeg_requirements.json` + `src/Utils/ffmpegCaps.ts`, сканер `npm run ffmpeg:scan` (`scripts/ffmpeg-scan.mjs`), общие графы фильтров `src/Utils/ffmpegGraphs/`. Плагины: `convertFile_v1/v2`, `keyingFFmpeg`, `ffSwitch`, `overlayAndOffset`, `splitFile`, `join`, `music2signal`, `speech2signal`.
+**Где код.** `commands/ffmpeg_commands.rs` (`ffmpeg_exec_with_progress`, `ffprobe_get_info`, `ffmpeg_get_video_thumbnail`), гейт возможностей `src-tauri/ffmpeg_requirements.json` + `src/Utils/ffmpegCaps.ts`, сканер `npm run ffmpeg:scan` (`scripts/ffmpeg-scan.mjs`), общие графы фильтров `src/Utils/ffmpegGraphs/`, сборка ASS титров `src/Utils/titleAss/`. Плагины: `convertFile_v1/v2`, `keyingFFmpeg`, `ffSwitch`, `overlayAndOffset`, `splitFile`, `join`, `music2signal`, `speech2signal`, `addTitle`.
+
+**Стороны кадра ≠ стороны потока.** ffmpeg разворачивает видео по матрице поворота САМ, до `-vf`, поэтому у снятого вертикально ролика `width`/`height` потока горизонтальные, а фильтр получает перевёрнутый кадр. Для всего, что зависит от геометрии кадра, брать `displayWidth`/`displayHeight` из `ctx.ffmpeg.getInfo` (`rotation` там же).
+
+**Титры: превью == рендер.** `src/Utils/titleAss/` — общий движок панели настроек и плагина `addTitle`: панель строит им `.ass` для превью и гонит кадр через `preview_render_frame`, плагин тем же кодом собирает финальный файл. Плагин от этого стал гейтом — в нём остались только точка входа и манифест.
 
 **Где план.** `ffmpeg_plug_ideas.md` — каталог фильтров, ярусы сборки, что взять и что отбросить.
 

@@ -38,7 +38,22 @@ export const BackgroundSection = memo(function BackgroundSection({ settings, exp
 				onChange={(v) => update('opacity', v / 100)}
 			/>
 
-			<SliderRow label='Padding px' value={settings.background.padding} min={0} max={60} onChange={(v) => update('padding', v)} />
+			{/* Отступы врозь: у титров запас по бокам и сверху-снизу почти всегда разный. */}
+			<SliderRow
+				label='Padding X px'
+				value={settings.background.paddingX}
+				min={0}
+				max={120}
+				onChange={(v) => update('paddingX', v)}
+			/>
+
+			<SliderRow
+				label='Padding Y px'
+				value={settings.background.paddingY}
+				min={0}
+				max={120}
+				onChange={(v) => update('paddingY', v)}
+			/>
 
 			<SliderRow
 				label='Border Radius px'

@@ -1,13 +1,14 @@
 // src/NODE_WIN/nodes/properties/TitleEdit/TitleSettingsModal.tsx
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Box, IconButton, Tabs, Tab, Typography, Tooltip } from '@mui/material';
-import { LayoutList } from 'lucide-react';
+import { Check, Copy, LayoutList } from 'lucide-react';
 import { greyColor } from '@/Store/Color/grayColor';
 import { TitleSettings, TitleFormatSettings, VideoFormat, defaultTitleSettings } from './types';
+import { normalizeTitleSettings } from '@/Utils/titleAss';
 import { DEFAULT_MODAL_SIZE, MIN_MODAL_WIDTH, MIN_MODAL_HEIGHT, DEFAULT_SETTINGS_WIDTH, MIN_SETTINGS_WIDTH, MAX_SETTINGS_WIDTH } from './constants';
 import ModalShell from '../ModalShell';
-import TitleCanvas from './TitleCanvas';
+import TitlePreviewPane from './TitlePreviewPane';
 import TitleSettingsPanel from './TitleSettingsPanel';
 import PresetsPanel from './PresetsPanel';
 
@@ -28,6 +29,13 @@ const SHELL_CONFIG = {
 	maxPanelWidth: MAX_SETTINGS_WIDTH,
 };
 
+/** Размер кадра — определение самого формата, общим он быть не может. */
+const withFrameOf = (fmt: TitleFormatSettings, frame: TitleFormatSettings): TitleFormatSettings => ({
+	...fmt,
+	videoWidth: frame.videoWidth,
+	videoHeight: frame.videoHeight,
+});
+
 interface TitleSettingsModalProps {
 	value: string;
 	onSave: (value: string) => void;
@@ -38,7 +46,8 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 	const [settings, setSettings] = useState<TitleSettings>(() => {
 		if (value) {
 			try {
-				return JSON.parse(value) as TitleSettings;
+				// Приводим старые записи к текущей форме (общий padding плашки → X/Y и т.п.).
+				return normalizeTitleSettings(JSON.parse(value) as TitleSettings);
 			} catch {}
 		}
 		return defaultTitleSettings();
@@ -53,11 +62,33 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 
 	const handleFormatChange = useCallback((format: VideoFormat) => setActiveFormat(format), []);
 
+	// Правка всегда уходит только в открытый формат.
 	const handleSettingsChange = useCallback(
-		(newFormatSettings: TitleFormatSettings) =>
-			setSettings((prev) => ({ ...prev, [activeFormat]: newFormatSettings })),
+		(next: TitleFormatSettings) => setSettings((prev) => ({ ...prev, [activeFormat]: next })),
 		[activeFormat],
 	);
+
+	// Разовое действие: раскатать открытый формат на остальные два. Дальше форматы
+	// живут независимо — связи с источником копирования не остаётся.
+	const [justCopied, setJustCopied] = useState(false);
+	useEffect(() => {
+		if (!justCopied) return;
+		const t = setTimeout(() => setJustCopied(false), 1400);
+		return () => clearTimeout(t);
+	}, [justCopied]);
+
+	const handleCopyToAll = useCallback(() => {
+		setSettings((prev) => {
+			const base = prev[activeFormat];
+			return {
+				...prev,
+				landscape: withFrameOf(base, prev.landscape),
+				portrait: withFrameOf(base, prev.portrait),
+				square: withFrameOf(base, prev.square),
+			};
+		});
+		setJustCopied(true);
+	}, [activeFormat]);
 
 	const handleVideoSizeChange = useCallback(
 		(width: number, height: number) =>
@@ -75,6 +106,8 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 
 	const defColor = greyColor(80);
 	const labelColor = greyColor(55);
+
+	const activeLabel = FORMAT_TABS.find((t) => t.value === activeFormat)?.label ?? '';
 
 	return (
 		<ModalShell
@@ -122,6 +155,32 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 					</Tabs>
 				</Box>
 			}
+			headerExtra={
+				<Tooltip title={`Скопировать настройки «${activeLabel}» в остальные форматы (размер кадра у каждого свой)`}>
+					<Box
+						component='button'
+						onClick={handleCopyToAll}
+						sx={{
+							display: 'inline-flex',
+							alignItems: 'center',
+							gap: '4px',
+							px: 1,
+							py: '3px',
+							borderRadius: '3px',
+							fontSize: 11,
+							cursor: 'pointer',
+							whiteSpace: 'nowrap',
+							border: `1px solid ${greyColor(28)}`,
+							backgroundColor: 'transparent',
+							color: justCopied ? defColor : labelColor,
+							'&:hover': { color: defColor, backgroundColor: greyColor(25) },
+						}}
+					>
+						{justCopied ? <Check size={14} strokeWidth={1.5} /> : <Copy size={14} strokeWidth={1.5} />}
+						{justCopied ? 'Copied' : 'Copy to all formats'}
+					</Box>
+				</Tooltip>
+			}
 			canvasSlot={
 				<>
 					<PresetsPanel
@@ -131,14 +190,16 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 							// Пресет описывает ВИД титров, а `encode` в том же JSON — настройка выхода
 							// ноды (попап в шапке). Загрузка пресета заменяет настройки целиком, и без
 							// этой строки выбранный кодек молча возвращался бы к дефолту.
+							// Базу сравнения берём из пресета: старая описывала уже не эти форматы.
 							setSettings((prev) => ({ ...newSettings, encode: prev.encode }));
 							setPresetsOpen(false);
 						}}
 						onClose={() => setPresetsOpen(false)}
 						canvasRef={canvasRef}
 					/>
-					<TitleCanvas
+					<TitlePreviewPane
 						settings={currentFormatSettings}
+						format={activeFormat}
 						placeholderText={placeholderText}
 						onPlaceholderTextChange={setPlaceholderText}
 						onVideoSizeChange={handleVideoSizeChange}
@@ -147,11 +208,7 @@ export default function TitleSettingsModal({ value, onSave, onClose }: TitleSett
 				</>
 			}
 			panelSlot={(panelWidth) => (
-				<TitleSettingsPanel
-					settings={currentFormatSettings}
-					onChange={handleSettingsChange}
-					width={panelWidth}
-				/>
+				<TitleSettingsPanel settings={currentFormatSettings} onChange={handleSettingsChange} width={panelWidth} />
 			)}
 		/>
 	);
